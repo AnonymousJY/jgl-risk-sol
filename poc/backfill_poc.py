@@ -133,6 +133,10 @@ NAMES = {
 }
 
 N_PATHS = 10_000
+
+# Minimum jump days in an estimation window for gamma to be identified. Below
+# this, gamma falls back to 1.0 and the row is flagged, not silently used.
+MIN_JUMP_DAYS_FOR_GAMMA = 5
 JUMP_THRESHOLD_SD = 3.0   # sensitivity to this is a required robustness check
 SEED = 20260829
 
@@ -239,19 +243,35 @@ def estimate_name(name_ret, diffusive, marks, is_jump, window):
     kappa = float(resid.std(ddof=1))
     rho_proxy = float(np.corrcoef(resid, X)[0, 1]) if X.std() > 0 else np.nan
 
-    # Jump days: r ~ gamma * Y_j  (falls back to 1.0 if too few observations)
-    if j.sum() >= 5:
+    # Jump days: r ~ gamma * Y_j
+    #
+    # gamma is identified ONLY off jump days, and jump days are rare - at a 3-sd
+    # threshold, perhaps 5-15 a year. A short or calm estimation window can
+    # leave too few to identify it. The fallback below sets gamma = 1.0, which
+    # silently converts the central parameter of this study into an assumption,
+    # so it is flagged rather than hidden: gamma_identified is carried into the
+    # results and any row with gamma_identified == False must be excluded from
+    # the headline or reported separately.
+    #
+    # This constraint, not kappa or beta, is what drives estimation window
+    # length. A one-year window matching the paper's regulatory lookback will
+    # often fail to identify gamma.
+    n_jump = int(j.sum())
+    if n_jump >= MIN_JUMP_DAYS_FOR_GAMMA:
         Xj = m[j].values
         Yj = r[j].values
         gamma = float(Xj @ Yj / (Xj @ Xj))
+        gamma_identified = True
     else:
         gamma = 1.0
+        gamma_identified = False
 
     return {
         "sigma_beta": sigma_beta,
         "kappa": kappa,
         "gamma": gamma,
         "rho_resid_dZ": rho_proxy,
+        "gamma_identified": gamma_identified,
         "n_calm": int(calm.sum()),
         "n_jump": int(j.sum()),
     }
@@ -443,6 +463,18 @@ def main():
     print("\nThe claim is recon_abs < etf_abs and recon_abs < betaidx_abs, with the")
     print("margin widening in gamma, and holding across BOTH crises. Degradation")
     print("across estimation windows is the transportability result.")
+    n_unident = int((~res["gamma_identified"]).sum())
+    if n_unident:
+        print("\nWARNING: gamma NOT identified in %d of %d runs (fewer than %d jump"
+              % (n_unident, len(res), MIN_JUMP_DAYS_FOR_GAMMA))
+        print("days in the estimation window); gamma defaulted to 1.0 there. Those rows")
+        print("test an assumption, not an estimate - exclude them from the headline.")
+        print(res[~res["gamma_identified"]]
+              .groupby(["crisis", "window"]).size().to_string())
+    else:
+        print("\ngamma identified in all %d runs (>= %d jump days per estimation window)."
+              % (len(res), MIN_JUMP_DAYS_FOR_GAMMA))
+
     print("\nFull detail written to poc_results.csv")
 
 

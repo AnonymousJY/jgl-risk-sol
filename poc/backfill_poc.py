@@ -136,6 +136,12 @@ NAMES = {
 # identify gamma. Rolling a 1-year window through the estimation period keeps
 # the regulatory 1-year lookback convention while pooling information across
 # many window positions.
+# Estimation sample for the systematic factor. FRTB searches the stress period
+# over a horizon reaching back to at least 2007, and every crisis and estimation
+# window in this study sits inside it, so there is no reason to let 1990s
+# regimes influence the common parameters.
+SAMPLE = ("2007-01-01", "2026-08-31")
+
 ROLL_WINDOW_DAYS = 252          # the regulatory lookback
 ROLL_STEP_DAYS = 21             # monthly steps
 
@@ -181,30 +187,71 @@ def log_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return np.log(prices / prices.shift(1)).dropna(how="all")
 
 
-def filter_systematic(index_ret: pd.Series, threshold_sd: float = JUMP_THRESHOLD_SD):
+def filter_systematic(index_ret, threshold_sd=JUMP_THRESHOLD_SD, sample=SAMPLE):
     """Split index log returns into a diffusive part and common jump marks.
 
-    Simple threshold identification. A bipower-variation or particle-filter
-    approach is the production version; report sensitivity to the threshold
-    either way (spec §7, and doc 03 known weaknesses).
+    The rolling scale and the jump test are computed on the FULL available
+    history, then everything is trimmed to `sample`. That keeps the 250-day
+    rolling scale warm at the sample start - otherwise the first year of 2007
+    would be judged against a back-filled scale and its jumps mis-detected,
+    right where the GFC reconstruction begins.
+
+    Common parameters are then estimated on the trimmed sample only.
+
+    SCOPE. This is NOT the source of the systematic P-measure parameters. Those
+    come from the repository's own MCMC P-MLE estimator - see
+    poc/estimate_systematic.py, which drives Library.RiskEngineKimYi2025's
+    pmle_kimyirisk_systematic and returns all six common parameters with
+    credible intervals, including alpha, which a threshold rule cannot recover.
+
+    What this function is for is the piece the P-MLE does NOT provide: the
+    REALISED path. The reconstruction needs to know which specific days in 2008
+    were jump days and how large each jump was, because those are held fixed as
+    historical fact while only the name's loadings are estimated. The P-MLE
+    returns parameters, not a filtered state sequence.
+
+    So the division of labour is:
+        parameters    -> poc/estimate_systematic.py  (validated MCMC estimator)
+        realised path -> here                        (jump dates and marks)
+
+    The threshold rule below is a PLACEHOLDER for that path extraction and its
+    jump count must be reconciled against dLAMB from the P-MLE. If the two
+    disagree materially - a 3-sd rule gives roughly 2-3 jumps a year while the
+    paper reports dLAMB near 10-12 - the threshold is mis-specified relative to
+    the model and must be retuned to match, or replaced with a proper
+    latent-state filter. Do not run the study on an unreconciled threshold.
     """
     r = index_ret.dropna()
-    scale = r.rolling(250, min_periods=60).std().bfill()
-    is_jump = r.abs() > threshold_sd * scale
 
+    # scale and jump test on the full series
+    scale = r.rolling(250, min_periods=60).std().bfill()
+    is_jump_full = r.abs() > threshold_sd * scale
+
+    # trim to the estimation sample
+    a, b = sample
+    r = r.loc[a:b]
+    is_jump = is_jump_full.loc[a:b]
     marks = r.where(is_jump, 0.0)              # Y_j on jump days, 0 otherwise
     diffusive = r.where(~is_jump, 0.0)         # dZ proxy on non-jump days
 
-    sigma = diffusive[~is_jump].std()
+    calm = ~is_jump
+    sigma = diffusive[calm].std()
     lam = is_jump.mean() * 252
     pos = marks[marks > 0]
     neg = marks[marks < 0]
     params = {
+        "n_obs": int(len(r)),
+        "sample_start": str(r.index.min().date()),
+        "sample_end": str(r.index.max().date()),
         "sigma_daily": float(sigma),
+        "sigma_annual": float(sigma * np.sqrt(252)),
         "lambda_annual": float(lam),
+        "n_jump_days": int(is_jump.sum()),
         "p_up": float(len(pos) / max(len(pos) + len(neg), 1)),
         "eta1": float(1.0 / pos.mean()) if len(pos) else np.nan,
         "eta2": float(1.0 / abs(neg.mean())) if len(neg) else np.nan,
+        "mean_up_jump_pct": float(pos.mean() * 100) if len(pos) else np.nan,
+        "mean_dn_jump_pct": float(neg.mean() * 100) if len(neg) else np.nan,
     }
     return diffusive, marks, is_jump, params
 
@@ -616,5 +663,57 @@ def main():
     print("\nFull detail written to poc_results.csv")
 
 
+def filter_only():
+    """Step 1 in isolation: estimate the systematic factor and check it.
+
+    Run this before the full study. If the face-validity table below does not
+    concentrate jump mass on the known episodes, the filter is wrong and every
+    downstream number is noise.
+    """
+    prices = load_panel([INDEX])
+    rets = log_returns(prices)
+    diffusive, marks, is_jump, params = filter_systematic(rets[INDEX])
+
+    print("=" * 72)
+    print("Step 1 :: systematic liquidity factor from %s" % INDEX)
+    print("=" * 72)
+    for k, v in params.items():
+        print("  %-18s %s" % (k, ("%.6f" % v) if isinstance(v, float) else v))
+
+    print("\nFace-validity gate - jump mass by episode:")
+    print(sanity_check(marks).to_string(index=False))
+
+    print("\nTop 15 jump days by magnitude:")
+    top = marks[marks != 0].abs().sort_values(ascending=False).head(15)
+    for d in top.index:
+        print("   %s  %+7.2f%%" % (d.date(), marks.loc[d] * 100))
+
+    print("\nJump days per calendar year:")
+    per_yr = is_jump.groupby(is_jump.index.year).sum()
+    print("   " + "  ".join("%d:%d" % (y, n) for y, n in per_yr.items()))
+
+    print("\nEstimation-window stress (measured, not labelled):")
+    print("  %-6s %-12s %-24s %5s %8s %9s %8s"
+          % ("crisis", "window", "range", "jumps", "per_yr", "mass", "max%"))
+    for crisis_label, CRISIS in CRISES.items():
+        for wlabel, window in EST_WINDOWS[crisis_label].items():
+            _assert_no_overlap(window, CRISIS, wlabel, crisis_label)
+            st = window_stress(marks, is_jump, window)
+            print("  %-6s %-12s %s..%s %5d %8.1f %9.4f %8.1f"
+                  % (crisis_label, wlabel, window[0], window[1],
+                     st["win_jump_days"], st["win_jump_per_yr"],
+                     st["win_jump_mass"], st["win_max_jump_pct"]))
+
+    print("\n" + "-" * 72)
+    print("GATE: the GFC and COVID rows must dominate the episode table, and the")
+    print("top jump days must land on dates you recognise. If not, stop here -")
+    print("the filter is wrong and nothing downstream is meaningful.")
+    print("\nSensitivity: rerun with JUMP_THRESHOLD_SD at 2.5 and 3.5 before")
+    print("trusting any jump-dependent result.")
+
+
 if __name__ == "__main__":
-    main()
+    if "--filter-only" in sys.argv:
+        filter_only()
+    else:
+        main()

@@ -44,10 +44,30 @@ dates that already have a CSV. Upgrade mid-run and you get a single parameter
 series in which early dates are 94% HDI and later dates are 89% ETI, with
 nothing marking the boundary.
 
+### Resolved: the convention is now fixed in this repository
+
+`Library/PosteriorSummary.py` defines the project-wide convention and computes
+summaries from the posterior draws directly, so nothing depends on any ArviZ
+default:
+
+    95% EQUAL-TAILED interval - the 2.5% and 97.5% posterior quantiles
+    sd = width / 3.919928        (2 * Phi^-1(0.975); NOT the 3.7616 HDI factor)
+    stamp: CI_CONVENTION = "eti_0.95"
+
+Equal-tailed rather than highest-density, because "2.5% and 97.5%" is quantile
+language and the two differ for the skewed posteriors in this model.
+
+`Library/RiskEngineKimYi2025.py` should be switched from positional `az.summary`
+columns to `PosteriorSummary.summarize()`. That call also fixes a second bug:
+the current code exponentiates the *summary* for alpha and pprob
+(`np.exp(mean)`), which reports a geometric rather than an arithmetic mean and
+shifts the interval. `summarize(..., transform=np.exp)` applies the transform to
+the draws instead, which is correct.
+
 ### Required actions
 
-- Pin the interval explicitly wherever the summary is computed. Do not rely on
-  any library default, in either version.
+- Route every summary through `Library.PosteriorSummary.summarize()`. Do not
+  read `az.summary` columns positionally in either version.
 - Replace position-based column access with named access.
 - **Do not mix estimates across versions.** Either delete
   `Study/Estimated Parameters PMLE/` and re-run everything under the new stack,

@@ -51,8 +51,21 @@ PRIORS = {
     "dETA2":  ("Gamma(25, 1)",  *_gamma(25.0, 1.0)),
 }
 
-# ArviZ reports a 94% HDI by default; sd ~ width / (2 * 1.8808).
-HDI_TO_SD = 1.0 / (2 * 1.8808)
+# Project convention: 95% EQUAL-TAILED interval (2.5% / 97.5% quantiles).
+# Defined once in Library/PosteriorSummary.py; sd ~ width / 3.919928.
+#
+# WARNING. Estimates produced BEFORE that convention was fixed came from
+# az.summary's old default, a 94% HDI (factor 3.7616). Applying the 95% ETI
+# factor to those files understates the posterior sd by about 4%, which is
+# immaterial for the identification verdicts here - a ratio of 1.00 does not
+# become 0.70 - but do not pool old and new estimates in one series.
+try:
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+    from Library.PosteriorSummary import CI_WIDTH_TO_SD as HDI_TO_SD, CI_CONVENTION
+except Exception:                                                # noqa: BLE001
+    HDI_TO_SD = 1.0 / 3.919927969080108
+    CI_CONVENTION = "eti_0.95"
 
 
 def load(dirpath):
@@ -69,6 +82,7 @@ def main(dirpath):
     df = load(dirpath)
     print("=" * 78)
     print("Prior vs posterior :: systematic parameters   (%d valuation dates)" % len(df))
+    print("Interval convention: %s" % CI_CONVENTION)
     print("=" * 78)
     print("\n  %-8s %-14s %9s %9s %9s %9s %7s  %s"
           % ("param", "prior", "pri_mean", "pri_sd", "post_mean", "post_sd",

@@ -47,6 +47,9 @@ import multiprocessing
 multiprocessing.set_start_method("fork", force=True)
 from concurrent.futures import ProcessPoolExecutor          # noqa: E402
 
+from Library.PosteriorSummary import (                       # noqa: E402
+    CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
+)
 from Library.DataAccess import (                            # noqa: E402
     get_price_panel, get_pmle_params, pmle_params_exists,
     save_pmle_params, available_pmle_dates,
@@ -230,7 +233,7 @@ def report(df):
             w = k + "_W"
             if k not in prior_sd or w not in df:
                 continue
-            ratio = (df[w] / 3.7616) / prior_sd[k]
+            ratio = (df[w] * CI_WIDTH_TO_SD) / prior_sd[k]
             share = 100.0 * float((ratio < 0.70).mean())
             print("   %-8s %5.1f%%   median ratio %.2f   (min %.2f, max %.2f)"
                   % (k, share, ratio.median(), ratio.min(), ratio.max()))
@@ -293,6 +296,7 @@ def main():
     print("=" * 72)
     print("  %s -> %s, every %d business days, %d-day lookback"
           % (a.beg, a.end, a.step, LOOKBACK))
+    print("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
 
     if a.full_sample:
         run_full_sample(a.beg, a.end)

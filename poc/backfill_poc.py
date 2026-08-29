@@ -41,6 +41,21 @@ from Library.DataAccess import get_price_series  # noqa: E402
 # Configuration
 # ----------------------------------------------------------------------------
 
+# Systematic liquidity proxy. Fixed to SPX, matching the paper.
+#
+# The proxy stands for aggregate LIQUIDITY, not the equity market's return. SPX
+# is chosen because it is liquid enough that its own moves are not distorted by
+# its own illiquidity, broad enough that no issuer's idiosyncratic risk leaks
+# in, and it is the instrument participants actually reach for when de-risking -
+# which is where liquidity demand concentrates in a crisis.
+#
+# Alternatives (NDX, RUT, RSP, and SPY vs the index) are a deferred robustness
+# test, not an open question. The selection criterion is already defined: the
+# best proxy is the one leaving idiosyncratic residuals uncorrelated across
+# names and free of regime-dependent heteroscedasticity - the same test as the
+# FRTB MAR33.16(2) idiosyncrasy demonstration. Note this panel is all S&P 500
+# large caps, so RUT is a mismatch by construction and would lose for reasons
+# that do not generalise.
 INDEX = "^SPX"
 
 # Crisis window to reconstruct and score.

@@ -1,6 +1,30 @@
 # jgl-risk-sol
 
-Risk management solutions built on the systematic liquidity risk framework.
+Market risk analytics built on the systematic liquidity risk framework of
+Yi & Kim (2026), which decomposes an asset's return into exposure to a
+market-wide liquidity factor - diffusive and jump - plus an idiosyncratic
+residual.
+
+## Scope
+
+The framework supports, from one calibrated object:
+
+- **Liquidity factor exposures** - per-position beta, gamma and rho as the
+  derivative-book analogue of equity style-factor loadings, aggregable to book
+  level for limit setting.
+- **Tail risk** - VaR and expected shortfall across a term structure of risk
+  horizons, and CoVaR conditional on a systemic liquidity event.
+- **Stress testing and what-if** - parameter-shift scenarios ("what happens if
+  jump sensitivity doubles"), rather than replaying history.
+- **Pricing and hedging** - path-dependent and exotic payoffs under the same
+  parameters, with the volatility skew implied by the physical dynamics.
+- **Stress-period reconstruction** - risk factor histories for underlyings that
+  did not trade during a period of stress.
+- **Liquidity monitoring** - filtered systematic and idiosyncratic liquidity
+  processes as market depth and resiliency indicators, from daily prices alone.
+
+Not all of these are built. The list is the scope of the framework, not a
+description of the current state of this repository.
 
 ## Current work: spot backfill study
 

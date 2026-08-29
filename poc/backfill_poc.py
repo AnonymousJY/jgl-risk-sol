@@ -80,10 +80,16 @@ CRISES = {
 # Estimation windows per crisis. The gap to the crisis is the experiment: it is
 # the regime-transportability question (spec §3), answered as a by-product.
 #
-# Note the GFC "2019_2021" window contains COVID. That is realistic, not a
-# defect - a bank estimating today uses whatever stress its window happens to
-# contain - but report it separately, since a window containing a crisis may
-# estimate jump sensitivity better than a calm one.
+# Do NOT label these "calm" or "stressed". There is no genuinely calm three-year
+# window in the last fifteen years - 2011 euro, 2013 taper, 2015 China, 2018 Q1
+# and Q4, 2020 COVID, 2022 bear, 2023 SVB, 2025 tariffs. Every window below
+# contains stress of some kind.
+#
+# Stress content is therefore MEASURED, not asserted: window_stress() below
+# reports jump-day count and jump mass per window from the Stage 1 filter, and
+# those land in the results as covariates. Reconstruction quality can then be
+# related to (gap length, estimation-window stress) quantitatively instead of
+# resting on hand-labels.
 EST_WINDOWS = {
     "GFC": {
         "A_2011_2013": ("2011-01-01", "2013-12-31"),   # ~2y gap, has 2011 euro stress
@@ -276,6 +282,24 @@ def reconstruct(params, diffusive, marks, crisis, n_paths=N_PATHS, seed=SEED):
 # Step 4 - scoring
 # ----------------------------------------------------------------------------
 
+def window_stress(marks, is_jump, window):
+    """Measured stress content of an estimation window, from the filter output.
+
+    Reported rather than assumed, because no recent three-year window is calm
+    and a hand-label would smuggle the analyst's prior into the result.
+    """
+    a, b = window
+    m = marks.loc[a:b]
+    j = is_jump.loc[a:b]
+    n_days = len(m)
+    return {
+        "win_jump_days": int(j.sum()),
+        "win_jump_per_yr": round(float(j.sum()) / max(n_days / 252.0, 1e-9), 1),
+        "win_jump_mass": round(float(m.abs().sum()), 4),
+        "win_max_jump_pct": round(float(m.abs().max()) * 100, 1) if j.any() else 0.0,
+    }
+
+
 def _assert_no_overlap(window, crisis, wlabel, clabel):
     """Leakage control: an estimation window may not touch the crisis it
     reconstructs. Cheap to check, fatal if violated, and easy to break when
@@ -357,10 +381,24 @@ def main():
         print("Populate NAMES with {ticker: sector_etf} and re-run.")
         return
 
-    rows = []
+    print("Measured stress content of each estimation window")
+    print("(no window is calm - this is why it is measured, not labelled)\n")
+    print("  %-6s %-12s %-24s %5s %8s %9s %8s"
+          % ("crisis", "window", "range", "jumps", "per_yr", "mass", "max%"))
+    stress = {}
     for crisis_label, CRISIS in CRISES.items():
         for wlabel, window in EST_WINDOWS[crisis_label].items():
             _assert_no_overlap(window, CRISIS, wlabel, crisis_label)
+            st = window_stress(marks, is_jump, window)
+            stress[(crisis_label, wlabel)] = st
+            print("  %-6s %-12s %s..%s %5d %8.1f %9.4f %8.1f"
+                  % (crisis_label, wlabel, window[0], window[1],
+                     st["win_jump_days"], st["win_jump_per_yr"],
+                     st["win_jump_mass"], st["win_max_jump_pct"]))
+    print()
+
+    rows = []
+    for crisis_label, CRISIS in CRISES.items():
         for wlabel, window in EST_WINDOWS[crisis_label].items():
           for ticker, etf in NAMES.items():
             try:
@@ -383,7 +421,8 @@ def main():
 
                 s = score(actual.values, ens, bench)
                 s.update({"crisis": crisis_label, "window": wlabel,
-                          "ticker": ticker, "etf": etf, **p})
+                          "ticker": ticker, "etf": etf,
+                          **stress[(crisis_label, wlabel)], **p})
                 rows.append(s)
             except Exception as e:                      # noqa: BLE001
                 print("skip %s / %s / %s: %s" % (crisis_label, ticker, wlabel, e))

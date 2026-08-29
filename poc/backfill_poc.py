@@ -132,10 +132,25 @@ NAMES = {
     "SO":   "XLU", "D":    "XLU", "AEP":  "XLU", "XEL":  "XLU", "ED":   "XLU",
 }
 
-N_PATHS = 10_000
+# Rolling estimation. A single 1-year window often has too few jump days to
+# identify gamma. Rolling a 1-year window through the estimation period keeps
+# the regulatory 1-year lookback convention while pooling information across
+# many window positions.
+ROLL_WINDOW_DAYS = 252          # the regulatory lookback
+ROLL_STEP_DAYS = 21             # monthly steps
 
-# Minimum jump days in an estimation window for gamma to be identified. Below
-# this, gamma falls back to 1.0 and the row is flagged, not silently used.
+# Block bootstrap over the rolling estimates.
+#
+# CRITICAL: rolling 1-year windows stepped monthly share 11/12 of their data.
+# The sequence of estimates is therefore heavily autocorrelated and an i.i.d.
+# bootstrap would understate the standard error by roughly sqrt(12), producing
+# a falsely tight parameter distribution. Blocks must span at least one full
+# estimation window so that resampled blocks are approximately independent.
+BOOT_BLOCK = ROLL_WINDOW_DAYS // ROLL_STEP_DAYS      # 12 positions = 1 window
+N_BOOT = 200                    # parameter vector draws
+N_PATHS_PER_DRAW = 100          # idiosyncratic paths per draw
+
+# Minimum jump days in a rolling window for gamma to be identified there.
 MIN_JUMP_DAYS_FOR_GAMMA = 5
 JUMP_THRESHOLD_SD = 3.0   # sensitivity to this is a required robustness check
 SEED = 20260829
@@ -281,21 +296,35 @@ def estimate_name(name_ret, diffusive, marks, is_jump, window):
 # Step 3 - reconstruct the crisis window
 # ----------------------------------------------------------------------------
 
-def reconstruct(params, diffusive, marks, crisis, n_paths=N_PATHS, seed=SEED):
-    """Ensemble of crisis-period log-return paths.
+def reconstruct(draws, diffusive, marks, crisis, seed=SEED):
+    """Crisis-period log-return ensemble under BOTH sources of uncertainty.
 
-    Systematic diffusion and jump marks are held at their realised historical
-    values; only the idiosyncratic component is drawn.
+    Systematic diffusion and jump realisations are held at their observed
+    historical values - only the name's loadings and its idiosyncratic
+    innovations vary.
+
+    Returns (pooled_returns, es_by_draw):
+      pooled_returns : all simulated returns, for distributional scoring
+      es_by_draw     : one 97.5% ES per parameter draw, so the spread across
+                       draws IS the parameter-uncertainty assessment that FRTB
+                       Principle seven and SR 26-2 both ask for.
     """
     a, b = crisis
     dz = diffusive.loc[a:b].values
     yj = marks.loc[a:b].values
     T = len(dz)
-
-    systematic = params["sigma_beta"] * dz + params["gamma"] * yj   # shape (T,)
     rng = np.random.default_rng(seed)
-    idio = rng.normal(0.0, params["kappa"], size=(n_paths, T))
-    return systematic[None, :] + idio                                # (n_paths, T)
+
+    pooled = []
+    es_by_draw = np.empty(len(draws))
+    for i, (sigma_beta, kappa, gamma) in enumerate(draws):
+        systematic = sigma_beta * dz + gamma * yj
+        idio = rng.normal(0.0, kappa, size=(N_PATHS_PER_DRAW, T))
+        paths = systematic[None, :] + idio
+        es_by_draw[i] = var_es(paths.ravel(), 0.975)[1]
+        pooled.append(paths)
+    return np.concatenate(pooled, axis=0), es_by_draw
+
 
 
 # ----------------------------------------------------------------------------
@@ -318,6 +347,86 @@ def window_stress(marks, is_jump, window):
         "win_jump_mass": round(float(m.abs().sum()), 4),
         "win_max_jump_pct": round(float(m.abs().max()) * 100, 1) if j.any() else 0.0,
     }
+
+
+def estimate_rolling(name_ret, diffusive, marks, is_jump, window):
+    """Parameter vectors from a 1-year window rolled through `window`.
+
+    Returns a DataFrame with one row per window position. Only data inside
+    `window` is touched - the leakage control is unchanged.
+
+    Rolling solves the identification problem: any single calm year may hold
+    too few jump days to pin gamma, but the union of positions across several
+    years will contain enough, while each individual estimate still respects
+    the 1-year regulatory lookback.
+    """
+    a, b = window
+    r = name_ret.loc[a:b].dropna()
+    if len(r) < ROLL_WINDOW_DAYS + ROLL_STEP_DAYS:
+        raise ValueError("estimation window shorter than one rolling window")
+
+    rows = []
+    for end in range(ROLL_WINDOW_DAYS, len(r) + 1, ROLL_STEP_DAYS):
+        sub = r.iloc[end - ROLL_WINDOW_DAYS:end]
+        d = diffusive.reindex(sub.index)
+        m = marks.reindex(sub.index)
+        j = is_jump.reindex(sub.index).fillna(False)
+        calm = ~j
+        if calm.sum() < 60:
+            continue
+
+        X = d[calm].values
+        Y = sub[calm].values
+        if X @ X <= 0:
+            continue
+        sigma_beta = float(X @ Y / (X @ X))
+        resid = Y - sigma_beta * X
+        kappa = float(resid.std(ddof=1))
+
+        n_jump = int(j.sum())
+        if n_jump >= MIN_JUMP_DAYS_FOR_GAMMA and float(m[j].values @ m[j].values) > 0:
+            Xj, Yj = m[j].values, sub[j].values
+            gamma = float(Xj @ Yj / (Xj @ Xj))
+            gid = True
+        else:
+            gamma = np.nan          # left missing, not defaulted to 1.0
+            gid = False
+
+        rows.append({"asof": sub.index[-1], "sigma_beta": sigma_beta,
+                     "kappa": kappa, "gamma": gamma, "gamma_identified": gid,
+                     "n_jump": n_jump})
+
+    if not rows:
+        raise ValueError("no usable rolling positions")
+    return pd.DataFrame(rows).set_index("asof")
+
+
+def block_bootstrap_params(est, n_boot=N_BOOT, block=BOOT_BLOCK, seed=SEED):
+    """Moving-block bootstrap over the sequence of rolling estimates.
+
+    Resamples the parameter VECTOR jointly, never each parameter separately:
+    sigma_beta and kappa come from the same regression and are negatively
+    correlated (more variance explained systematically leaves less residual),
+    so independent resampling would break that dependence and double-count.
+
+    Blocks of `block` consecutive positions preserve the autocorrelation that
+    overlapping windows induce. Returns an array of shape (n_boot, 3) holding
+    (sigma_beta, kappa, gamma) draws.
+    """
+    cols = ["sigma_beta", "kappa", "gamma"]
+    arr = est[cols].to_numpy(dtype=float)
+    n = len(arr)
+    block = max(1, min(block, n))
+    rng = np.random.default_rng(seed)
+
+    draws = np.empty((n_boot, len(cols)))
+    n_blocks = int(np.ceil(n / block))
+    for b in range(n_boot):
+        starts = rng.integers(0, max(n - block + 1, 1), size=n_blocks)
+        idx = np.concatenate([np.arange(st, min(st + block, n)) for st in starts])[:n]
+        sample = arr[idx]
+        draws[b] = np.nanmean(sample, axis=0)     # gamma may be NaN in some rows
+    return draws
 
 
 def _assert_no_overlap(window, crisis, wlabel, clabel):
@@ -422,10 +531,31 @@ def main():
         for wlabel, window in EST_WINDOWS[crisis_label].items():
           for ticker, etf in NAMES.items():
             try:
-                p = estimate_name(rets[ticker], diffusive, marks, is_jump, window)
-                ens = reconstruct(p, diffusive, marks, CRISIS)
+                est = estimate_rolling(rets[ticker], diffusive, marks,
+                                       is_jump, window)
+                draws = block_bootstrap_params(est)
+                ens, es_draws = reconstruct(draws, diffusive, marks, CRISIS)
                 actual = rets[ticker].loc[CRISIS[0]:CRISIS[1]].dropna()
                 ens = ens[:, :len(actual)]
+
+                # Point estimates and their bootstrap spread. Conservatism is
+                # defined on the OUTPUT (ES), never by taking an upper quantile
+                # of each input: the paper shows VaR rises with rho when
+                # rho >= 0 but FALLS with beta when rho < 0, so "upper quantile
+                # of every parameter" is not reliably conservative.
+                p = {
+                    "sigma_beta": float(np.nanmean(draws[:, 0])),
+                    "kappa": float(np.nanmean(draws[:, 1])),
+                    "gamma": float(np.nanmean(draws[:, 2])),
+                    "gamma_sd_boot": float(np.nanstd(draws[:, 2])),
+                    "n_roll_positions": int(len(est)),
+                    "pct_roll_gamma_ident": round(
+                        100.0 * float(est["gamma_identified"].mean()), 1),
+                    "gamma_identified": bool(est["gamma_identified"].any()),
+                    "es975_recon_mean": float(np.mean(es_draws)),
+                    "es975_recon_p025": float(np.quantile(es_draws, 0.025)),
+                    "es975_recon_p975": float(np.quantile(es_draws, 0.975)),
+                }
 
                 # Benchmark 1: sector ETF proxy (the regulatory fallback).
                 # Benchmark 2: beta-scaled index, beta from the same window.
@@ -463,17 +593,25 @@ def main():
     print("\nThe claim is recon_abs < etf_abs and recon_abs < betaidx_abs, with the")
     print("margin widening in gamma, and holding across BOTH crises. Degradation")
     print("across estimation windows is the transportability result.")
-    n_unident = int((~res["gamma_identified"]).sum())
+    n_unident = int((res["pct_roll_gamma_ident"] < 50).sum())
     if n_unident:
-        print("\nWARNING: gamma NOT identified in %d of %d runs (fewer than %d jump"
-              % (n_unident, len(res), MIN_JUMP_DAYS_FOR_GAMMA))
-        print("days in the estimation window); gamma defaulted to 1.0 there. Those rows")
-        print("test an assumption, not an estimate - exclude them from the headline.")
-        print(res[~res["gamma_identified"]]
+        print("\nWARNING: gamma identified in fewer than half the rolling positions")
+        print("for %d of %d runs. Those estimates rest on very few jump days -"
+              % (n_unident, len(res)))
+        print("report them separately from the headline.")
+        print(res[res["pct_roll_gamma_ident"] < 50]
               .groupby(["crisis", "window"]).size().to_string())
     else:
-        print("\ngamma identified in all %d runs (>= %d jump days per estimation window)."
-              % (len(res), MIN_JUMP_DAYS_FOR_GAMMA))
+        print("\ngamma identified in a majority of rolling positions for all %d runs."
+              % len(res))
+
+    res["es975_ci_width_pct"] = (100.0 * (res.es975_recon_p975 - res.es975_recon_p025)
+                                 / res.es975_recon_mean)
+    print("\nParameter uncertainty - width of the bootstrap 95% interval on the")
+    print("reconstructed ES, as % of the mean. This is the Principle seven /")
+    print("SR 26-2 'assessment of uncertainty in the final outcome':")
+    print(res.groupby(["crisis", "window"])["es975_ci_width_pct"]
+             .describe()[["mean", "50%", "max"]].round(1).to_string())
 
     print("\nFull detail written to poc_results.csv")
 

@@ -77,6 +77,60 @@ PAPER_APRIL_2025 = {
 }
 
 
+def run_full_sample(beg=BEG, end=END):
+    """ONE fit on the entire sample, not a 252-day window.
+
+    This is the cheap test that should be run before anything clever. A 252-day
+    window holds ~12 jumps; 2007-2026 holds ~230. If that is enough to move
+    eta1 and eta2 off their priors, the identification problem is solved with
+    returns alone - no options, no Q-to-P mapping, no tenor question.
+
+    Writes under the pseudo-date FULLSAMPLE so it does not collide with the
+    rolling estimates.
+    """
+    price_ts = get_price_panel([SYSTEMATIC_ID])
+    return_ts = price_ts.pct_change().dropna()
+    rv = return_ts.loc[
+        (return_ts.index >= pd.to_datetime(beg, format=DATE_FMT))
+        & (return_ts.index <= pd.to_datetime(end, format=DATE_FMT)),
+        SYSTEMATIC_ID].to_numpy()
+
+    print("  full-sample fit on %d daily returns (%s to %s)"
+          % (len(rv), beg, end))
+    print("  this is one MCMC fit - expect minutes, not seconds\n")
+
+    t0 = time.perf_counter()
+    _, _, results = pmle_kimyirisk_systematic_helper(
+        ("FULLSAMPLE", rv, np.array(1 / BASE_DAYS), SEED, N_MC_PATHS,
+         SYSTEMATIC_ID))
+    print("  done in %.0fs\n" % (time.perf_counter() - t0))
+
+    params = assemble_systematic_params(results)
+    save_pmle_params("FULLSAMPLE", SYSTEMATIC_ID, params)
+
+    # the only question that matters: did the posterior move off the prior?
+    from poc.prior_diagnostics import PRIORS, HDI_TO_SD          # noqa: E402
+    print("  %-8s %-14s %9s %9s %9s %7s  %s"
+          % ("param", "prior", "pri_mean", "post_mean", "post_sd", "ratio",
+             "verdict"))
+    print("  " + "-" * 74)
+    for k, (label, pmean, psd) in PRIORS.items():
+        if k not in params:
+            continue
+        m, lo, hi = params[k]
+        post_sd = (hi - lo) * HDI_TO_SD
+        ratio = post_sd / psd
+        v = ("PRIOR-DRIVEN" if ratio > 0.90 else
+             "weak" if ratio > 0.70 else
+             "partial" if ratio > 0.35 else "DATA-DRIVEN")
+        print("  %-8s %-14s %9.3f %9.3f %9.3f %7.2f  %s"
+              % (k, label, pmean, m, post_sd, ratio, v))
+    print("\n  If dETA1 and dETA2 are now DATA-DRIVEN, the identification")
+    print("  problem is solved from returns alone and nothing further is")
+    print("  needed. If they are still PRIOR-DRIVEN with ~230 jumps, then and")
+    print("  only then is the option-implied route worth the complexity.")
+
+
 def valuation_dates(beg, end, step):
     days = pd.bdate_range(pd.to_datetime(beg, format=DATE_FMT),
                           pd.to_datetime(end, format=DATE_FMT))
@@ -203,6 +257,9 @@ def main():
                     help="also check April 2025 against the paper")
     ap.add_argument("--report-only", action="store_true",
                     help="skip estimation, just summarise what is on disk")
+    ap.add_argument("--full-sample", action="store_true",
+                    help="ONE fit on the whole sample. Run this first - it is "
+                         "the cheap test of whether more jumps fixes eta1/eta2.")
     a = ap.parse_args()
 
     print("=" * 72)
@@ -210,6 +267,10 @@ def main():
     print("=" * 72)
     print("  %s -> %s, every %d business days, %d-day lookback"
           % (a.beg, a.end, a.step, LOOKBACK))
+
+    if a.full_sample:
+        run_full_sample(a.beg, a.end)
+        return
 
     if not a.report_only:
         run(valuation_dates(a.beg, a.end, a.step))

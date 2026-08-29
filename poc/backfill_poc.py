@@ -58,15 +58,44 @@ from Library.DataAccess import get_price_series  # noqa: E402
 # that do not generalise.
 INDEX = "^SPX"
 
-# Crisis window to reconstruct and score.
-CRISIS = ("2007-01-01", "2009-12-31")
+# Crisis windows to reconstruct and score, each paired with the estimation
+# windows that may be used for it.
+#
+# RULE: an estimation window must never overlap the crisis it reconstructs.
+# That is the leakage control, and it is asserted at run time below.
+#
+# Each window brackets the crisis - calm run-up, stress, partial recovery - so
+# the reconstruction is scored across regimes rather than on the crash alone.
+#
+# GFC is primary: under FRTB the stress period is searched back to 2007, and
+# for most equity portfolios 2008-09 still binds. COVID is the second window
+# because it is a different KIND of liquidity event (violent, exogenous,
+# policy-truncated, V-shaped) and because its estimation gaps are short enough
+# to match the real production case - a 2021 listing backfilled to 2020.
+CRISES = {
+    "GFC":   ("2007-01-01", "2009-12-31"),
+    "COVID": ("2019-06-01", "2021-06-30"),
+}
 
-# Estimation windows. Variant D is the realistic 2021-IPO analogue (spec §3).
+# Estimation windows per crisis. The gap to the crisis is the experiment: it is
+# the regime-transportability question (spec §3), answered as a by-product.
+#
+# Note the GFC "2019_2021" window contains COVID. That is realistic, not a
+# defect - a bank estimating today uses whatever stress its window happens to
+# contain - but report it separately, since a window containing a crisis may
+# estimate jump sensitivity better than a calm one.
 EST_WINDOWS = {
-    "A_2011_2013": ("2011-01-01", "2013-12-31"),
-    "B_2013_2015": ("2013-01-01", "2015-12-31"),
-    "C_2019_2021": ("2019-01-01", "2021-12-31"),
-    "D_2022_2024": ("2022-01-01", "2024-12-31"),
+    "GFC": {
+        "A_2011_2013": ("2011-01-01", "2013-12-31"),   # ~2y gap, has 2011 euro stress
+        "B_2013_2015": ("2013-01-01", "2015-12-31"),   # ~4y gap, calm
+        "C_2019_2021": ("2019-01-01", "2021-12-31"),   # ~11y gap, contains COVID
+        "D_2022_2024": ("2022-01-01", "2024-12-31"),   # ~14y gap, the 2021-IPO analogue
+    },
+    "COVID": {
+        "E_2022_2024": ("2022-01-01", "2024-12-31"),   # ~2y after: the real production case
+        "F_2016_2018": ("2016-01-01", "2018-12-31"),   # ~2y before: tests symmetry
+        "G_2013_2015": ("2013-01-01", "2015-12-31"),   # ~5y before
+    },
 }
 
 # Names to test, each mapped to its sector-ETF benchmark (spec §4, §5).
@@ -247,6 +276,18 @@ def reconstruct(params, diffusive, marks, crisis, n_paths=N_PATHS, seed=SEED):
 # Step 4 - scoring
 # ----------------------------------------------------------------------------
 
+def _assert_no_overlap(window, crisis, wlabel, clabel):
+    """Leakage control: an estimation window may not touch the crisis it
+    reconstructs. Cheap to check, fatal if violated, and easy to break when
+    editing the windows above."""
+    w0, w1 = pd.Timestamp(window[0]), pd.Timestamp(window[1])
+    c0, c1 = pd.Timestamp(crisis[0]), pd.Timestamp(crisis[1])
+    if w0 <= c1 and c0 <= w1:
+        raise ValueError(
+            "LEAKAGE: estimation window %s (%s..%s) overlaps crisis %s (%s..%s)"
+            % (wlabel, window[0], window[1], clabel, crisis[0], crisis[1]))
+
+
 def var_es(returns, q=0.99):
     """Loss-side VaR and ES at level q, from a 1-D array of log returns."""
     losses = -np.asarray(returns).ravel()
@@ -317,8 +358,11 @@ def main():
         return
 
     rows = []
-    for wlabel, window in EST_WINDOWS.items():
-        for ticker, etf in NAMES.items():
+    for crisis_label, CRISIS in CRISES.items():
+        for wlabel, window in EST_WINDOWS[crisis_label].items():
+            _assert_no_overlap(window, CRISIS, wlabel, crisis_label)
+        for wlabel, window in EST_WINDOWS[crisis_label].items():
+          for ticker, etf in NAMES.items():
             try:
                 p = estimate_name(rets[ticker], diffusive, marks, is_jump, window)
                 ens = reconstruct(p, diffusive, marks, CRISIS)
@@ -338,20 +382,29 @@ def main():
                 }
 
                 s = score(actual.values, ens, bench)
-                s.update({"window": wlabel, "ticker": ticker, **p})
+                s.update({"crisis": crisis_label, "window": wlabel,
+                          "ticker": ticker, "etf": etf, **p})
                 rows.append(s)
             except Exception as e:                      # noqa: BLE001
-                print("skip %s / %s: %s" % (ticker, wlabel, e))
+                print("skip %s / %s / %s: %s" % (crisis_label, ticker, wlabel, e))
 
     res = pd.DataFrame(rows)
     res.to_csv("poc_results.csv", index=False)
 
-    print("\nTier 2 headline - ES(97.5%) error vs actual, by construction:")
-    cols = ["window", "ticker", "gamma", "sigma_beta",
-            "recon_es975_err_pct", "etf_es975_err_pct", "betaidx_es975_err_pct"]
-    print(res[cols].round(2).to_string(index=False))
-    print("\nThe claim is |recon| < |etf| and |recon| < |betaidx|, "
-          "with the margin widening in gamma. Written to poc_results.csv")
+    print("\nTier 2 headline - mean |ES(97.5%) error| by crisis and estimation window:")
+    for c in ("recon", "etf", "betaidx"):
+        res[c + "_abs"] = res[c + "_es975_err_pct"].abs()
+    summary = (res.groupby(["crisis", "window"])[["recon_abs", "etf_abs", "betaidx_abs"]]
+                  .mean().round(1))
+    print(summary.to_string())
+    print("\nSame, excluding financials (XLF) - the sector whose 2008 moves were")
+    print("driven by solvency rather than market-wide liquidity:")
+    print(res[res.etf != "XLF"].groupby(["crisis", "window"])
+             [["recon_abs", "etf_abs", "betaidx_abs"]].mean().round(1).to_string())
+    print("\nThe claim is recon_abs < etf_abs and recon_abs < betaidx_abs, with the")
+    print("margin widening in gamma, and holding across BOTH crises. Degradation")
+    print("across estimation windows is the transportability result.")
+    print("\nFull detail written to poc_results.csv")
 
 
 if __name__ == "__main__":

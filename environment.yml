@@ -1,0 +1,63 @@
+# ============================================================================
+# Conda environment for mkt-depth-n-resiliency
+# Code accompanying "Systematic Liquidity Risk Management: A Novel Perspective
+# on Derivatives" (Yi & Kim).
+#
+# This is the recommended install path. PyMC officially recommends conda-forge
+# (it builds PyTensor's C / BLAS toolchain cleanly, which matters on macOS).
+# Four packages are not on conda-forge and are installed via pip in the same
+# environment — conda installs everything it can FIRST, pip runs LAST.
+#
+#   conda env create -f environment.yml
+#   conda activate liquidity
+#
+# To reproduce exactly later:
+#   conda env export > environment-lock.yml
+#
+# A pip-only alternative is provided in requirements.txt.
+# ============================================================================
+name: liquidity
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+
+  # --- core numerical stack ---
+  - numpy>=1.26
+  - scipy>=1.11
+  - pandas>=2.0
+
+  # --- Bayesian estimation / MCMC (P-MLE calibration) ---
+  - pymc>=5.16
+  - arviz>=0.18
+  - pytensor>=2.25
+  - nutpie>=0.13          # default NUTS sampler in RiskEngineKimYi2025.py
+
+  # --- plotting ---
+  - matplotlib>=3.7
+  - seaborn>=0.13
+
+  # --- CLI ergonomics ---
+  - tqdm>=4.65          # progress bars in skew_calibrate_{systematic,idiosyncratic}.py
+
+  # --- io / notebook execution ---
+  - pyarrow>=14.0
+  - jupyter>=1.0
+  - nbconvert>=7.0
+
+  # --- required by ustreasurycurve (pip, below) but available on conda-forge,
+  # so installed via conda rather than left for pip to resolve ---
+  - polars
+
+  # --- optional GPU acceleration ---
+  # Uncomment the line matching your CUDA toolkit to let ImportLibs.py
+  # swap NumPy -> CuPy automatically. Leave commented to run on CPU.
+  # - cupy>=13.0
+
+  # --- pip-only packages (not available on conda-forge) ---
+  - pip
+  - pip:
+      - finance-datareader   # live SPX / COIN price series
+      - databento>=0.34            # options data (Study notebooks)
+      - ustreasurycurve==0.0.5   # US Treasury curve (discounting); pin: 0.0.6+ has an incomplete polars migration that fails on pandas
+      - nelson-siegel-svensson>=0.5  # NSS curve fit (skew calibration)

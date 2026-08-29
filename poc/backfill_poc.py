@@ -158,7 +158,23 @@ N_PATHS_PER_DRAW = 100          # idiosyncratic paths per draw
 
 # Minimum jump days in a rolling window for gamma to be identified there.
 MIN_JUMP_DAYS_FOR_GAMMA = 5
-JUMP_THRESHOLD_SD = 3.0   # sensitivity to this is a required robustness check
+# Jump-detection threshold, in rolling standard deviations.
+#
+# 3.5, not 3.0. Ait-Sahalia (2004, JFE 74(3), "Disentangling diffusion from
+# jumps") shows that "as far into the tail as about 3.5 standard deviations, it
+# is still more likely that a large observed log-return was produced by Brownian
+# noise only". A 3-sd rule therefore labels as jumps returns that are more
+# probably diffusion.
+#
+# This is a placeholder for a formal test - Lee-Mykland (2008, RFS) or
+# Barndorff-Nielsen-Shephard bipower variation. Sensitivity to the threshold
+# remains a required robustness check either way.
+#
+# The deeper point from the same paper: jump identification is limited by
+# sampling FREQUENCY, not sample length. The asymptotics run in delta -> 0, not
+# T -> infinity. No quantity of daily data fully resolves this; intraday data
+# does. See business/07_prior_specification_literature.md.
+JUMP_THRESHOLD_SD = 3.5
 SEED = 20260829
 
 

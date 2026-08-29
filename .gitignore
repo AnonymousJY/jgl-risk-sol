@@ -1,9 +1,9 @@
-# Data - never commit market data or study output
-prices.csv
+# Study output
 poc_results.csv
+
+# Caches and derived artifacts (data/snapshots IS committed - it is the
+# reproducible input set, per Library/DataAccess.py)
 *.parquet
-*.csv.gz
-Data/
 Cache/
 cache/
 

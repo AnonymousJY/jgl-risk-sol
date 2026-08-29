@@ -18,21 +18,30 @@ Estimation here is a transparent two-regime regression, NOT the paper's full
 likelihood. It is adequate for a PoC and must be labelled as such in any
 write-up; substitute the PyMC estimator for production.
 
-INPUT: a CSV of daily adjusted closes, wide format, first column 'date',
-one column per ticker, including the index ('SPX') and any sector ETFs.
+INPUT: the price snapshots written by poc/fetch_prices.py, loaded through
+Library.DataAccess so the study uses the same source as the paper.
 
-    python backfill_poc.py prices.csv
+    python poc/fetch_prices.py      # once, to freeze the snapshots
+    python poc/backfill_poc.py      # from the repo root
 """
 
+import os
 import sys
+
 import numpy as np
 import pandas as pd
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from Library.DataAccess import get_price_series  # noqa: E402
 
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
 
-INDEX = "SPX"
+INDEX = "^SPX"
 
 # Crisis window to reconstruct and score.
 CRISIS = ("2007-01-01", "2009-12-31")
@@ -55,14 +64,22 @@ EST_WINDOWS = {
 # 2008 (GE Capital; the Countrywide and Merrill acquisitions plus capital
 # raises). The model is expected to do poorly on them. Report that.
 NAMES = {
-    "MSFT": "XLK", "ORCL": "XLK", "INTC": "XLK",
-    "JPM":  "XLF", "GS":   "XLF", "BAC":  "XLF",
-    "PG":   "XLP", "KO":   "XLP", "WMT":  "XLP",
-    "XOM":  "XLE", "CVX":  "XLE",
-    "CAT":  "XLI", "GE":   "XLI",
-    "JNJ":  "XLV", "PFE":  "XLV",
-    "HD":   "XLY", "SBUX": "XLY",
-    "SO":   "XLU",
+    # Technology
+    "MSFT": "XLK", "ORCL": "XLK", "INTC": "XLK", "AAPL": "XLK", "NVDA": "XLK",
+    # Financials
+    "JPM":  "XLF", "GS":   "XLF", "BAC":  "XLF", "C":    "XLF", "WFC":  "XLF",
+    # Consumer staples
+    "PG":   "XLP", "KO":   "XLP", "WMT":  "XLP", "PEP":  "XLP", "CL":   "XLP",
+    # Energy
+    "XOM":  "XLE", "CVX":  "XLE", "COP":  "XLE", "SLB":  "XLE", "OXY":  "XLE",
+    # Industrials
+    "CAT":  "XLI", "GE":   "XLI", "BA":   "XLI", "HON":  "XLI", "UNP":  "XLI",
+    # Health care
+    "JNJ":  "XLV", "PFE":  "XLV", "MRK":  "XLV", "ABT":  "XLV", "UNH":  "XLV",
+    # Consumer discretionary
+    "HD":   "XLY", "SBUX": "XLY", "AMZN": "XLY", "MCD":  "XLY", "NKE":  "XLY",
+    # Utilities
+    "SO":   "XLU", "D":    "XLU", "AEP":  "XLU", "XEL":  "XLU", "ED":   "XLU",
 }
 
 N_PATHS = 10_000
@@ -73,6 +90,23 @@ SEED = 20260829
 # ----------------------------------------------------------------------------
 # Step 1 - systematic factor from the index
 # ----------------------------------------------------------------------------
+
+def load_panel(symbols):
+    """Adjusted closes for `symbols` as one DataFrame.
+
+    Deliberately NOT Library.DataAccess.get_price_panel, which back-fills.
+    Back-filling would invent prices before a security's first trade - exactly
+    the fabricated history this study exists to avoid. Forward-fill only, so a
+    gap is carried across a holiday but a pre-listing period stays NaN.
+    """
+    frames = []
+    for sym in symbols:
+        s = get_price_series(sym)
+        s.index = pd.to_datetime(s.index)
+        frames.append(s.rename(sym))
+    panel = pd.concat(frames, axis=1).sort_index()
+    return panel.ffill()
+
 
 def log_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return np.log(prices / prices.shift(1)).dropna(how="all")
@@ -250,8 +284,9 @@ def score(actual, ensemble, benchmarks: dict):
 # Driver
 # ----------------------------------------------------------------------------
 
-def main(path):
-    prices = pd.read_csv(path, parse_dates=["date"]).set_index("date").sort_index()
+def main():
+    symbols = [INDEX] + sorted(set(NAMES) | set(NAMES.values()))
+    prices = load_panel(symbols)
     rets = log_returns(prices)
 
     diffusive, marks, is_jump, sys_params = filter_systematic(rets[INDEX])
@@ -305,4 +340,4 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "prices.csv")
+    main()

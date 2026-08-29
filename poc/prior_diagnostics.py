@@ -86,8 +86,11 @@ def main(dirpath):
         post_sd = float(((hi - lo) * HDI_TO_SD).median())
         ratio = post_sd / psd
 
-        if ratio > 0.90:
-            v = "PRIOR-DRIVEN - data adds nothing"
+        travel = abs(post_mean - pmean) / psd
+        if ratio > 0.90 and travel < 0.30:
+            v = "PRIOR-DRIVEN - neither location nor width"
+        elif ratio > 0.90:
+            v = "LOCATION ONLY - mean moves, precision is the prior"
         elif ratio > 0.70:
             v = "weakly identified"
         elif ratio > 0.35:
@@ -122,11 +125,46 @@ def main(dirpath):
         flag = "   <-- stable BECAUSE prior-driven" if (cv < 0.02 and r > 0.9) else ""
         print("     %-8s cv %6.4f%s" % (k, cv, flag))
 
+    print("\n  WHY each unidentified parameter is unidentified, and what fixes it.")
+    print("  These are NOT the same problem and do not have the same fix:\n")
+    print("    dALPHA  Mean-reversion SPEED. With alpha ~0.69 annualised the")
+    print("            half-life is ln2/0.69 ~ 1 year, so a 252-day window is")
+    print("            ONE half-life. Mean reversion cannot be estimated from")
+    print("            one half-life - the standard near-unit-root problem.")
+    print("            FIX: longer sample. 20 years is ~20 half-lives. This one")
+    print("            is genuinely solved by length.")
+    print("            WHY IT MATTERS MOST: alpha is the speed at which liquidity")
+    print("            shocks decay - it IS resiliency, the paper's named")
+    print("            contribution. If alpha is the prior, so is the resiliency")
+    print("            indicator.")
+    print()
+    print("    dETA1   Jump-size tail shape. Identified off jump MAGNITUDES, of")
+    print("    dETA2   which a 252-day window holds ~5-7 per tail. FIX: more")
+    print("            jumps helps, but Ait-Sahalia (2004) shows daily frequency")
+    print("            is itself limiting - below ~3.5 sd a large return is more")
+    print("            likely diffusion than a jump. Intraday data, or")
+    print("            option-implied tails, are the real answer.")
+    print()
+    print("    dPPROB  Jump DIRECTION. Binomial with n ~ 12 gives sd(p_hat) ~")
+    print("            0.14, which is the prior width - hence location moves but")
+    print("            precision does not. FIX: more jumps. Length alone will not")
+    print("            buy precision at the rate you need.")
+    print()
+    print("    dLAMB   Jump INTENSITY. Poisson count with mean ~12 gives relative")
+    print("            sd ~ 1/sqrt(12) ~ 29%. Already partially identified.")
+    print("            FIX: more jumps, straightforwardly.")
+    print()
+    print("    dSIGMA  Diffusion SCALE. 252 observations of it. Identified, and")
+    print("            Ait-Sahalia proves it stays identified even with jumps")
+    print("            present (asymptotic variance 2 sigma^4 delta).")
+
     bad = [k for k, (r, _) in verdicts.items() if r > 0.90]
     if bad:
         print("\n" + "!" * 78)
         print("  %s are not identified by a 252-day sample." % ", ".join(bad))
-        print("  Reporting them as estimates is not defensible.")
+        print("  That is %d of 6 parameters. Only dSIGMA is cleanly identified."
+              % len(bad))
+        print("  Reporting the rest as estimates is not defensible.")
         print()
         print("  DO NOT reach for the obvious fix - pooling these over a long")
         print("  sample while keeping 252 days for sigma. Calling them 'slow,")

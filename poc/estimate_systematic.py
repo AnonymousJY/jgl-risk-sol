@@ -185,8 +185,13 @@ def load_series():
     rows = []
     for dt in dates:
         s = get_pmle_params(dt, SYSTEMATIC_ID)
-        rows.append({"date": pd.to_datetime(dt, format=DATE_FMT),
-                     **{k: float(s[k]) for k in SYSTEMATIC_PARAMS if k in s}})
+        row = {"date": pd.to_datetime(dt, format=DATE_FMT)}
+        for k in SYSTEMATIC_PARAMS:
+            if k in s:
+                row[k] = float(s[k])
+            if k + "_CI_LOWER" in s and k + "_CI_UPPER" in s:
+                row[k + "_W"] = float(s[k + "_CI_UPPER"]) - float(s[k + "_CI_LOWER"])
+        rows.append(row)
     return pd.DataFrame(rows).set_index("date").sort_index()
 
 
@@ -210,6 +215,27 @@ def report(df):
 
     print("\nBy year (median):")
     print(df.groupby(df.index.year).median().round(4).to_string())
+
+    # prior sds, to judge identification date by date
+    try:
+        from poc.prior_diagnostics import PRIORS
+        prior_sd = {k: v[2] for k, v in PRIORS.items()}
+    except Exception:                                            # noqa: BLE001
+        prior_sd = {}
+
+    if prior_sd:
+        print("\nIdentification over time - share of valuation dates where the")
+        print("posterior is narrower than the prior (ratio < 0.70):")
+        for k in SYSTEMATIC_PARAMS:
+            w = k + "_W"
+            if k not in prior_sd or w not in df:
+                continue
+            ratio = (df[w] / 3.7616) / prior_sd[k]
+            share = 100.0 * float((ratio < 0.70).mean())
+            print("   %-8s %5.1f%%   median ratio %.2f   (min %.2f, max %.2f)"
+                  % (k, share, ratio.median(), ratio.min(), ratio.max()))
+        print("\n   0%% means the parameter is never identified at any date in")
+        print("   the sample - the rolling series is a series of priors.")
 
     print("\nJump intensity dLAMB at known stress episodes (should spike):")
     for label, (a, b) in {

@@ -1,4 +1,8 @@
-# Liquidity Backfill Study
+# jgl-risk-sol
+
+Risk management solutions built on the systematic liquidity risk framework.
+
+## Current work: spot backfill study
 
 Reconstruction of crisis-period spot returns for equity underlyings that did not
 trade during a stress period, using the systematic liquidity risk framework of

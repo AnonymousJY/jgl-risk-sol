@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 from Library.StatisticsMC import get_corr_mat
 from Library.Random import RandomBase, RandomMT19937
 from Library.Parameters import ParametersBase, ParametersConstant
+from Library.PosteriorSummary import summarize
 
 
 ParamsResults = namedtuple('ParamsResults', ["dMEAN", "dCI_LOWER", "dCI_UPPER"])

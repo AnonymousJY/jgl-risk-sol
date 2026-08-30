@@ -228,20 +228,28 @@ def report(df):
           % (df.index.min().date(), df.index.max().date(), len(df)))
     print("=" * 72)
     print("\nDistribution across valuation dates:")
-    print(df.describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]]
+    _p = [c for c in df.columns if not c.endswith("_W")]
+    print(df[_p].describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]]
             .round(4).to_string())
 
-    print("\nStability - coefficient of variation (sd / |mean|):")
-    cv = (df.std() / df.mean().abs()).sort_values()
-    for k, v in cv.items():
-        note = "" if v < 0.25 else "   <-- unstable"
-        print("   %-8s %6.3f%s" % (k, v, note))
-    print("\n   A well-identified parameter should not swing wildly across")
-    print("   adjacent 1-year windows. High CV means the estimate is absorbing")
-    print("   sample-specific noise, not structure.")
+    params_only = [c for c in df.columns if not c.endswith("_W")]
+    if len(df) < 2:
+        print("\nStability - needs at least 2 valuation dates; %d estimated."
+              % len(df))
+    else:
+        print("\nStability - coefficient of variation (sd / |mean|):")
+        cv = (df[params_only].std() / df[params_only].mean().abs()).sort_values()
+        for k, v in cv.items():
+            note = "" if v < 0.25 else "   <-- varies a lot across windows"
+            print("   %-8s %6.3f%s" % (k, v, note))
+        print("\n   Read this WITH the identification table below, not alone. A")
+        print("   low CV means the estimate barely moves - which is evidence of")
+        print("   identification only if the parameter is actually identified.")
+        print("   A prior-driven parameter is stable because its prior is.")
 
     print("\nBy year (median):")
-    print(df.groupby(df.index.year).median().round(4).to_string())
+    print(df[[c for c in df.columns if not c.endswith("_W")]]
+            .groupby(df.index.year).median().round(4).to_string())
 
     # prior sds, to judge identification date by date
     try:
@@ -261,8 +269,10 @@ def report(df):
             share = 100.0 * float((ratio < 0.70).mean())
             print("   %-8s %5.1f%%   median ratio %.2f   (min %.2f, max %.2f)"
                   % (k, share, ratio.median(), ratio.min(), ratio.max()))
-        print("\n   0%% means the parameter is never identified at any date in")
-        print("   the sample - the rolling series is a series of priors.")
+        print("\n   0% means the parameter is never identified at any date in the")
+        print("   sample - that rolling series is a series of priors, not estimates.")
+        print("   A ratio at or above 1.00 means the posterior is no narrower than")
+        print("   the prior: the likelihood is flat in that direction.")
 
     print("\nJump intensity dLAMB at known stress episodes (should spike):")
     for label, (a, b) in {

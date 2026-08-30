@@ -1,14 +1,15 @@
 # ============================================================================
 # Conda environment for jgl-risk-sol
 #
+# CPU-only variant of environment.yml, for macOS and non-CUDA machines.
 # Targets the CURRENT stack: PyMC 6.x on Python 3.12.
 # The paper repository (mkt-depth-n-resiliency) pins PyMC 5.16 / Python 3.10;
 # this repository deliberately diverges. See MIGRATION.md before running -
 # PyMC 6 changes the credible-interval default in a way that silently alters
 # stored estimates.
 #
-#   conda env create -f environment.yml
-#   conda activate jgl-risk-sol
+#   conda env create -f environment-cpu.yml
+#   conda activate jgl-risk-sol-cpu
 #
 # To freeze exactly what you actually got:
 #   conda env export > environment-lock.yml
@@ -16,7 +17,7 @@
 # conda-forge is not optional. PyMC recommends it because PyTensor's C/BLAS
 # toolchain builds cleanly there; the pip-only path compiles from source.
 # ============================================================================
-name: jgl-risk-sol
+name: jgl-risk-sol-cpu
 channels:
   - conda-forge
 dependencies:
@@ -53,20 +54,9 @@ dependencies:
   # --- required by ustreasurycurve (pip, below), but on conda-forge ---
   - polars
 
-  # --- GPU acceleration (used by the reconstruction only) ---
-  # Library/ArrayBackend.py picks CuPy automatically when it is importable and
-  # a device is visible; set JGL_FORCE_CPU=1 to fall back without uninstalling.
-  #
-  # Accelerates poc/backfill_poc.py (billions of normal variates). Does NOT
-  # accelerate the P-MLE estimation - six parameters on 252 observations is far
-  # below where a GPU repays launch overhead. See MIGRATION.md section 6.
-  #
-  # LINUX/CUDA ONLY. cupy has no macOS build on conda-forge, so this file will
-  # fail to solve on the Mac. Use environment-cpu.yml there.
-  #
-  # If the solver picks the wrong CUDA runtime, pin it explicitly, e.g.
-  #   - cuda-version=12.4
-  - cupy>=13.0
+  # --- no GPU ---
+  # This file omits cupy so it solves on macOS and on Linux boxes without CUDA.
+  # Library/ArrayBackend.py falls back to NumPy automatically.
 
   # --- pip-only packages (not on conda-forge) ---
   - pip

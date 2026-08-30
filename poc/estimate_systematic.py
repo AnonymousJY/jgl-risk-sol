@@ -247,28 +247,73 @@ def report(df):
         print("   identification only if the parameter is actually identified.")
         print("   A prior-driven parameter is stable because its prior is.")
 
-    # Mean, median AND max per year, not median alone.
+    # ---- one table: parameters by year, with the identification verdict ----
     #
-    # Median was a defensive default - robust to one bad fit - but it is the
-    # wrong summary for a table whose purpose is detecting crisis spikes. A
-    # crisis year's parameters are driven by its extreme months, and the median
-    # of twelve overlapping windows discards exactly that. Max is the statistic
-    # that answers "did it spike".
-    #
-    # A large mean-median gap flags a skewed year or an outlier fit - worth
-    # seeing rather than smoothing away.
+    # Mean and max, not median. Median was a defensive default and is the wrong
+    # summary for a table whose purpose is detecting crisis spikes: a crisis
+    # year's parameters are driven by its extreme months, and the median of
+    # twelve overlapping 252-day windows discards exactly that. Max answers
+    # "did it spike"; mean gives the level. The mean-median gap is checked
+    # separately below and only reported when it is large enough to matter.
     par = [c for c in df.columns if not c.endswith("_W")]
-    by_year = df[par].groupby(df.index.year).agg(["mean", "median", "max"])
-    for k in par:
-        t = by_year[k].round(4)
-        t["mean-med"] = (t["mean"] - t["median"]).round(4)
-        print("\n%s by year:" % k)
-        print(t.to_string())
-        worst = t["mean-med"].abs().idxmax()
-        if abs(t.loc[worst, "mean-med"]) > 0.10 * abs(t["median"].median()):
-            print("   largest mean-median gap: %s (%+.4f) - check that year for"
-                  % (worst, t.loc[worst, "mean-med"]))
-            print("   a skewed set of windows or a divergent fit.")
+    order = [c for c in ("dSIGMA", "dLAMB", "dALPHA", "dPPROB", "dETA1", "dETA2")
+             if c in par] + [c for c in par
+                             if c not in ("dSIGMA", "dLAMB", "dALPHA", "dPPROB",
+                                          "dETA1", "dETA2")]
+    g = df[order].groupby(df.index.year)
+    mean_, max_, med_ = g.mean(), g.max(), g.median()
+
+    def dec(col):
+        a = abs(df[col].median())
+        return 3 if a < 1 else (1 if a < 100 else 0)
+
+    CRISES = {2008: "GFC", 2009: "GFC", 2011: "euro", 2020: "covid", 2022: "bear"}
+    W = 15
+
+    print("\n" + "=" * (6 + W * len(order)))
+    print("SPX systematic parameters by year   -   mean (max) of the ~12 monthly")
+    print("252-day fits in each calendar year. Crisis years marked.")
+    print("=" * (6 + W * len(order)))
+    print("      " + "".join(c.rjust(W) for c in order))
+    print("      " + "".join("mean (max)".rjust(W) for _ in order))
+    print("-" * (6 + W * len(order)))
+    for y in mean_.index:
+        tag = CRISES.get(y, "")
+        row = "%-6s" % ("%d%s" % (y, "*" if tag else ""))
+        for c in order:
+            d = dec(c)
+            row += ("%.*f (%.*f)" % (d, mean_.loc[y, c], d, max_.loc[y, c])).rjust(W)
+        print(row + ("   " + tag if tag else ""))
+
+    # identification footer - the verdict sits with the series it describes
+    if prior_sd:
+        print("-" * (6 + W * len(order)))
+        foot = "ident "
+        for c in order:
+            w = c + "_W"
+            if c in prior_sd and w in df:
+                r = float(((df[w] * CI_WIDTH_TO_SD) / prior_sd[c]).median())
+                mark = "ok" if r < 0.35 else ("~" if r < 0.70 else "PRIOR")
+                foot += ("%.2f %s" % (r, mark)).rjust(W)
+            else:
+                foot += "".rjust(W)
+        print(foot)
+        print("      " + "posterior sd / prior sd, median across dates.".ljust(W))
+        print("      " + "PRIOR = the data adds nothing; the series is the prior.")
+
+    # mean-median divergence, reported only where it is material
+    flags = []
+    for c in order:
+        gap = (mean_[c] - med_[c]).abs()
+        scale = abs(float(med_[c].median())) or 1.0
+        y = gap.idxmax()
+        if gap.max() > 0.10 * scale:
+            flags.append("%s in %d (%+.3f)" % (c, y, mean_.loc[y, c] - med_.loc[y, c]))
+    if flags:
+        print("\nLarge mean-median gaps (skewed year, or a divergent fit worth checking):")
+        for f in flags:
+            print("   " + f)
+
 
     # prior sds, to judge identification date by date
     try:

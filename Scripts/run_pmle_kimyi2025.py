@@ -25,8 +25,15 @@ Run from the repository root:
 import time
 import numpy as np
 import pandas as pd
+import os
 import multiprocessing
-multiprocessing.set_start_method("fork", force=True)
+# forkserver, not fork. fork() in a process that has already started
+# threads is unsafe; Python 3.12+ warns and 3.14 changes the Linux
+# default for this reason. PyMC with a numba backend does start
+# threads, and the failure mode is a hang that looks like slow
+# sampling. Set JGL_MP_START to override.
+multiprocessing.set_start_method(
+    os.environ.get("JGL_MP_START", "forkserver"), force=True)
 
 from concurrent.futures import ProcessPoolExecutor
 from typing import List

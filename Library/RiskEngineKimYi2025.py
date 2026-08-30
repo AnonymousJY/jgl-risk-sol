@@ -165,40 +165,28 @@ def pmle_kimyirisk_systematic(
         idata_systematic = pm.sample(N_SIMS_MCMC, chains=4, tune=1000, cores=4, target_accept=0.95,
                                      progressbar=is_progress_bar, random_seed=rng_pymc, nuts_sampler=nuts_sampler)
 
-    params_sys_df = az.summary(idata_systematic, stat_focus="mean")
-
-    columns = params_sys_df.columns
-    column_mean = columns[0]
-    column_ci_lower = columns[2]
-    column_ci_upper = columns[3]
-
-    est_alpha = np.exp(params_sys_df.xs('alpha').xs(column_mean))
-    est_sigma = params_sys_df.xs('sigma').xs(column_mean)
-    est_pprob = np.exp(params_sys_df.xs('pprob').xs(column_mean))
-    est_lamb = params_sys_df.xs('lamb').xs(column_mean)
-    est_eta1 = params_sys_df.xs('eta1').xs(column_mean)
-    est_eta2 = params_sys_df.xs('eta2').xs(column_mean)
-
-    est_alpha_ci_lower = np.exp(params_sys_df.xs('alpha').xs(column_ci_lower))
-    est_alpha_ci_upper = np.exp(params_sys_df.xs('alpha').xs(column_ci_upper))
-    est_sigma_ci_lower = params_sys_df.xs('sigma').xs(column_ci_lower)
-    est_sigma_ci_upper = params_sys_df.xs('sigma').xs(column_ci_upper)
-    est_pprob_ci_lower = np.exp(params_sys_df.xs('pprob').xs(column_ci_lower))
-    est_pprob_ci_upper = np.exp(params_sys_df.xs('pprob').xs(column_ci_upper))
-    est_lamb_ci_lower = params_sys_df.xs('lamb').xs(column_ci_lower)
-    est_lamb_ci_upper = params_sys_df.xs('lamb').xs(column_ci_upper)
-    est_eta1_ci_lower = params_sys_df.xs('eta1').xs(column_ci_lower)
-    est_eta1_ci_upper = params_sys_df.xs('eta1').xs(column_ci_upper)
-    est_eta2_ci_lower = params_sys_df.xs('eta2').xs(column_ci_lower)
-    est_eta2_ci_upper = params_sys_df.xs('eta2').xs(column_ci_upper)
+    # Summaries come from Library.PosteriorSummary, not az.summary. The old code
+    # read CI bounds by COLUMN POSITION, which ArviZ 1.0 breaks, and their
+    # meaning was a library default that changed (94% HDI -> 89% ETI). The
+    # convention is now fixed at 95% equal-tailed in one place.
+    #
+    # alpha and pprob are summarised on their CONSTRAINED variables (alpha_rv,
+    # pprob_rv) rather than by exponentiating the summary of log(.). The old
+    # np.exp(mean(log x)) reported a geometric mean and shifted the interval.
+    a_m, a_lo, a_hi = summarize(idata_systematic, "alpha_rv")
+    s_m, s_lo, s_hi = summarize(idata_systematic, "sigma")
+    p_m, p_lo, p_hi = summarize(idata_systematic, "pprob_rv")
+    l_m, l_lo, l_hi = summarize(idata_systematic, "lamb")
+    e1_m, e1_lo, e1_hi = summarize(idata_systematic, "eta1")
+    e2_m, e2_lo, e2_hi = summarize(idata_systematic, "eta2")
 
     return {
-        'dALPHA': ParamsResults(dMEAN=est_alpha, dCI_LOWER=est_alpha_ci_lower, dCI_UPPER=est_alpha_ci_upper),
-        'dSIGMA': ParamsResults(dMEAN=est_sigma, dCI_LOWER=est_sigma_ci_lower, dCI_UPPER=est_sigma_ci_upper),
-        'dPPROB': ParamsResults(dMEAN=est_pprob, dCI_LOWER=est_pprob_ci_lower, dCI_UPPER=est_pprob_ci_upper),
-        'dLAMB': ParamsResults(dMEAN=est_lamb, dCI_LOWER=est_lamb_ci_lower, dCI_UPPER=est_lamb_ci_upper),
-        'dETA1': ParamsResults(dMEAN=est_eta1, dCI_LOWER=est_eta1_ci_lower, dCI_UPPER=est_eta1_ci_upper),
-        'dETA2': ParamsResults(dMEAN=est_eta2, dCI_LOWER=est_eta2_ci_lower, dCI_UPPER=est_eta2_ci_upper)
+        'dALPHA': ParamsResults(dMEAN=a_m, dCI_LOWER=a_lo, dCI_UPPER=a_hi),
+        'dSIGMA': ParamsResults(dMEAN=s_m, dCI_LOWER=s_lo, dCI_UPPER=s_hi),
+        'dPPROB': ParamsResults(dMEAN=p_m, dCI_LOWER=p_lo, dCI_UPPER=p_hi),
+        'dLAMB': ParamsResults(dMEAN=l_m, dCI_LOWER=l_lo, dCI_UPPER=l_hi),
+        'dETA1': ParamsResults(dMEAN=e1_m, dCI_LOWER=e1_lo, dCI_UPPER=e1_hi),
+        'dETA2': ParamsResults(dMEAN=e2_m, dCI_LOWER=e2_lo, dCI_UPPER=e2_hi)
     }
 
 
@@ -263,36 +251,21 @@ def pmle_kimyirisk_idiosyncratic(
         idata_idiosyncratic = pm.sample(N_SIMS_MCMC, chains=4, tune=1000, cores=4, target_accept=0.95,
                                         progressbar=is_progress_bar, random_seed=rng_pymc, nuts_sampler=nuts_sampler)
 
-    params_idi_df = az.summary(idata_idiosyncratic, stat_focus="mean")
-
-    columns = params_idi_df.columns
-    column_mean = columns[0]
-    column_ci_lower = columns[2]
-    column_ci_upper = columns[3]
-
-    est_mui = params_idi_df.xs('mui').xs(column_mean)
-    est_kappai = np.exp(params_idi_df.xs('kappai').xs(column_mean))
-    est_gammai = np.exp(params_idi_df.xs('gammai').xs(column_mean))
-    est_betai = np.exp(params_idi_df.xs('betai').xs(column_mean))
-    est_rhoix = np.tanh(params_idi_df.xs('rhoix').xs(column_mean))
-
-    est_mui_ci_lower = params_idi_df.xs('mui').xs(column_ci_lower)
-    est_mui_ci_upper = params_idi_df.xs('mui').xs(column_ci_upper)
-    est_kappai_ci_lower = np.exp(params_idi_df.xs('kappai').xs(column_ci_lower))
-    est_kappai_ci_upper = np.exp(params_idi_df.xs('kappai').xs(column_ci_upper))
-    est_gammai_ci_lower = np.exp(params_idi_df.xs('gammai').xs(column_ci_lower))
-    est_gammai_ci_upper = np.exp(params_idi_df.xs('gammai').xs(column_ci_upper))
-    est_betai_ci_lower = np.exp(params_idi_df.xs('betai').xs(column_ci_lower))
-    est_betai_ci_upper = np.exp(params_idi_df.xs('betai').xs(column_ci_upper))
-    est_rhoix_ci_lower = np.tanh(params_idi_df.xs('rhoix').xs(column_ci_lower))
-    est_rhoix_ci_upper = np.tanh(params_idi_df.xs('rhoix').xs(column_ci_upper))
+    # See the note in pmle_kimyirisk_systematic. Transforms are applied to the
+    # DRAWS, not to the summary, so means are arithmetic and intervals are the
+    # transformed quantiles rather than quantiles of the transform's input.
+    mu_m, mu_lo, mu_hi = summarize(idata_idiosyncratic, "mui")
+    k_m, k_lo, k_hi = summarize(idata_idiosyncratic, "kappai", transform=np.exp)
+    g_m, g_lo, g_hi = summarize(idata_idiosyncratic, "gammai", transform=np.exp)
+    b_m, b_lo, b_hi = summarize(idata_idiosyncratic, "betai", transform=np.exp)
+    r_m, r_lo, r_hi = summarize(idata_idiosyncratic, "rhoix", transform=np.tanh)
 
     return {
-        'dMUI': ParamsResults(dMEAN=est_mui, dCI_LOWER=est_mui_ci_lower, dCI_UPPER=est_mui_ci_upper),
-        'dKAPPAI': ParamsResults(dMEAN=est_kappai, dCI_LOWER=est_kappai_ci_lower, dCI_UPPER=est_kappai_ci_upper),
-        'dGAMMAI': ParamsResults(dMEAN=est_gammai, dCI_LOWER=est_gammai_ci_lower, dCI_UPPER=est_gammai_ci_upper),
-        'dBETAI': ParamsResults(dMEAN=est_betai, dCI_LOWER=est_betai_ci_lower, dCI_UPPER=est_betai_ci_upper),
-        'dRHOIX': ParamsResults(dMEAN=est_rhoix, dCI_LOWER=est_rhoix_ci_lower, dCI_UPPER=est_rhoix_ci_upper)
+        'dMUI': ParamsResults(dMEAN=mu_m, dCI_LOWER=mu_lo, dCI_UPPER=mu_hi),
+        'dKAPPAI': ParamsResults(dMEAN=k_m, dCI_LOWER=k_lo, dCI_UPPER=k_hi),
+        'dGAMMAI': ParamsResults(dMEAN=g_m, dCI_LOWER=g_lo, dCI_UPPER=g_hi),
+        'dBETAI': ParamsResults(dMEAN=b_m, dCI_LOWER=b_lo, dCI_UPPER=b_hi),
+        'dRHOIX': ParamsResults(dMEAN=r_m, dCI_LOWER=r_lo, dCI_UPPER=r_hi)
     }
 
 

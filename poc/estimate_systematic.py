@@ -56,6 +56,13 @@ from concurrent.futures import ProcessPoolExecutor          # noqa: E402
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
 )
+from Library.TableHeatmap import (                          # noqa: E402
+    render as heat, legend as heat_legend,
+)
+
+# Heat shading: on for a terminal, off when piped or NO_COLOR is set.
+# --no-color / --color override.
+COLOR = None
 from Library.DataAccess import (                            # noqa: E402
     get_price_panel, get_pmle_params, pmle_params_exists,
     save_pmle_params, available_pmle_dates,
@@ -253,8 +260,11 @@ def report(df):
     # diverge the year is skewed - in crisis years that is expected, since the
     # crisis moves in and out of the trailing window across the twelve fits.
     for stat in ("mean", "median"):
+        t = getattr(df.groupby(df.index.year), stat)().round(4)
+        t.index = [str(i) for i in t.index]
         print("\nBy year (%s):" % stat)
-        print(getattr(df.groupby(df.index.year), stat)().round(4).to_string())
+        print(heat(t, decimals=4, color=COLOR))
+    print(heat_legend(color=COLOR))
 
 
     # prior sds, to judge identification date by date
@@ -326,6 +336,10 @@ def main():
                     help="also check April 2025 against the paper")
     ap.add_argument("--report-only", action="store_true",
                     help="skip estimation, just summarise what is on disk")
+    ap.add_argument("--color", dest="color", action="store_true", default=None,
+                    help="force heat shading on (default: on for a terminal)")
+    ap.add_argument("--no-color", dest="color", action="store_false",
+                    help="plain numbers, no shading")
     ap.add_argument("--workers", type=int, default=None,
                     help="outer pool width. Default cpu_count//4, because each "
                          "fit already uses 4 chains on 4 cores.")
@@ -333,6 +347,9 @@ def main():
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
     a = ap.parse_args()
+
+    global COLOR
+    COLOR = a.color
 
     print("=" * 72)
     print("Step 1 :: SPX P-measure parameters via the repository's P-MLE")

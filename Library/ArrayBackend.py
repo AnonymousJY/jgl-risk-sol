@@ -33,7 +33,10 @@ xp = _np
 
 if not os.environ.get("JGL_FORCE_CPU"):
     try:
-        import cupy as _cp
+        # Optional dependency: absent on CPU-only machines and on macOS, where
+        # conda-forge has no build. Type checkers flag this as unresolved -
+        # that is expected, hence the ignore. The except branch is the CPU path.
+        import cupy as _cp  # type: ignore[import-not-found]
 
         if _cp.cuda.is_available():
             xp = _cp
@@ -49,7 +52,7 @@ def is_gpu():
 def asnumpy(a):
     """Bring an array back to the host, whatever it currently is."""
     if BACKEND == "cupy":
-        import cupy as _c
+        import cupy as _c  # type: ignore[import-not-found]
         if isinstance(a, _c.ndarray):
             return _c.asnumpy(a)
     return _np.asarray(a)
@@ -62,7 +65,7 @@ def rng_for(seed):
     (standard_normal, normal), but the streams differ - see the warning above.
     """
     if BACKEND == "cupy":
-        import cupy as _c
+        import cupy as _c  # type: ignore[import-not-found]
         return _c.random.default_rng(seed)
     return _np.random.default_rng(seed)
 
@@ -71,7 +74,7 @@ def describe():
     if BACKEND != "cupy":
         return "CPU (numpy)"
     try:
-        import cupy as _c
+        import cupy as _c  # type: ignore[import-not-found]
         d = _c.cuda.runtime.getDeviceProperties(_c.cuda.runtime.getDevice())
         name = d["name"].decode() if isinstance(d["name"], bytes) else str(d["name"])
         free, total = _c.cuda.runtime.memGetInfo()

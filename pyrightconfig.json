@@ -1,0 +1,7 @@
+{
+  "//": "cupy is an optional GPU dependency, absent on CPU-only machines and unavailable on macOS. Library/ArrayBackend.py imports it inside try/except and falls back to NumPy, so a missing import is expected rather than an error.",
+  "reportMissingImports": "warning",
+  "ignore": [],
+  "venvPath": "",
+  "pythonVersion": "3.12"
+}

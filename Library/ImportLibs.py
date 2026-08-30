@@ -6,8 +6,8 @@ import numpy as np
 import scipy as sc
 
 try:
-    import cupy as cp
-    import cupyx as cpx
+    import cupy as cp    # type: ignore[import-not-found]
+    import cupyx as cpx  # type: ignore[import-not-found]
     if cp.cuda.is_available():
         np = cp  # Use CuPy if a CUDA-enabled GPU is available
         cpx = sc

@@ -1,52 +1,56 @@
 # ============================================================================
-# Conda environment for mkt-depth-n-resiliency
-# Code accompanying "Systematic Liquidity Risk Management: A Novel Perspective
-# on Derivatives" (Yi & Kim).
+# Conda environment for jgl-risk-sol
 #
-# This is the recommended install path. PyMC officially recommends conda-forge
-# (it builds PyTensor's C / BLAS toolchain cleanly, which matters on macOS).
-# Four packages are not on conda-forge and are installed via pip in the same
-# environment — conda installs everything it can FIRST, pip runs LAST.
+# Targets the CURRENT stack: PyMC 6.x on Python 3.12.
+# The paper repository (mkt-depth-n-resiliency) pins PyMC 5.16 / Python 3.10;
+# this repository deliberately diverges. See MIGRATION.md before running -
+# PyMC 6 changes the credible-interval default in a way that silently alters
+# stored estimates.
 #
 #   conda env create -f environment.yml
-#   conda activate liquidity
+#   conda activate jgl-risk-sol
 #
-# To reproduce exactly later:
+# To freeze exactly what you actually got:
 #   conda env export > environment-lock.yml
 #
-# A pip-only alternative is provided in requirements.txt.
+# conda-forge is not optional. PyMC recommends it because PyTensor's C/BLAS
+# toolchain builds cleanly there; the pip-only path compiles from source.
 # ============================================================================
-name: liquidity
+name: jgl-risk-sol
 channels:
   - conda-forge
 dependencies:
-  - python=3.10
+  # PyMC 6.3 requires Python >= 3.12 (3.12, 3.13 and 3.14 are supported).
+  # 3.12 is the conservative choice: 3.14 changes the default multiprocessing
+  # start method on Linux, which interacts with the fork() calls in the
+  # estimation drivers. See MIGRATION.md §3.
+  - python=3.12
 
   # --- core numerical stack ---
-  - numpy>=1.26
-  - scipy>=1.11
-  - pandas>=2.0
+  - numpy>=2.0
+  - scipy>=1.14
+  - pandas>=2.2
 
   # --- Bayesian estimation / MCMC (P-MLE calibration) ---
-  - pymc>=5.16
-  - arviz>=0.18
-  - pytensor>=2.25
-  - nutpie>=0.13          # default NUTS sampler in RiskEngineKimYi2025.py
+  - pymc>=6.3            # 6.3.1 released 2026-08-16
+  - arviz>=1.2           # 1.0 replaced InferenceData with xarray.DataTree
+  - pytensor>=3.0        # pulled in by pymc 6; numba is now the default backend
+  - numba                # required by the default pytensor backend
+  - nutpie>=0.15         # NUTS sampler selected in RiskEngineKimYi2025.py
 
   # --- plotting ---
-  - matplotlib>=3.7
+  - matplotlib>=3.9
   - seaborn>=0.13
 
   # --- CLI ergonomics ---
-  - tqdm>=4.65          # progress bars in skew_calibrate_{systematic,idiosyncratic}.py
+  - tqdm>=4.66
 
-  # --- io / notebook execution ---
-  - pyarrow>=14.0
+  # --- io ---
+  - pyarrow>=16.0
   - jupyter>=1.0
   - nbconvert>=7.0
 
-  # --- required by ustreasurycurve (pip, below) but available on conda-forge,
-  # so installed via conda rather than left for pip to resolve ---
+  # --- required by ustreasurycurve (pip, below), but on conda-forge ---
   - polars
 
   # --- optional GPU acceleration ---
@@ -54,10 +58,10 @@ dependencies:
   # swap NumPy -> CuPy automatically. Leave commented to run on CPU.
   # - cupy>=13.0
 
-  # --- pip-only packages (not available on conda-forge) ---
+  # --- pip-only packages (not on conda-forge) ---
   - pip
   - pip:
-      - finance-datareader   # live SPX / COIN price series
-      - databento>=0.34            # options data (Study notebooks)
-      - ustreasurycurve==0.0.5   # US Treasury curve (discounting); pin: 0.0.6+ has an incomplete polars migration that fails on pandas
+      - finance-datareader>=0.9.50   # SPX and single-name price series
+      - databento>=0.34              # options data (Study notebooks)
+      - ustreasurycurve==0.0.5       # pin: 0.0.6+ has an incomplete polars migration that fails on pandas
       - nelson-siegel-svensson>=0.5  # NSS curve fit (skew calibration)

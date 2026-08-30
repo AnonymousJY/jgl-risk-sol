@@ -3,7 +3,7 @@
 # Code accompanying "Systematic Liquidity Risk Management: A Novel Perspective
 # on Derivatives" (Yi & Kim).
 #
-# Target: Python 3.10+  (the project's compiled artifacts are cpython-310;
+# Target: Python 3.12+  (PyMC 6.3 requires >= 3.12)  (the project's compiled artifacts are cpython-310;
 # the .idea Black config references 3.9 — 3.10 is the tested runtime).
 #
 # RECOMMENDED INSTALL PATH: environment.yml (conda). PyMC recommends
@@ -22,32 +22,33 @@
 # ============================================================================
 
 # --- core numerical stack ---
-numpy>=1.26,<3.0
-scipy>=1.11
-pandas>=2.0
+numpy>=2.0,<3.0
+scipy>=1.14
+pandas>=2.2
 
 # --- Bayesian estimation / MCMC (P-MLE calibration) ---
-pymc>=5.16          # numpy 2.x support landed in 5.16
-arviz>=0.18
-pytensor>=2.25      # pulled in by pymc; pinned explicitly for clarity
-nutpie>=0.13        # default NUTS sampler in RiskEngineKimYi2025.py
+pymc>=6.3           # 6.3.1 (2026-08-16); requires Python >= 3.12
+arviz>=1.2          # 1.0 replaced InferenceData with xarray.DataTree
+pytensor>=3.0       # pulled in by pymc 6; numba is the default backend
+numba               # required by the default pytensor backend
+nutpie>=0.15        # default NUTS sampler in RiskEngineKimYi2025.py
 
 # --- market & reference data ---
 FinanceDataReader>=0.9.50   # live SPX / COIN price series
 databento>=0.34             # options data (used in the Study notebooks)
 ustreasurycurve==0.0.5      # US Treasury curve (discounting); pin: 0.0.6+ has an incomplete polars migration that fails on pandas
 polars                      # required by ustreasurycurve; not auto-installed as a dependency
-pyarrow>=14.0               # parquet snapshot I/O
+pyarrow>=16.0               # parquet snapshot I/O
 
 # --- option-pricing utilities ---
 nelson-siegel-svensson>=0.5  # NSS curve fit used in skew calibration
 
 # --- plotting ---
-matplotlib>=3.7
+matplotlib>=3.9
 seaborn>=0.13
 
 # --- CLI ergonomics ---
-tqdm>=4.65          # progress bars in skew_calibrate_{systematic,idiosyncratic}.py
+tqdm>=4.66          # progress bars in skew_calibrate_{systematic,idiosyncratic}.py
 
 # --- notebook execution ---
 jupyter>=1.0

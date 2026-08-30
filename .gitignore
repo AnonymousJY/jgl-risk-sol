@@ -19,3 +19,14 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# Per-date P-MLE parameter files. A daily 2007-2026 run writes ~5,100 of these,
+# one small CSV per valuation date. They are intermediate output: the assembled
+# series poc/systematic_params.csv is the thing worth committing, and it is
+# regenerable from these in seconds.
+#
+# The paper repository commits its 37 files deliberately, as part of a
+# replication package. Five thousand is a different proposition - it makes every
+# clone, diff and status slow for no benefit.
+Study/Estimated Parameters PMLE/
+!poc/systematic_params.csv

@@ -149,3 +149,44 @@ turns the upgrade into a verifiable step rather than a confound — and given
 
 If the current environment is not practical to keep alive, migrate first, but
 delete the existing parameter CSVs so nothing is mixed.
+
+
+---
+
+## 6. GPU
+
+The machine has a CUDA GPU. It will not help the estimation run, and may hurt.
+
+**Why not.** Each P-MLE fit has six parameters and 252 observations. That is far
+too small for a GPU to pay back kernel-launch overhead - GPUs win on large
+vectorised work, and there is none here. The parallelism this workload actually
+has is *across* fits: 82 to 245 independent one-year windows. That is a CPU-core
+scheduling problem, not a GPU problem.
+
+`pm.sample` does accept JAX-backed samplers (`nuts_sampler="numpyro"` or
+`"blackjax"`) which can run on GPU, and `RiskEngineKimYi2025.py` already exposes
+that argument. Two cautions before trying it: the custom likelihood is written
+in PyTensor and every op must transpile to JAX, which is likely but not
+guaranteed; and even when it works, a six-parameter model is not where GPU wins.
+Test on one date before assuming.
+
+**What actually speeds this up.** `ProcessPoolExecutor()` with no `max_workers`
+defaults to `os.cpu_count()`, and each worker then calls
+`pm.sample(chains=4, cores=4)`. On a 16-core box that is 16 x 4 = 64 sampling
+processes competing for 16 cores. `poc/estimate_systematic.py` now defaults to
+`cpu_count // 4` workers and prints the arithmetic; `--workers` overrides it.
+`Scripts/run_pmle_kimyi2025.py` still has the unbounded pool and would benefit
+from the same change.
+
+**Where the GPU is genuinely worth using: the reconstruction, later.**
+`poc/backfill_poc.py` draws roughly 40 names x 7 windows x 200 bootstrap draws x
+100 paths x ~750 days - on the order of four billion normal variates plus
+arithmetic. That is exactly the vectorised workload CuPy exists for, and
+`environment.yml` has a commented `cupy` line ready.
+
+Note that it will not pick up the swap automatically. `Library/ImportLibs.py`
+rebinds `np = cp` inside its own namespace only, and `backfill_poc.py` calls
+`np.random.default_rng` from a plain `import numpy as np`. Wiring the
+reconstruction to CuPy is a small deliberate change, not a free one. (While
+there: `ImportLibs.py` sets `cpx = sc`, assigning scipy to the cupyx name, which
+looks like a typo.)

@@ -140,7 +140,21 @@ def valuation_dates(beg, end, step):
     return [d.strftime(DATE_FMT) for d in days[::step]]
 
 
-def run(dates):
+def default_workers():
+    """Outer-pool width.
+
+    Each fit calls pm.sample(chains=4, cores=4), so it already claims 4 cores.
+    ProcessPoolExecutor() with no max_workers defaults to os.cpu_count(), which
+    on a 16-core box means 16 workers x 4 chains = 64 sampling processes
+    competing for 16 cores. That oversubscription is usually the single largest
+    avoidable cost in this run - far larger than anything a GPU would recover.
+
+    Default to cpu_count // 4 so total demand matches the machine.
+    """
+    return max(1, (os.cpu_count() or 4) // 4)
+
+
+def run(dates, workers=None):
     """Estimate the systematic parameters for each date not already on disk."""
     price_ts = get_price_panel([SYSTEMATIC_ID])
     return_ts = price_ts.pct_change().dropna()
@@ -170,9 +184,13 @@ def run(dates):
         args.append((dt, rv, np.array(1 / BASE_DAYS), SEED, N_MC_PATHS,
                      SYSTEMATIC_ID))
 
+    workers = workers or default_workers()
+    print("  %d workers x 4 chains = %d processes on %d cores"
+          % (workers, workers * 4, os.cpu_count() or 0))
+
     t0 = time.perf_counter()
     done = 0
-    with ProcessPoolExecutor() as ex:
+    with ProcessPoolExecutor(max_workers=workers) as ex:
         for dt, sid, results in ex.map(pmle_kimyirisk_systematic_helper, args):
             save_pmle_params(dt, sid, assemble_systematic_params(results))
             done += 1
@@ -286,6 +304,9 @@ def main():
                     help="also check April 2025 against the paper")
     ap.add_argument("--report-only", action="store_true",
                     help="skip estimation, just summarise what is on disk")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="outer pool width. Default cpu_count//4, because each "
+                         "fit already uses 4 chains on 4 cores.")
     ap.add_argument("--full-sample", action="store_true",
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
@@ -303,7 +324,7 @@ def main():
         return
 
     if not a.report_only:
-        run(valuation_dates(a.beg, a.end, a.step))
+        run(valuation_dates(a.beg, a.end, a.step), workers=a.workers)
 
     df = load_series()
     if not len(df):

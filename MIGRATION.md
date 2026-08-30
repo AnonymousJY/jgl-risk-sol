@@ -184,9 +184,25 @@ from the same change.
 arithmetic. That is exactly the vectorised workload CuPy exists for, and
 `environment.yml` has a commented `cupy` line ready.
 
-Note that it will not pick up the swap automatically. `Library/ImportLibs.py`
-rebinds `np = cp` inside its own namespace only, and `backfill_poc.py` calls
-`np.random.default_rng` from a plain `import numpy as np`. Wiring the
-reconstruction to CuPy is a small deliberate change, not a free one. (While
-there: `ImportLibs.py` sets `cpx = sc`, assigning scipy to the cupyx name, which
-looks like a typo.)
+**This is now wired.** `Library/ArrayBackend.py` selects CuPy when it is
+importable and a device is visible, and `reconstruct()` in
+`poc/backfill_poc.py` runs on whichever backend is active. It also announces
+the device at the start of a run.
+
+`reconstruct()` was rewritten to generate the entire (draws, paths, days) block
+in one call rather than looping over draws - about 15M variates per call. That
+is what makes a GPU worth using, and it is faster on CPU too. Verified against
+the previous per-draw loop: max absolute difference 2.8e-17.
+
+Two things to know:
+
+- **Seeds are not portable across backends.** NumPy and CuPy do not share an RNG
+  stream, so the same seed gives different draws on CPU and GPU. Results are
+  statistically equivalent, not bit-identical. Within one backend a seed
+  reproduces. Any table or figure in a validation pack must record which device
+  produced it - `ArrayBackend.BACKEND` exists for that. Set `JGL_FORCE_CPU=1` to
+  check a GPU result against CPU.
+- `Library/ImportLibs.py` is untouched and still rebinds `np = cp` inside its own
+  namespace only, which is why `ArrayBackend` exists separately. While there:
+  `ImportLibs.py` sets `cpx = sc`, assigning scipy to the cupyx name, which looks
+  like a typo.

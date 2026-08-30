@@ -36,6 +36,9 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from Library.DataAccess import get_price_series  # noqa: E402
+from Library.ArrayBackend import (                # noqa: E402
+    xp, asnumpy, rng_for, BACKEND, describe as describe_backend,
+)
 
 # ----------------------------------------------------------------------------
 # Configuration
@@ -371,22 +374,41 @@ def reconstruct(draws, diffusive, marks, crisis, seed=SEED):
       es_by_draw     : one 97.5% ES per parameter draw, so the spread across
                        draws IS the parameter-uncertainty assessment that FRTB
                        Principle seven and SR 26-2 both ask for.
+
+    Runs on GPU when CuPy is available. The whole (draws, paths, days) block is
+    generated in ONE call rather than looping over draws - which is what makes
+    the GPU worth using, and is faster on CPU too. Roughly
+    200 x 100 x 750 = 15M variates per call, ~120 MB in float64.
+
+    Backend note: NumPy and CuPy do not share an RNG stream, so a given seed
+    produces different draws on the two devices. Statistically equivalent, not
+    bit-identical. Library.ArrayBackend.BACKEND records which was used.
     """
     a, b = crisis
-    dz = diffusive.loc[a:b].values
-    yj = marks.loc[a:b].values
-    T = len(dz)
-    rng = np.random.default_rng(seed)
+    dz = xp.asarray(diffusive.loc[a:b].to_numpy())
+    yj = xp.asarray(marks.loc[a:b].to_numpy())
+    d = xp.asarray(np.asarray(draws))                       # (D, 3)
 
-    pooled = []
-    es_by_draw = np.empty(len(draws))
-    for i, (sigma_beta, kappa, gamma) in enumerate(draws):
-        systematic = sigma_beta * dz + gamma * yj
-        idio = rng.normal(0.0, kappa, size=(N_PATHS_PER_DRAW, T))
-        paths = systematic[None, :] + idio
-        es_by_draw[i] = var_es(paths.ravel(), 0.975)[1]
-        pooled.append(paths)
-    return np.concatenate(pooled, axis=0), es_by_draw
+    sigma_beta = d[:, 0:1]                                  # (D, 1)
+    kappa      = d[:, 1:2]
+    gamma      = d[:, 2:3]
+
+    # (D, T): each draw's loadings against the SAME observed history
+    systematic = sigma_beta * dz[None, :] + gamma * yj[None, :]
+
+    rng = rng_for(seed)
+    idio = rng.standard_normal((len(draws), N_PATHS_PER_DRAW, len(dz)))
+    paths = systematic[:, None, :] + kappa[:, :, None] * idio   # (D, P, T)
+
+    # ES per draw, computed on-device over that draw's pooled returns
+    flat = paths.reshape(len(draws), -1)
+    losses = -flat
+    var = xp.quantile(losses, 0.975, axis=1, keepdims=True)
+    mask = losses >= var
+    es_by_draw = (losses * mask).sum(axis=1) / xp.maximum(mask.sum(axis=1), 1)
+
+    pooled = paths.reshape(-1, len(dz))
+    return asnumpy(pooled), asnumpy(es_by_draw)
 
 
 
@@ -562,6 +584,7 @@ def main():
     rets = log_returns(prices)
 
     diffusive, marks, is_jump, sys_params = filter_systematic(rets[INDEX])
+    print("compute backend: %s" % describe_backend())
     print("\nSystematic parameters (from %s):" % INDEX)
     for k, v in sys_params.items():
         print("  %-16s %.6f" % (k, v))

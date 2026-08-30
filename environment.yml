@@ -53,10 +53,15 @@ dependencies:
   # --- required by ustreasurycurve (pip, below), but on conda-forge ---
   - polars
 
-  # --- optional GPU acceleration ---
-  # Uncomment the line matching your CUDA toolkit to let ImportLibs.py
-  # swap NumPy -> CuPy automatically. Leave commented to run on CPU.
-  # - cupy>=13.0
+  # --- GPU acceleration (optional, used by the reconstruction only) ---
+  # Library/ArrayBackend.py picks CuPy automatically when it is importable and
+  # a device is visible; set JGL_FORCE_CPU=1 to fall back without uninstalling.
+  # Uncomment the line matching your CUDA toolkit.
+  #
+  # This accelerates poc/backfill_poc.py (billions of normal variates). It does
+  # NOT accelerate the P-MLE estimation - six parameters on 252 observations is
+  # far below where a GPU pays back launch overhead. See MIGRATION.md section 6.
+  # - cupy>=13.0            # CUDA 12.x: use the cuda-version pin conda-forge suggests
 
   # --- pip-only packages (not on conda-forge) ---
   - pip

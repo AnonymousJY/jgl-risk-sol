@@ -247,9 +247,28 @@ def report(df):
         print("   identification only if the parameter is actually identified.")
         print("   A prior-driven parameter is stable because its prior is.")
 
-    print("\nBy year (median):")
-    print(df[[c for c in df.columns if not c.endswith("_W")]]
-            .groupby(df.index.year).median().round(4).to_string())
+    # Mean, median AND max per year, not median alone.
+    #
+    # Median was a defensive default - robust to one bad fit - but it is the
+    # wrong summary for a table whose purpose is detecting crisis spikes. A
+    # crisis year's parameters are driven by its extreme months, and the median
+    # of twelve overlapping windows discards exactly that. Max is the statistic
+    # that answers "did it spike".
+    #
+    # A large mean-median gap flags a skewed year or an outlier fit - worth
+    # seeing rather than smoothing away.
+    par = [c for c in df.columns if not c.endswith("_W")]
+    by_year = df[par].groupby(df.index.year).agg(["mean", "median", "max"])
+    for k in par:
+        t = by_year[k].round(4)
+        t["mean-med"] = (t["mean"] - t["median"]).round(4)
+        print("\n%s by year:" % k)
+        print(t.to_string())
+        worst = t["mean-med"].abs().idxmax()
+        if abs(t.loc[worst, "mean-med"]) > 0.10 * abs(t["median"].median()):
+            print("   largest mean-median gap: %s (%+.4f) - check that year for"
+                  % (worst, t.loc[worst, "mean-med"]))
+            print("   a skewed set of windows or a divergent fit.")
 
     # prior sds, to judge identification date by date
     try:

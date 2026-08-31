@@ -51,7 +51,9 @@ import multiprocessing
 # sampling. Set JGL_MP_START to override.
 multiprocessing.set_start_method(
     os.environ.get("JGL_MP_START", "forkserver"), force=True)
-from concurrent.futures import ProcessPoolExecutor          # noqa: E402
+from concurrent.futures import (                           # noqa: E402
+    ProcessPoolExecutor, as_completed, BrokenProcessPool,
+)
 
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -153,6 +155,20 @@ def valuation_dates(beg, end, step):
     return [d.strftime(DATE_FMT) for d in days[::step]]
 
 
+def _init_child():
+    """Stop each worker's native libraries from spawning a full thread pool.
+
+    nutpie samples 4 chains as THREADS inside one worker process, and numpy /
+    BLAS / numba will each independently try to claim every core on top of
+    that. With W workers the machine sees W x 4 chain threads x C BLAS threads.
+    Pinning the inner libraries to one thread leaves the chains as the only
+    source of parallelism, which is what the worker count was sized against.
+    """
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+        os.environ.setdefault(var, "1")
+
+
 def default_workers():
     """Outer-pool width.
 
@@ -198,19 +214,72 @@ def run(dates, workers=None):
                      SYSTEMATIC_ID))
 
     workers = workers or default_workers()
-    print("  %d workers x 4 chains = %d processes on %d cores"
+    print("  %d workers x 4 chains = %d concurrent samplers on %d cores"
           % (workers, workers * 4, os.cpu_count() or 0))
 
     t0 = time.perf_counter()
-    done = 0
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        for dt, sid, results in ex.map(pmle_kimyirisk_systematic_helper, args):
-            save_pmle_params(dt, sid, assemble_systematic_params(results))
-            done += 1
-            if done % 10 == 0 or done == len(todo):
-                el = time.perf_counter() - t0
-                print("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
-                      % (done, len(todo), el, el / done * (len(todo) - done)))
+    done = failed = 0
+    try:
+        with ProcessPoolExecutor(max_workers=workers,
+                                 initializer=_init_child) as ex:
+            futures = {ex.submit(pmle_kimyirisk_systematic_helper, a): a[0]
+                       for a in args}
+            for fut in as_completed(futures):
+                requested = futures[fut]
+                try:
+                    dt, sid, results = fut.result()
+                except BrokenProcessPool:
+                    raise
+                except Exception as exc:                      # noqa: BLE001
+                    # One bad date must not end a run of thousands. Record it
+                    # and carry on; the date simply stays absent from disk and
+                    # a later rerun will retry it.
+                    failed += 1
+                    print("    FAILED  %s  %s: %s"
+                          % (requested, type(exc).__name__, exc))
+                    continue
+                save_pmle_params(dt, sid, assemble_systematic_params(results))
+                done += 1
+                if done % 10 == 0 or done == len(todo):
+                    el = time.perf_counter() - t0
+                    print("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
+                          % (done, len(todo), el,
+                             el / done * (len(todo) - done)))
+    except BrokenProcessPool:
+        # A worker died without raising - it was killed by a signal, not by a
+        # Python exception. Overwhelmingly this is the kernel OOM killer:
+        # every worker holds a compiled model, N_MC_PATHS paths and four
+        # chains of draws, so peak memory scales with the worker count while
+        # the estimate of "how many cores" does not.
+        el = time.perf_counter() - t0
+        print("\n" + "=" * 72)
+        print("  WORKER KILLED - the pool is dead and the run stopped early.")
+        print("=" * 72)
+        print("  %d of %d dates completed and ARE SAFELY ON DISK (%.0fs)."
+              % (done, len(todo), el))
+        print("  Nothing is lost: rerunning skips what is already written.")
+        print()
+        print("  A worker terminated without a Python exception, which means")
+        print("  it was killed by a signal rather than failing in Python.")
+        print("  Confirm the cause before rerunning:")
+        print()
+        print("      dmesg -T | grep -i -E 'killed process|out of memory' | tail")
+        print()
+        print("  If that shows an OOM kill, rerun with fewer workers - memory")
+        print("  scales with worker count, cores do not:")
+        print()
+        print("      ./run_daily.sh %d" % max(1, workers // 2))
+        print()
+        print("  If it shows nothing, suspect a native crash in the sampler.")
+        print("  Reproduce one date in the foreground to get a real traceback:")
+        print()
+        print("      python poc/estimate_systematic.py --full-sample")
+        print("=" * 72)
+        return
+
+    if failed:
+        print("\n  %d date(s) failed and were skipped; rerun to retry them."
+              % failed)
 
 
 def load_series():

@@ -52,8 +52,11 @@ import multiprocessing
 multiprocessing.set_start_method(
     os.environ.get("JGL_MP_START", "forkserver"), force=True)
 from concurrent.futures import (                           # noqa: E402
-    ProcessPoolExecutor, as_completed, BrokenProcessPool,
+    ProcessPoolExecutor, as_completed,
 )
+# BrokenProcessPool is NOT re-exported by concurrent.futures - its __all__
+# carries the generic BrokenExecutor only. It lives in the .process submodule.
+from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,

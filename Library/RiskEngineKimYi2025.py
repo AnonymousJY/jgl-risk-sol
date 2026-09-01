@@ -122,30 +122,84 @@ def _dist_loglike_idiosyncratic(y, mui, kappai, gammai, betai, rhoix, alpha, sig
     ).logp(y=y)
 
 
+# ---------------------------------------------------------------------------
+# Priors on the systematic block
+# ---------------------------------------------------------------------------
+# These are the values the paper was estimated with, kept here as data rather
+# than as literals inside the model so a sensitivity arm can override one
+# without a second copy of the model definition. Passing priors=None
+# reproduces the published configuration exactly.
+#
+# Note what the DEFAULTS assert. eta1 ~ Gamma(50,1) and eta2 ~ Gamma(25,1)
+# say the mean down-jump (1/eta2 = 4%) is twice the mean up-jump (1/eta1 = 2%)
+# BEFORE any data is seen. Since both parameters come back prior-driven, that
+# assertion passes untouched into the posterior - so the model's negative jump
+# skew, which is its most equity-plausible feature, is currently an assumption
+# rather than an estimate. Giving the two the same prior and asking whether the
+# data separates them is the test; see poc/prior_sensitivity.py.
+SYSTEMATIC_PRIORS = {
+    "sigma":    ("Gamma", {"alpha": 1.0,  "beta": 1.0}),
+    "alpha_rv": ("Beta",  {"alpha": 5.0,  "beta": 2.0}),
+    "pprob_rv": ("Beta",  {"alpha": 5.0,  "beta": 2.0}),
+    "lamb":     ("Gamma", {"alpha": 10.0, "beta": 0.5}),
+    "eta1":     ("Gamma", {"alpha": 50.0, "beta": 1.0}),
+    "eta2":     ("Gamma", {"alpha": 25.0, "beta": 1.0}),
+}
+
+
+def _build_prior(name, spec):
+    """Instantiate one prior from a (distribution_name, kwargs) pair."""
+    dist, kw = spec
+    return getattr(pm, dist)(name=name, **kw)
+
+
+def prior_moments(spec):
+    """Analytic (mean, sd) of a prior spec, for the identification diagnostic.
+
+    PyMC's Gamma is rate-parameterised: mean = alpha/beta, sd = sqrt(alpha)/beta.
+    """
+    dist, kw = spec
+    a, b = float(kw["alpha"]), float(kw["beta"])
+    if dist == "Gamma":
+        return a / b, np.sqrt(a) / b
+    if dist == "Beta":
+        return a / (a + b), np.sqrt(a * b / ((a + b) ** 2 * (a + b + 1)))
+    raise ValueError("no closed-form moments for %s" % dist)
+
+
 def pmle_kimyirisk_systematic(
         sys_returns: NDArray[np.float64],
         delta_t: NDArray[np.float64],
         seed_number: np.uint64 = np.uint64(20240114),
         n_mc_paths: int = 10_000,
         nuts_sampler: Literal["pymc", "nutpie", "jax", "numpyro", "blackjax"] = "nutpie",
-        is_progress_bar: bool = False
+        is_progress_bar: bool = False,
+        priors: dict = None
 ) -> dict:
     SEED = np.uint64(seed_number)
+
+    # priors=None reproduces the published configuration exactly.
+    pr = dict(SYSTEMATIC_PRIORS)
+    if priors:
+        unknown = set(priors) - set(pr)
+        if unknown:
+            raise ValueError("unknown prior key(s): %s" % sorted(unknown))
+        pr.update(priors)
 
     N_SIMS_MCMC = n_mc_paths
     # use PyMC to sampler from log-likelihood
     with pm.Model():
-        sigma = pm.Gamma(name="sigma", alpha=1., beta=1.)
+        sigma = _build_prior("sigma", pr["sigma"])
 
-        alpha_rv = pm.Beta(name="alpha_rv", alpha=5., beta=2.)
+        alpha_rv = _build_prior("alpha_rv", pr["alpha_rv"])
         alpha = pm.Deterministic("alpha", pt.log(alpha_rv))
 
-        pprob_rv = pm.Beta(name="pprob_rv", alpha=5., beta=2.)
+        pprob_rv = _build_prior("pprob_rv", pr["pprob_rv"])
         pprob = pm.Deterministic("pprob", pt.log(pprob_rv))
 
-        lamb = pm.Gamma(name="lamb", alpha=10., beta=.5)
-        eta1 = pm.Gamma(name="eta1", alpha=50., beta=1.)
-        eta2 = pm.Gamma(name="eta2", alpha=25., beta=1.)
+        lamb = _build_prior("lamb", pr["lamb"])
+        eta1 = _build_prior("eta1", pr["eta1"])
+        eta2 = _build_prior("eta2", pr["eta2"])
 
         observed_data = np.cumsum(sys_returns).reshape((-1, 1))
 

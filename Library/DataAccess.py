@@ -120,11 +120,148 @@ def get_price_panel(symbols, mode=None):
     """Adjusted-close prices for several symbols as a forward/back-filled
     ``pd.DataFrame`` (columns = symbols). Mirrors the concatenation logic
     previously inlined in ``run_pmle_kimyi2025.py``.
+
+    .. warning::
+
+       This function **back-fills**, and back-fill propagates the first
+       observed price backwards into every date before a name was listed. For
+       a 2021 IPO that fabricates a flat price series stretching to 2007 -
+       precisely the history the backfill study exists to model. A flat series
+       has zero return, zero volatility and zero systematic loading, so the
+       fabrication is silent: nothing looks wrong, the estimates are simply
+       answers about a constant.
+
+       It is preserved unchanged because ``Scripts/`` reproduces the published
+       paper and its inputs must not move. **For any new work use**
+       :func:`get_aligned_price_panel`, which reindexes onto a reference
+       trading calendar, forward-fills interior gaps only, and never
+       back-fills. ``poc/backfill_poc.py`` already avoids this function by hand.
     """
     frames = [get_price_series(sym, mode=mode) for sym in symbols]
     panel = pd.concat(frames, axis=1)
     panel.index = pd.to_datetime(panel.index)
     return panel.ffill().bfill()
+
+
+def get_aligned_price_panel(symbols, reference=None, mode=None,
+                            ffill_limit=5, verbose=True):
+    """Price panel aligned to one symbol's trading calendar.
+
+    The reference symbol - normally the systematic factor, ``"^SPX"`` - defines
+    which dates exist. Every other symbol is reindexed onto those dates. This
+    is what makes a per-name return series comparable with the systematic
+    series: both are then observed on exactly the same dates, so beta and rho
+    are estimated from genuinely paired observations.
+
+    Gap handling, and the reasoning:
+
+    * **Interior gaps are forward-filled**, up to ``ffill_limit`` sessions. A
+      US name missing a price on an NYSE session is a trading halt or a vendor
+      gap. Forward-filling reports a zero return on the halt day and the full
+      move on the reopen, which is what a holder actually experienced - they
+      could not trade, and then the gap happened. For a model whose subject is
+      gap risk that is the right representation, and it keeps the jump on the
+      date it was realised. Halts are rare enough (well under 1% of sessions)
+      that the resulting atom at zero is immaterial.
+
+    * **Leading gaps are never filled.** Dates before a name's first
+      observation stay ``NaN``. This is the pre-listing period, and inventing
+      prices for it would fabricate exactly the history the study is meant to
+      reconstruct and then score itself against.
+
+    * **Gaps longer than** ``ffill_limit`` **are left as** ``NaN`` **and
+      reported.** A twenty-session gap is not a halt; it is a suspension, a
+      corporate action or a broken snapshot, and it should be looked at rather
+      than smoothed over.
+
+    Parameters
+    ----------
+    symbols : sequence of str
+    reference : str, optional
+        Symbol whose calendar governs. Defaults to ``symbols[0]``.
+    ffill_limit : int or None
+        Maximum consecutive sessions to carry a stale price forward. ``None``
+        for unlimited (not advised).
+    verbose : bool
+        Print the fill report. The report is worth reading rather than
+        skipping: a name needing many fills is a name that stops trading, which
+        is a liquidity statement about the very thing being modelled.
+
+    Returns
+    -------
+    panel : pd.DataFrame
+        Columns in the order given, indexed by the reference calendar.
+    report : dict
+        Per symbol: ``filled`` (sessions carried forward), ``leading_na``
+        (pre-listing sessions), ``unfilled_na`` (gaps exceeding the limit),
+        ``first_obs``, ``longest_gap``.
+    """
+    if not symbols:
+        raise ValueError("symbols is empty")
+    reference = reference or symbols[0]
+    if reference not in symbols:
+        symbols = [reference] + list(symbols)
+
+    frames = {sym: get_price_series(sym, mode=mode) for sym in symbols}
+    for sym, ser in frames.items():
+        ser.index = pd.to_datetime(ser.index)
+
+    calendar = frames[reference].dropna().index.sort_values()
+    panel = pd.DataFrame(index=calendar)
+    report = {}
+
+    for sym in symbols:
+        raw = frames[sym].reindex(calendar)
+        first = raw.first_valid_index()
+
+        if first is None:
+            report[sym] = {"filled": 0, "leading_na": len(calendar),
+                           "unfilled_na": 0, "first_obs": None,
+                           "longest_gap": 0}
+            panel[sym] = raw
+            continue
+
+        body = raw.loc[first:]
+        # longest run of consecutive NaN inside the observed period
+        isna = body.isna().to_numpy()
+        longest = 0
+        run = 0
+        for flag in isna:
+            run = run + 1 if flag else 0
+            longest = max(longest, run)
+
+        filled_body = body.ffill(limit=ffill_limit)
+        n_filled = int(body.isna().sum() - filled_body.isna().sum())
+
+        out = raw.copy()
+        out.loc[first:] = filled_body          # leading NaNs untouched
+        panel[sym] = out
+
+        report[sym] = {
+            "filled": n_filled,
+            "leading_na": int(raw.loc[:first].isna().sum()),
+            "unfilled_na": int(filled_body.isna().sum()),
+            "first_obs": first,
+            "longest_gap": longest,
+        }
+
+    if verbose:
+        print("price panel aligned to %s: %d sessions, %s -> %s"
+              % (reference, len(calendar),
+                 calendar[0].date(), calendar[-1].date()))
+        print("  %-8s %10s %8s %10s %10s  %s"
+              % ("symbol", "first obs", "filled", "pre-list", "unfilled",
+                 "longest gap"))
+        for sym in symbols:
+            r = report[sym]
+            flag = "  <-- CHECK" if r["unfilled_na"] else ""
+            print("  %-8s %10s %8d %10d %10d  %11d%s"
+                  % (sym,
+                     r["first_obs"].date() if r["first_obs"] is not None else "never",
+                     r["filled"], r["leading_na"], r["unfilled_na"],
+                     r["longest_gap"], flag))
+
+    return panel, report
 
 
 # ============================================================================

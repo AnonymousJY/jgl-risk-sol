@@ -32,6 +32,7 @@ then decide whether finer stepping changes anything.
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -78,6 +79,9 @@ from Scripts.run_pmle_kimyi2025 import (                    # noqa: E402
 )
 
 SYSTEMATIC_ID = "^SPX"
+# Full-sample fits are stored under their own underlying id so they cannot
+# collide with, or be mistaken for, a rolling estimate.
+FULL_SAMPLE_ID = "^SPX_FULLSAMPLE"
 DATE_FMT = "%Y%m%d"
 
 BEG = "20070101"
@@ -124,10 +128,35 @@ def run_full_sample(beg=BEG, end=END):
     _, _, results = pmle_kimyirisk_systematic_helper(
         ("FULLSAMPLE", rv, np.array(1 / BASE_DAYS), SEED, N_MC_PATHS,
          SYSTEMATIC_ID))
-    print("  done in %.0fs\n" % (time.perf_counter() - t0))
+    elapsed = time.perf_counter() - t0
+    print("  done in %.0fs\n" % elapsed)
 
     params = assemble_systematic_params(results)
-    save_pmle_params("FULLSAMPLE", SYSTEMATIC_ID, params)
+
+    # Dump to a plain file FIRST, before anything that can fail. This fit costs
+    # ~8 minutes and an earlier version lost one entirely to a serialisation
+    # error raised after the sampler had finished. Nothing expensive should be
+    # destroyed by a failure in how it gets written down.
+    raw = os.path.join(_REPO_ROOT, "poc", "full_sample_params.json")
+    with open(raw, "w") as fh:
+        json.dump({"beg": beg, "end": end, "n_returns": int(len(rv)),
+                   "seconds": round(elapsed, 1),
+                   "params": {k: [float(x) for x in v]
+                              for k, v in params.items()}}, fh, indent=2)
+    print("  raw results written to %s" % raw)
+
+    # The parameter store keys on a parseable date, so the pseudo-date
+    # "FULLSAMPLE" raised DateParseError in pd.to_datetime. Key on the real end
+    # date instead, under a DISTINCT underlying id so the row cannot collide
+    # with the rolling estimate for that date, and so load_series() - which
+    # reads SYSTEMATIC_ID - never picks a full-sample fit up as a rolling one.
+    try:
+        out = save_pmle_params(end, FULL_SAMPLE_ID, params)
+        print("  saved to %s" % out)
+    except Exception as exc:                                      # noqa: BLE001
+        print("  WARNING could not write to the parameter store: %s: %s"
+              % (type(exc).__name__, exc))
+        print("  The fit itself is safe in %s" % raw)
 
     # the only question that matters: did the posterior move off the prior?
     from poc.prior_diagnostics import PRIORS, HDI_TO_SD          # noqa: E402

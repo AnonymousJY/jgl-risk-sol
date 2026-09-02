@@ -61,7 +61,7 @@ from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
 from Library.RiskEngineKimYi2025 import (                     # noqa: E402
     SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
-    SYSTEMATIC_PRIORS_CAPPED_BETA, FULL_SAMPLE,
+    SYSTEMATIC_PRIORS_CAPPED_BETA, SYSTEMATIC_PRIORS_GAPS, FULL_SAMPLE,
 )
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -393,7 +393,24 @@ def report(df):
 
     # prior sds, to judge identification date by date
     try:
-        from poc.prior_diagnostics import PRIORS
+        from poc.prior_diagnostics import PRIORS as PAPER_PRIORS
+        from Library.RiskEngineKimYi2025 import prior_moments
+
+        # Measure against the priors ACTUALLY IN FORCE. Reporting a recentred
+        # fit against the paper priors made dLAMB, dETA1 and dETA2 look "never
+        # identified" with ratios of 2.5-3.6, when against their own priors the
+        # medians are 0.78-0.92 - partial, not absent. Wrong denominator.
+        _MAP = {"dSIGMA": "sigma", "dALPHA": "alpha_rv", "dPPROB": "pprob_rv",
+                "dLAMB": "lamb", "dETA1": "eta1", "dETA2": "eta2"}
+        if PRIORS_IN_FORCE is None:
+            PRIORS = PAPER_PRIORS
+        else:
+            PRIORS = {k: (str(PRIORS_IN_FORCE[v]),
+                          *prior_moments(PRIORS_IN_FORCE[v]))
+                      for k, v in _MAP.items()}
+            PRIORS = {k: (str(PRIORS_IN_FORCE[v]),
+                          *prior_moments(PRIORS_IN_FORCE[v]))
+                      for k, v in _map.items()}
         prior_sd = {k: v[2] for k, v in PRIORS.items()}
     except Exception:                                            # noqa: BLE001
         prior_sd = {}
@@ -468,7 +485,8 @@ def main():
                     help="outer pool width. Default cpu_count//4, because each "
                          "fit already uses 4 chains on 4 cores.")
     ap.add_argument("--priors",
-                    choices=("paper", "recentred", "capped", "capped-beta"),
+                    choices=("paper", "recentred", "capped", "capped-beta",
+                             "gaps"),
                     default="paper",
                     help="paper: the published priors; reproduces prior work "
                          "and stays the default so Scripts/ is untouched. "
@@ -481,7 +499,11 @@ def main():
                          "a FLAT prior, which excludes and asserts nothing "
                          "about location inside. capped-beta: same cap via a "
                          "truncated Beta, keeping a central tendency at the "
-                         "cost of a much tighter prior.")
+                         "cost of a much tighter prior. gaps: shared "
+                         "eta prior at mean 20 (5% mean jump) with lambda "
+                         "brought down to mean 6 for coherence - asserts that "
+                         "a jump is a GAP, against a full sample that prefers "
+                         "many small ones.")
     ap.add_argument("--full-sample", action="store_true",
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
@@ -492,7 +514,8 @@ def main():
     PRIORS_IN_FORCE = {"paper": None,
                        "recentred": SYSTEMATIC_PRIORS_RECENTRED,
                        "capped": SYSTEMATIC_PRIORS_CAPPED,
-                       "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA}[a.priors]
+                       "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA,
+                       "gaps": SYSTEMATIC_PRIORS_GAPS}[a.priors]
 
     print("=" * 72)
     print("Step 1 :: SPX P-measure parameters via the repository's P-MLE")
@@ -501,6 +524,11 @@ def main():
           % (a.beg, a.end, a.step, LOOKBACK))
     print("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
     print("  priors: %s" % a.priors)
+    if a.priors == "gaps":
+        print("    eta1 and eta2 share Gamma(4,0.2): mean 20, i.e. a 5% jump")
+        print("    lambda Gamma(3,0.5): mean 6, kept coherent with that size")
+        print("    NOTE this asserts a jump scale the full sample argues")
+        print("    against - watch whether the posterior is dragged back up")
     if a.priors.startswith("capped"):
         print("    pprob CAPPED at 0.6 - watch for the posterior piling up")
         print("    against the cap in 2007, 2013, 2017, 2018, 2021, 2024,")

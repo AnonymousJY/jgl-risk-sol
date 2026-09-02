@@ -188,6 +188,32 @@ SYSTEMATIC_PRIORS_RECENTRED = {
     "eta2":     _ETA_SHARED,
 }
 
+# "A jump is a GAP" - the shared eta prior centred at 20, mean jump 5%.
+#
+# This is a deliberate modelling assertion, not a recentring on data. The full
+# sample pulls the other way: arm G's shared prior sat at Gamma(35,1), a 2.86%
+# mean jump, and with 193 jumps behind it the posterior moved AWAY to 78.6/60.7
+# - a 1.27% mean jump firing every three days. Statistically that fits, but a
+# component of 1-2 daily sd every few days is a fat-tailed diffusion in a jump
+# costume, not the gap risk the model is meant to isolate. Since lambda and
+# jump size slide along a ridge and only their product is pinned by the data,
+# the modeller has to say which end of the ridge counts as a jump. This spec
+# says a jump is 5% - five to eight daily sd at typical sigma.
+#
+# lambda MUST come down with it. Jump vol is sqrt(lambda * 2/eta^2), so eta=20
+# with the recentred lambda of 60 would imply 55% volatility from jumps alone.
+# At eta=20 the coherent lambda is 3-6, giving 12-17% jump vol against SPX
+# total of 15-20%. Leaving lambda at 60 would make the prior self-contradictory
+# before any data is seen.
+_ETA_GAP = ("Gamma", {"alpha": 4.0, "beta": 0.2})       # mean 20.0  sd 10.0
+
+SYSTEMATIC_PRIORS_GAPS = dict(SYSTEMATIC_PRIORS_RECENTRED)
+SYSTEMATIC_PRIORS_GAPS.update({
+    "eta1": _ETA_GAP,
+    "eta2": _ETA_GAP,
+    "lamb": ("Gamma", {"alpha": 3.0, "beta": 0.5}),     # mean 6.0   sd 3.5
+})
+
 # A variant that forbids pprob above 0.6.
 #
 # The cap is expressed as a FLAT prior on the allowed region, not as a

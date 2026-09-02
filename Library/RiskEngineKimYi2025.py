@@ -159,6 +159,9 @@ def prior_moments(spec):
     PyMC's Gamma is rate-parameterised: mean = alpha/beta, sd = sqrt(alpha)/beta.
     """
     dist, kw = spec
+    if dist == "Uniform":
+        lo, hi = float(kw["lower"]), float(kw["upper"])
+        return 0.5 * (lo + hi), (hi - lo) / np.sqrt(12.0)
     a, b = float(kw["alpha"]), float(kw["beta"])
     if dist == "Gamma":
         return a / b, np.sqrt(a) / b

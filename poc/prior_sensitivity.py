@@ -86,6 +86,7 @@ DATE_FMT = "%Y%m%d"
 
 G = lambda a, b: ("Gamma", {"alpha": a, "beta": b})                # noqa: E731
 Bt = lambda a, b: ("Beta", {"alpha": a, "beta": b})                # noqa: E731
+U = lambda lo, hi: ("Uniform", {"lower": lo, "upper": hi})         # noqa: E731
 
 ARMS = {
     "A baseline":       {},
@@ -93,6 +94,21 @@ ARMS = {
     "C mirrored pprob": {"pprob_rv": Bt(2.0, 5.0)},
     "D both":           {"eta1": G(35.0, 1.0), "eta2": G(35.0, 1.0),
                          "pprob_rv": Bt(2.0, 5.0)},
+    # E and F answer "what if we simply FORBID pprob above 0.5".
+    #
+    # F is the reference: flat on the whole interval, so the posterior is the
+    # likelihood alone with no prior shape at all. Wherever it lands is what
+    # the data actually wants.
+    #
+    # E imposes the constraint with a flat prior on (0, 0.5). If the likelihood
+    # prefers pprob above 0.5, the posterior cannot follow it and instead PILES
+    # UP AGAINST THE BOUNDARY - posterior mean pushed toward 0.5 and the upper
+    # credible bound sitting on it. That pile-up is the diagnostic: it means the
+    # constraint is binding and fighting the data rather than encoding
+    # knowledge. A constraint that is NOT binding leaves the posterior interior
+    # and costs nothing.
+    "E pprob < 0.5":    {"pprob_rv": U(0.0, 0.5)},
+    "F pprob flat":     {"pprob_rv": U(0.0, 1.0)},
 }
 
 # reported name -> prior key
@@ -170,6 +186,19 @@ def main():
                      r["dETA1"], r["dETA1_ratio"], r["dETA1_shift"],
                      r["dETA2"], r["dETA2_ratio"], r["dETA2_shift"],
                      r["dPPROB"], r["dPPROB_ratio"], r["dPPROB_shift"]))
+        for arm, cap in (("E pprob < 0.5", 0.5),):
+            e = d[d.arm == arm]
+            if len(e):
+                m = float(e["dPPROB"].iloc[0])
+                f = d[d.arm == "F pprob flat"]
+                ref = float(f["dPPROB"].iloc[0]) if len(f) else float("nan")
+                room = (cap - m) / cap
+                print("  -> arm E posterior mean %.4f against the %.2f cap "
+                      "(%.0f%% of the way to it)" % (m, cap, 100 * (1 - room)))
+                print("     arm F, flat and unconstrained, wants %.4f  %s"
+                      % (ref, "-> the cap is BINDING and fights the data"
+                         if ref > cap else "-> the cap is not binding"))
+
         b = d[d.arm == "B symmetric eta"]
         if len(b):
             e1, e2 = float(b["dETA1"].iloc[0]), float(b["dETA2"].iloc[0])

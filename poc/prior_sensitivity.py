@@ -110,6 +110,20 @@ ARMS = {
     # and costs nothing.
     "E pprob < 0.5":    {"pprob_rv": U(0.0, 0.5)},
     "F pprob flat":     {"pprob_rv": U(0.0, 1.0)},
+    # G asserts NO asymmetry anywhere. The etas share a prior so nothing tells
+    # the model up jumps and down jumps differ in size, and pprob is flat so
+    # nothing tells it they differ in frequency. Jump asymmetry can then only
+    # come from the data, and only through one of two channels:
+    #
+    #   eta1 pulling away from eta2   -> asymmetry is in jump SIZE
+    #   pprob moving away from 0.5    -> asymmetry is in jump DIRECTION
+    #
+    # If neither moves, the model finds no jump asymmetry at all and the
+    # negative skew was entirely prior. Run this on the FULL SAMPLE
+    # (--full-sample): a 252-day window holds ~15 jumps, roughly 7 per side,
+    # which cannot separate two exponential rates. The full sample holds ~193.
+    "G no asymmetry":   {"eta1": G(35.0, 1.0), "eta2": G(35.0, 1.0),
+                         "pprob_rv": U(0.0, 1.0)},
 }
 
 # reported name -> prior key
@@ -117,9 +131,20 @@ KEYS = [("dSIGMA", "sigma"), ("dALPHA", "alpha_rv"), ("dPPROB", "pprob_rv"),
         ("dLAMB", "lamb"), ("dETA1", "eta1"), ("dETA2", "eta2")]
 
 
-def returns_for(date):
+def returns_for(date, full_sample=False, beg="20070101"):
+    """The 252-day window ending at `date`, or the whole sample.
+
+    Jump-size asymmetry is limited by how many jumps are observed, not by how
+    long the series is in calendar terms. A window holds ~15; the full sample
+    holds ~193. Any question about eta1 versus eta2 has to be asked of the
+    latter.
+    """
     panel = get_price_panel([SYSTEMATIC_ID])
     r = panel.pct_change().dropna()
+    if full_sample:
+        sel = r.loc[(r.index >= pd.to_datetime(beg, format=DATE_FMT))
+                    & (r.index <= pd.to_datetime(date, format=DATE_FMT))]
+        return sel[SYSTEMATIC_ID].to_numpy()
     upto = r.loc[r.index <= pd.to_datetime(date, format=DATE_FMT)]
     if len(upto) < LOOKBACK:
         raise SystemExit("only %d returns before %s, need %d"
@@ -133,6 +158,11 @@ def main():
                     help="comma-separated YYYYMMDD, ideally spanning regimes")
     ap.add_argument("--arms", default=",".join(ARMS),
                     help="comma-separated arm names to run")
+    ap.add_argument("--full-sample", action="store_true",
+                    help="fit each arm on the WHOLE series ending at each date "
+                         "rather than a 252-day window. Required for any "
+                         "question about eta1 vs eta2, which is limited by "
+                         "jump count (~15 in a window, ~193 in the sample).")
     a = ap.parse_args()
 
     dates = a.dates.split(",")
@@ -151,8 +181,12 @@ def main():
     print()
 
     rows = []
+    if a.full_sample:
+        print("  FULL-SAMPLE mode: each arm fits the whole series to that date")
+        print()
     for dt in dates:
-        rv = returns_for(dt)
+        rv = returns_for(dt, full_sample=a.full_sample)
+        print("  %s: %d returns" % (dt, len(rv)))
         for nm in arms:
             t0 = time.perf_counter()
             res = pmle_kimyirisk_systematic(

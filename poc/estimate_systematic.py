@@ -60,7 +60,8 @@ from concurrent.futures import (                           # noqa: E402
 from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
 from Library.RiskEngineKimYi2025 import (                     # noqa: E402
-    SYSTEMATIC_PRIORS_RECENTRED, FULL_SAMPLE,
+    SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
+    SYSTEMATIC_PRIORS_CAPPED_BETA, FULL_SAMPLE,
 )
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -466,7 +467,8 @@ def main():
     ap.add_argument("--workers", type=int, default=None,
                     help="outer pool width. Default cpu_count//4, because each "
                          "fit already uses 4 chains on 4 cores.")
-    ap.add_argument("--priors", choices=("paper", "recentred"),
+    ap.add_argument("--priors",
+                    choices=("paper", "recentred", "capped", "capped-beta"),
                     default="paper",
                     help="paper: the published priors; reproduces prior work "
                          "and stays the default so Scripts/ is untouched. "
@@ -474,7 +476,12 @@ def main():
                          "the full-sample calibration with wide sd, and eta1 "
                          "and eta2 sharing ONE prior so the jump-size "
                          "asymmetry is not asserted - the data separated them "
-                         "unaided from an identical start. Recommended.")
+                         "unaided from an identical start. Recommended. "
+                         "capped: recentred but pprob confined to [0, 0.6] by "
+                         "a FLAT prior, which excludes and asserts nothing "
+                         "about location inside. capped-beta: same cap via a "
+                         "truncated Beta, keeping a central tendency at the "
+                         "cost of a much tighter prior.")
     ap.add_argument("--full-sample", action="store_true",
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
@@ -483,7 +490,9 @@ def main():
     global COLOR, PRIORS_IN_FORCE
     COLOR = a.color
     PRIORS_IN_FORCE = {"paper": None,
-                       "recentred": SYSTEMATIC_PRIORS_RECENTRED}[a.priors]
+                       "recentred": SYSTEMATIC_PRIORS_RECENTRED,
+                       "capped": SYSTEMATIC_PRIORS_CAPPED,
+                       "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA}[a.priors]
 
     print("=" * 72)
     print("Step 1 :: SPX P-measure parameters via the repository's P-MLE")
@@ -492,6 +501,10 @@ def main():
           % (a.beg, a.end, a.step, LOOKBACK))
     print("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
     print("  priors: %s" % a.priors)
+    if a.priors.startswith("capped"):
+        print("    pprob CAPPED at 0.6 - watch for the posterior piling up")
+        print("    against the cap in 2007, 2013, 2017, 2018, 2021, 2024,")
+        print("    which currently sit above it")
     if a.priors == "recentred":
         print("    all six free; eta1 and eta2 share one prior "
               "(mean %.0f) so no asymmetry is asserted" % 70.0)

@@ -188,6 +188,34 @@ SYSTEMATIC_PRIORS_RECENTRED = {
     "eta2":     _ETA_SHARED,
 }
 
+# A variant that forbids pprob above 0.6.
+#
+# The cap is expressed as a FLAT prior on the allowed region, not as a
+# truncated Beta, and the reason is a real tradeoff. Truncating the recentred
+# Beta(2.3,1.7) at 0.6 discards 48% of its mass and drags the mean from 0.575
+# down to 0.397 - so it does not just cap, it recentres. Choosing a shape whose
+# TRUNCATED mean stays near 0.575 requires piling the mass against the boundary:
+# Beta(6,2) gets a truncated mean of 0.503 but keeps only 16% of its mass and
+# has sd 0.08, tight enough to dictate rather than guide, which would put pprob
+# straight back to prior-driven.
+#
+# Uniform(0, 0.6) exerts no pull anywhere inside the interval. It excludes and
+# nothing else, which is exactly what "pprob <= 0.6" means. Its nominal mean of
+# 0.30 is not a pull toward 0.30; a flat prior has no preferred location.
+#
+# Read the result by asking whether the posterior PILES UP against 0.6. Six of
+# the twenty rolling years currently sit above it - 2007, 2013, 2017, 2018,
+# 2021 and 2024 - so the cap will bind there, and how hard it binds is the
+# measurement of how much the constraint is fighting the data.
+SYSTEMATIC_PRIORS_CAPPED = dict(SYSTEMATIC_PRIORS_RECENTRED)
+SYSTEMATIC_PRIORS_CAPPED["pprob_rv"] = ("Uniform", {"lower": 0.0, "upper": 0.6})
+
+# The truncated-Beta alternative, kept for comparison. Caps at 0.6 while
+# retaining a central tendency, at the cost of a much tighter prior.
+SYSTEMATIC_PRIORS_CAPPED_BETA = dict(SYSTEMATIC_PRIORS_RECENTRED)
+SYSTEMATIC_PRIORS_CAPPED_BETA["pprob_rv"] = (
+    "Beta", {"alpha": 3.0, "beta": 2.0, "upper": 0.6})   # trunc mean 0.426
+
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.
 # Holding a parameter reports a zero-width credible interval, which makes a
@@ -212,6 +240,13 @@ def _build_prior(name, spec):
     dist, kw = spec
     if dist == "Fixed":
         return pt.as_tensor(np.float64(kw["value"]))
+    kw = dict(kw)
+    # Uniform owns lower/upper as its own parameters; for any other
+    # distribution they mean truncation.
+    if dist != "Uniform" and ("lower" in kw or "upper" in kw):
+        lo, hi = kw.pop("lower", None), kw.pop("upper", None)
+        return pm.Truncated(name, getattr(pm, dist).dist(**kw),
+                            lower=lo, upper=hi)
     return getattr(pm, dist)(name=name, **kw)
 
 
@@ -223,6 +258,21 @@ def prior_moments(spec):
     dist, kw = spec
     if dist == "Fixed":
         return float(kw["value"]), 0.0
+    if dist != "Uniform" and ("lower" in kw or "upper" in kw):
+        # Truncated: integrate the base density over the retained interval.
+        kw = dict(kw)
+        lo = kw.pop("lower", None) or 1e-9
+        hi = kw.pop("upper", None) or (1.0 - 1e-9)
+        a, b = float(kw["alpha"]), float(kw["beta"])
+        x = np.linspace(lo, hi, 200001)
+        if dist == "Beta":
+            f = x ** (a - 1) * (1 - x) ** (b - 1)
+        else:
+            f = x ** (a - 1) * np.exp(-b * x)
+        Z = np.trapezoid(f, x)
+        m = np.trapezoid(x * f, x) / Z
+        v = np.trapezoid((x - m) ** 2 * f, x) / Z
+        return float(m), float(np.sqrt(v))
     if dist == "Uniform":
         lo, hi = float(kw["lower"]), float(kw["upper"])
         return 0.5 * (lo + hi), (hi - lo) / np.sqrt(12.0)

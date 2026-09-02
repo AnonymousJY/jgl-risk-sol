@@ -188,17 +188,16 @@ SYSTEMATIC_PRIORS_RECENTRED = {
     "eta2":     _ETA_SHARED,
 }
 
-# The two-stage specification. alpha and the two decays are HELD at their
-# full-sample values because a 252-day window cannot identify them - alpha on
-# span, the decays on jump count - and sigma, lambda and pprob stay free
-# because it can. Every number is then either estimated from data that can
-# identify it, or explicitly carried from a fit that could.
-TWO_STAGE_PRIORS = dict(SYSTEMATIC_PRIORS_RECENTRED)
-TWO_STAGE_PRIORS.update({
-    "alpha_rv": ("Fixed", {"value": FULL_SAMPLE["alpha_rv"]}),
-    "eta1":     ("Fixed", {"value": FULL_SAMPLE["eta1"]}),
-    "eta2":     ("Fixed", {"value": FULL_SAMPLE["eta2"]}),
-})
+# NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
+# on the grounds that a 252-day window cannot identify them. That was withdrawn.
+# Holding a parameter reports a zero-width credible interval, which makes a
+# rolling estimate look more certain than it is and bakes in a value that can
+# no longer be questioned window by window. All six stay free. Where a window
+# genuinely cannot identify a parameter the posterior sits on the prior, and
+# that is visible in the ratio - which is information, not a defect to conceal.
+#
+# The ("Fixed", {"value": x}) prior spec remains available in _build_prior for
+# cases where holding really is intended; nothing uses it by default.
 
 
 def _build_prior(name, spec):

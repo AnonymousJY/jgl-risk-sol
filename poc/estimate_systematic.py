@@ -60,7 +60,7 @@ from concurrent.futures import (                           # noqa: E402
 from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
 from Library.RiskEngineKimYi2025 import (                     # noqa: E402
-    TWO_STAGE_PRIORS, SYSTEMATIC_PRIORS_RECENTRED, FULL_SAMPLE,
+    SYSTEMATIC_PRIORS_RECENTRED, FULL_SAMPLE,
 )
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -128,18 +128,9 @@ def run_full_sample(beg=BEG, end=END):
     print("  this is one MCMC fit - expect minutes, not seconds\n")
 
     t0 = time.perf_counter()
-    # Never two-stage here: that spec HOLDS alpha and the decays at values
-    # derived from this very fit, so refitting the full sample with them fixed
-    # would be circular. Fall back to the recentred spec, which only moves
-    # prior centres and leaves all six free.
-    fs_priors = PRIORS_IN_FORCE
-    if fs_priors is TWO_STAGE_PRIORS:
-        print("  (--priors two-stage is circular on the full sample; "
-              "using recentred instead)")
-        fs_priors = SYSTEMATIC_PRIORS_RECENTRED
     _, _, results = pmle_kimyirisk_systematic_helper(
         ("FULLSAMPLE", rv, np.array(1 / BASE_DAYS), SEED, N_MC_PATHS,
-         SYSTEMATIC_ID, fs_priors))
+         SYSTEMATIC_ID, PRIORS_IN_FORCE))
     elapsed = time.perf_counter() - t0
     print("  done in %.0fs\n" % elapsed)
 
@@ -475,15 +466,15 @@ def main():
     ap.add_argument("--workers", type=int, default=None,
                     help="outer pool width. Default cpu_count//4, because each "
                          "fit already uses 4 chains on 4 cores.")
-    ap.add_argument("--priors", choices=("paper", "recentred", "two-stage"),
+    ap.add_argument("--priors", choices=("paper", "recentred"),
                     default="paper",
-                    help="paper: the published priors, reproduces prior work. "
-                         "recentred: same six free, centres moved onto the "
-                         "full-sample calibration with wide sd. two-stage: "
-                         "recentred, AND alpha/eta1/eta2 HELD at their "
-                         "full-sample values because a 252-day window cannot "
-                         "identify them (alpha on span, the decays on jump "
-                         "count). Recommended: two-stage.")
+                    help="paper: the published priors; reproduces prior work "
+                         "and stays the default so Scripts/ is untouched. "
+                         "recentred: all six still free, centres moved onto "
+                         "the full-sample calibration with wide sd, and eta1 "
+                         "and eta2 sharing ONE prior so the jump-size "
+                         "asymmetry is not asserted - the data separated them "
+                         "unaided from an identical start. Recommended.")
     ap.add_argument("--full-sample", action="store_true",
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
@@ -492,8 +483,7 @@ def main():
     global COLOR, PRIORS_IN_FORCE
     COLOR = a.color
     PRIORS_IN_FORCE = {"paper": None,
-                       "recentred": SYSTEMATIC_PRIORS_RECENTRED,
-                       "two-stage": TWO_STAGE_PRIORS}[a.priors]
+                       "recentred": SYSTEMATIC_PRIORS_RECENTRED}[a.priors]
 
     print("=" * 72)
     print("Step 1 :: SPX P-measure parameters via the repository's P-MLE")
@@ -502,11 +492,9 @@ def main():
           % (a.beg, a.end, a.step, LOOKBACK))
     print("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
     print("  priors: %s" % a.priors)
-    if a.priors == "two-stage":
-        print("    HELD at full-sample values: alpha=%.3f  eta1=%.2f  eta2=%.2f"
-              % (FULL_SAMPLE["alpha_rv"], FULL_SAMPLE["eta1"],
-                 FULL_SAMPLE["eta2"]))
-        print("    free: sigma, lamb, pprob")
+    if a.priors == "recentred":
+        print("    all six free; eta1 and eta2 share one prior "
+              "(mean %.0f) so no asymmetry is asserted" % 70.0)
 
     if a.full_sample:
         run_full_sample(a.beg, a.end)

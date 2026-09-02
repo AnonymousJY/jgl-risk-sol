@@ -579,11 +579,21 @@ class KimYiLogLike:
 
         norm_dist = pm.Normal.dist()
 
-        g_x  = self.pprob * eta1 * pt.exp(0.5 * sigma_squared * eta1**2 * self.dt - diff_y_x * eta1)
-        g_x *= pt.exp(pm.logcdf(norm_dist, value=(diff_y_x - sigma_squared * eta1 * self.dt) / sigma_root_dt))
-        g_x += self.qprob * eta2 * pt.exp(0.5 * sigma_squared * eta2**2 * self.dt + diff_y_x * eta2)
-        g_x *= pt.exp(pm.logcdf(norm_dist, value=(diff_y_x + sigma_squared * eta2 * self.dt) / sigma_root_dt * -1.))
-        g_x *= self.lamb * self.dt
+        # Each jump branch carries its OWN normal CDF. The previous form
+        # accumulated the down branch with += BEFORE applying the down Phi with
+        # *=, so the down Phi multiplied the running sum and the up branch was
+        # weighted by Phi_up * Phi_down. The result was not a density (it
+        # integrated to 0.986) and was wrong by a factor of ~8 on positive
+        # moves, while negative moves were almost unaffected - which is why it
+        # went unnoticed. Systematically suppressing the up branch biases pprob
+        # downward, since pprob multiplies exactly that branch.
+        up_branch  = self.pprob * eta1 * pt.exp(0.5 * sigma_squared * eta1**2 * self.dt - diff_y_x * eta1)
+        up_branch *= pt.exp(pm.logcdf(norm_dist, value=(diff_y_x - sigma_squared * eta1 * self.dt) / sigma_root_dt))
+
+        down_branch  = self.qprob * eta2 * pt.exp(0.5 * sigma_squared * eta2**2 * self.dt + diff_y_x * eta2)
+        down_branch *= pt.exp(pm.logcdf(norm_dist, value=(diff_y_x + sigma_squared * eta2 * self.dt) / sigma_root_dt * -1.))
+
+        g_x  = (up_branch + down_branch) * self.lamb * self.dt
         g_x += (1. - self.lamb * self.dt) / sigma_root_dt * pt.exp(pm.logp(norm_dist, value=diff_y_x / sigma_root_dt))
 
         return pt.log(g_x)

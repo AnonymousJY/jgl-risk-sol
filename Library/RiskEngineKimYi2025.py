@@ -146,10 +146,66 @@ SYSTEMATIC_PRIORS = {
     "eta2":     ("Gamma", {"alpha": 25.0, "beta": 1.0}),
 }
 
+# ---------------------------------------------------------------------------
+# Full-sample calibration, 2007-01-01 to 2026-08-31 (~4,950 returns, ~193 jumps)
+# ---------------------------------------------------------------------------
+# eta1, eta2 and pprob are taken from the arm that asserts NOTHING: the two
+# decays share a Gamma(35,1) prior and pprob is Uniform(0,1). Starting from
+# zero asserted separation they ended 17.9 apart - three prior sd - and landed
+# within 1.7% of eta2 from the asymmetric-prior fit. Convergence from opposite
+# priors is what makes this a measurement rather than an assumption.
+#
+# alpha is from the baseline full-sample fit. It cannot be estimated in a
+# window at all: its half-life is 19 years against a one-year window.
+FULL_SAMPLE = {
+    "alpha_rv": 0.036,      # half-life 19.3 yr; Psi is near a random walk
+    "sigma":    0.105,
+    "pprob_rv": 0.575,      # +-0.026 under a flat prior, 2.9 sd above 0.5
+    "lamb":     76.99,      # ~77 jumps/yr, one every 3.3 trading days
+    "eta1":     78.59,      # mean up jump   1.27%
+    "eta2":     60.68,      # mean down jump 1.65%  -> jump skew -0.55
+}
+
+# Priors recentred on the full-sample calibration, with deliberately generous
+# widths. This is empirical Bayes: the same returns inform the prior and are
+# then fitted again, so the widths must be wide enough that the prior guides
+# rather than dictates. Compare the old centres - sigma at 1.0 against a fitted
+# 0.105, lambda at 20 against 77, pprob at 0.714 against 0.575 - all of which
+# dragged the rolling estimates.
+SYSTEMATIC_PRIORS_RECENTRED = {
+    "sigma":    ("Gamma", {"alpha": 2.0,  "beta": 10.0}),   # mean 0.20  sd 0.14
+    "alpha_rv": ("Beta",  {"alpha": 5.0,  "beta": 2.0}),    # unchanged; fixed below
+    "pprob_rv": ("Beta",  {"alpha": 2.3,  "beta": 1.7}),    # mean 0.575 sd 0.221
+    "lamb":     ("Gamma", {"alpha": 9.0,  "beta": 0.15}),   # mean 60    sd 20
+    "eta1":     ("Gamma", {"alpha": 50.0, "beta": 1.0}),    # unchanged; fixed below
+    "eta2":     ("Gamma", {"alpha": 25.0, "beta": 1.0}),    # unchanged; fixed below
+}
+
+# The two-stage specification. alpha and the two decays are HELD at their
+# full-sample values because a 252-day window cannot identify them - alpha on
+# span, the decays on jump count - and sigma, lambda and pprob stay free
+# because it can. Every number is then either estimated from data that can
+# identify it, or explicitly carried from a fit that could.
+TWO_STAGE_PRIORS = dict(SYSTEMATIC_PRIORS_RECENTRED)
+TWO_STAGE_PRIORS.update({
+    "alpha_rv": ("Fixed", {"value": FULL_SAMPLE["alpha_rv"]}),
+    "eta1":     ("Fixed", {"value": FULL_SAMPLE["eta1"]}),
+    "eta2":     ("Fixed", {"value": FULL_SAMPLE["eta2"]}),
+})
+
 
 def _build_prior(name, spec):
-    """Instantiate one prior from a (distribution_name, kwargs) pair."""
+    """Instantiate one prior from a (distribution_name, kwargs) pair.
+
+    ("Fixed", {"value": x}) pins the parameter to a constant instead of
+    sampling it. Used for parameters a 252-day window cannot identify - alpha,
+    whose half-life exceeds the window, and the jump-size decays, which see
+    only ~7 jumps per side - so they are carried from a full-sample fit rather
+    than re-estimated badly in every window.
+    """
     dist, kw = spec
+    if dist == "Fixed":
+        return pt.as_tensor(np.float64(kw["value"]))
     return getattr(pm, dist)(name=name, **kw)
 
 
@@ -159,6 +215,8 @@ def prior_moments(spec):
     PyMC's Gamma is rate-parameterised: mean = alpha/beta, sd = sqrt(alpha)/beta.
     """
     dist, kw = spec
+    if dist == "Fixed":
+        return float(kw["value"]), 0.0
     if dist == "Uniform":
         lo, hi = float(kw["lower"]), float(kw["upper"])
         return 0.5 * (lo + hi), (hi - lo) / np.sqrt(12.0)
@@ -231,12 +289,22 @@ def pmle_kimyirisk_systematic(
     # alpha and pprob are summarised on their CONSTRAINED variables (alpha_rv,
     # pprob_rv) rather than by exponentiating the summary of log(.). The old
     # np.exp(mean(log x)) reported a geometric mean and shifted the interval.
-    a_m, a_lo, a_hi = summarize(idata_systematic, "alpha_rv")
-    s_m, s_lo, s_hi = summarize(idata_systematic, "sigma")
-    p_m, p_lo, p_hi = summarize(idata_systematic, "pprob_rv")
-    l_m, l_lo, l_hi = summarize(idata_systematic, "lamb")
-    e1_m, e1_lo, e1_hi = summarize(idata_systematic, "eta1")
-    e2_m, e2_lo, e2_hi = summarize(idata_systematic, "eta2")
+    def _summ(var, key):
+        # A Fixed parameter is not a random variable, so it has no posterior to
+        # summarise. Report the constant with a zero-width interval, which is
+        # the honest representation: no uncertainty was estimated because none
+        # was estimated here.
+        if pr[key][0] == "Fixed":
+            v = float(pr[key][1]["value"])
+            return v, v, v
+        return summarize(idata_systematic, var)
+
+    a_m, a_lo, a_hi = _summ("alpha_rv", "alpha_rv")
+    s_m, s_lo, s_hi = _summ("sigma", "sigma")
+    p_m, p_lo, p_hi = _summ("pprob_rv", "pprob_rv")
+    l_m, l_lo, l_hi = _summ("lamb", "lamb")
+    e1_m, e1_lo, e1_hi = _summ("eta1", "eta1")
+    e2_m, e2_lo, e2_hi = _summ("eta2", "eta2")
 
     return {
         'dALPHA': ParamsResults(dMEAN=a_m, dCI_LOWER=a_lo, dCI_UPPER=a_hi),

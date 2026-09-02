@@ -65,8 +65,11 @@ def pmle_kimyirisk_systematic_helper(args) -> tuple:
     Returns ``(valuation_dt, systematic_id, results)`` where ``results`` is the
     ``{param: ParamsResults}`` dict produced by ``pmle_kimyirisk_systematic``.
     """
-    valuation_dt, return_vector, delta_t, seed_number, n_mc_paths, systematic_id = args
+    (valuation_dt, return_vector, delta_t, seed_number, n_mc_paths,
+     systematic_id, *rest) = args
+    priors = rest[0] if rest else None
     results = pmle_kimyirisk_systematic(
+        priors=priors,
         sys_returns=return_vector,
         delta_t=delta_t,
         seed_number=seed_number,

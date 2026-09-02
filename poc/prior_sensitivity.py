@@ -62,6 +62,7 @@ observations rather than from sample length.
 """
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -193,11 +194,20 @@ def main():
                 f = d[d.arm == "F pprob flat"]
                 ref = float(f["dPPROB"].iloc[0]) if len(f) else float("nan")
                 room = (cap - m) / cap
-                print("  -> arm E posterior mean %.4f against the %.2f cap "
-                      "(%.0f%% of the way to it)" % (m, cap, 100 * (1 - room)))
-                print("     arm F, flat and unconstrained, wants %.4f  %s"
-                      % (ref, "-> the cap is BINDING and fights the data"
-                         if ref > cap else "-> the cap is not binding"))
+                # What matters is how much unconstrained posterior MASS sits
+                # above the cap, not whether the unconstrained MEAN exceeds it.
+                # A posterior centred just below the cap can still have 40-50%
+                # of its mass above it, and truncating removes all of that.
+                # Comparing means alone reported "not binding" for exactly such
+                # a case.
+                fsd = float(f["dPPROB_ratio"].iloc[0]) * (1.0 / math.sqrt(12))
+                mass = 0.5 * math.erfc((cap - ref) / (fsd * math.sqrt(2))) \
+                    if fsd > 0 else float("nan")
+                print("  -> arm F (flat, pure likelihood) wants %.4f, "
+                      "with %.0f%% of its mass above %.2f" % (ref, 100 * mass, cap))
+                print("     arm E (capped) gives %.4f -> the cap moves it %+.3f  %s"
+                      % (m, m - ref,
+                         "BINDING" if abs(m - ref) > 0.05 else "little effect"))
 
         b = d[d.arm == "B symmetric eta"]
         if len(b):

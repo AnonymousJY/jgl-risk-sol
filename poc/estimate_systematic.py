@@ -160,21 +160,35 @@ def run_full_sample(beg=BEG, end=END):
 
     # the only question that matters: did the posterior move off the prior?
     from poc.prior_diagnostics import PRIORS, HDI_TO_SD          # noqa: E402
-    print("  %-8s %-14s %9s %9s %9s %7s  %s"
+    print("  %-8s %-14s %9s %9s %9s %7s %8s  %s"
           % ("param", "prior", "pri_mean", "post_mean", "post_sd", "ratio",
-             "verdict"))
-    print("  " + "-" * 74)
+             "shift", "verdict"))
+    print("  " + "-" * 84)
     for k, (label, pmean, psd) in PRIORS.items():
         if k not in params:
             continue
         m, lo, hi = params[k]
         post_sd = (hi - lo) * HDI_TO_SD
         ratio = post_sd / psd
-        v = ("PRIOR-DRIVEN" if ratio > 0.90 else
-             "weak" if ratio > 0.70 else
-             "partial" if ratio > 0.35 else "DATA-DRIVEN")
-        print("  %-8s %-14s %9.3f %9.3f %9.3f %7.2f  %s"
-              % (k, label, pmean, m, post_sd, ratio, v))
+        shift = (m - pmean) / psd
+
+        # The verdict needs BOTH width and location. Width alone mislabels a
+        # parameter whose posterior has moved a long way from the prior mean
+        # into a region where its own scale is larger: dLAMB came back at 77.0
+        # against a prior mean of 20.0 - nine prior standard deviations - with
+        # a ratio of 1.42, and a width-only rule called that PRIOR-DRIVEN. A
+        # prior cannot drag a posterior nine sd away from itself. Any large
+        # shift is decisive evidence of data dominance regardless of width.
+        if ratio < 0.35 or abs(shift) > 2.0:
+            v = "DATA-DRIVEN"
+        elif ratio < 0.70:
+            v = "partial"
+        elif ratio < 0.90:
+            v = "weak"
+        else:
+            v = "PRIOR-DRIVEN"
+        print("  %-8s %-14s %9.3f %9.3f %9.3f %7.2f %+8.2f  %s"
+              % (k, label, pmean, m, post_sd, ratio, shift, v))
     print("\n  If dETA1 and dETA2 are now DATA-DRIVEN, the identification")
     print("  problem is solved from returns alone and nothing further is")
     print("  needed. If they are still PRIOR-DRIVEN with ~230 jumps, then and")

@@ -172,13 +172,20 @@ FULL_SAMPLE = {
 # rather than dictates. Compare the old centres - sigma at 1.0 against a fitted
 # 0.105, lambda at 20 against 77, pprob at 0.714 against 0.575 - all of which
 # dragged the rolling estimates.
+# eta1 and eta2 get the SAME prior here. Arm G showed the data separates them
+# unaided - from an identical Gamma(35,1) start they finished 17.9 apart, three
+# prior sd - so there is no reason left to assert the asymmetry, and every
+# reason not to. The shared centre sits at the midpoint of the two full-sample
+# values, 70, wide enough that both 60.7 and 78.6 are inside one sd.
+_ETA_SHARED = ("Gamma", {"alpha": 12.0, "beta": 0.1714})    # mean 70.0  sd 20.2
+
 SYSTEMATIC_PRIORS_RECENTRED = {
-    "sigma":    ("Gamma", {"alpha": 2.0,  "beta": 10.0}),   # mean 0.20  sd 0.14
-    "alpha_rv": ("Beta",  {"alpha": 5.0,  "beta": 2.0}),    # unchanged; fixed below
+    "sigma":    ("Gamma", {"alpha": 2.0,  "beta": 10.0}),   # mean 0.200 sd 0.141
+    "alpha_rv": ("Beta",  {"alpha": 1.0,  "beta": 26.0}),   # mean 0.037 sd 0.036
     "pprob_rv": ("Beta",  {"alpha": 2.3,  "beta": 1.7}),    # mean 0.575 sd 0.221
-    "lamb":     ("Gamma", {"alpha": 9.0,  "beta": 0.15}),   # mean 60    sd 20
-    "eta1":     ("Gamma", {"alpha": 50.0, "beta": 1.0}),    # unchanged; fixed below
-    "eta2":     ("Gamma", {"alpha": 25.0, "beta": 1.0}),    # unchanged; fixed below
+    "lamb":     ("Gamma", {"alpha": 9.0,  "beta": 0.15}),   # mean 60.0  sd 20.0
+    "eta1":     _ETA_SHARED,
+    "eta2":     _ETA_SHARED,
 }
 
 # The two-stage specification. alpha and the two decays are HELD at their

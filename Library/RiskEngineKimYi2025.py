@@ -283,6 +283,37 @@ SYSTEMATIC_PRIORS_ASYM.update({
     "eta2": ("Gamma", {"alpha": 4.0, "beta": 0.08}),    # mean 50.0 sd 25.0
 })
 
+# The mirror of ASYM: eta1 mean 50, eta2 mean 25.
+#
+#     eta1 = 50  ->  mean UP   jump  1/50 = 2.0%
+#     eta2 = 25  ->  mean DOWN jump  1/25 = 4.0%
+#
+# NEGATIVE jump skew - the equity direction, the paper's own assertion
+# (Gamma(50,1)/Gamma(25,1)) restated at the GAPS scale, and the sign the full
+# sample measured unaided.
+#
+# This exists to close the experiment rather than to produce a preferred fit.
+# ASYM showed a 252-day window preserving an inverted ordering it was handed,
+# moving eta2 by 0.00 prior sd. GAPS showed the same window creating no
+# ordering at all from identical priors. The remaining possibility is that the
+# window resists specifically the WRONG sign and would have moved had the
+# prior been closer to the truth - in which case ASYM's result is about that
+# prior being far away, not about the window being blind.
+#
+# The two arms are exact mirrors, so that possibility is testable. At p = 0.5,
+# E[Y^2] = p*2/eta1^2 + q*2/eta2^2 is identical under both (0.0020), so jump
+# volatility, and with it the variance fit, should be unchanged. If the window
+# is genuinely skew-blind, this arm should return sigma, lambda and total
+# volatility within noise of ASYM's, an eta separation of about -19.8 mirroring
+# ASYM's +19.8, and pprob near 0.519 mirroring ASYM's 0.4815 about 0.5. Any
+# ASYMMETRY between the two arms is the window expressing a preference, and is
+# the one result here that would overturn the reading.
+SYSTEMATIC_PRIORS_SKEW = dict(SYSTEMATIC_PRIORS_GAPS)
+SYSTEMATIC_PRIORS_SKEW.update({
+    "eta1": ("Gamma", {"alpha": 4.0, "beta": 0.08}),    # mean 50.0 sd 25.0
+    "eta2": ("Gamma", {"alpha": 4.0, "beta": 0.16}),    # mean 25.0 sd 12.5
+})
+
 # A variant that forbids pprob above 0.6.
 #
 # The cap is expressed as a FLAT prior on the allowed region, not as a

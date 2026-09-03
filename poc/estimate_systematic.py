@@ -63,7 +63,7 @@ from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 from Library.RiskEngineKimYi2025 import (                     # noqa: E402
     SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
     SYSTEMATIC_PRIORS_CAPPED_BETA, SYSTEMATIC_PRIORS_GAPS,
-    SYSTEMATIC_PRIORS_ASYM, FULL_SAMPLE,
+    SYSTEMATIC_PRIORS_ASYM, SYSTEMATIC_PRIORS_SKEW, FULL_SAMPLE,
 )
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -103,7 +103,7 @@ FULL_SAMPLE_ID = "^SPX_FULLSAMPLE"
 # Study/Estimated Parameters PMLE/^SPX/ stay exactly where Scripts/ expects.
 STORE_SUFFIX = {"paper": "", "recentred": "__recentred", "capped": "__capped",
                 "capped-beta": "__cappedbeta", "gaps": "__gaps",
-                "asym": "__asym"}
+                "asym": "__asym", "skew": "__skew"}
 
 # Set by main() from --priors, alongside PRIORS_IN_FORCE.
 STORE_ID = SYSTEMATIC_ID
@@ -597,7 +597,7 @@ def main():
                          "fit already uses 4 chains on 4 cores.")
     ap.add_argument("--priors",
                     choices=("paper", "recentred", "capped", "capped-beta",
-                             "gaps", "asym"),
+                             "gaps", "asym", "skew"),
                     default="paper",
                     help="paper: the published priors; reproduces prior work "
                          "and stays the default so Scripts/ is untouched. "
@@ -619,7 +619,13 @@ def main():
                          "jump against a 2% mean DOWN one, which is the "
                          "OPPOSITE sign to equity skew and to the full sample. "
                          "A deliberately wrong-signed prior, to see whether "
-                         "the data drags it back.")
+                         "the data drags it back. skew: the exact mirror of "
+                         "asym - eta1 mean 50 and eta2 mean 25, a 2% up jump "
+                         "against a 4% down one, which is the equity direction "
+                         "and the paper's own assertion at the gaps scale. Run "
+                         "it against asym: the pair have identical jump "
+                         "variance, so any difference between them is the "
+                         "window expressing a preference on SIGN.")
     ap.add_argument("--full-sample", action="store_true",
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
@@ -633,7 +639,8 @@ def main():
                        "capped": SYSTEMATIC_PRIORS_CAPPED,
                        "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA,
                        "gaps": SYSTEMATIC_PRIORS_GAPS,
-                       "asym": SYSTEMATIC_PRIORS_ASYM}[a.priors]
+                       "asym": SYSTEMATIC_PRIORS_ASYM,
+                       "skew": SYSTEMATIC_PRIORS_SKEW}[a.priors]
     STORE_ID = store_id(a.priors, PRIORS_IN_FORCE)
 
     print("=" * 72)
@@ -660,6 +667,16 @@ def main():
         print("    the full sample (eta1 78.6 / eta2 60.7). Watch whether the")
         print("    posterior pulls eta2 back BELOW eta1; if it stays put, the")
         print("    separation seen elsewhere was never the data's doing.")
+    if a.priors == "skew":
+        print("    eta1 Gamma(4,0.08): mean 50 -> mean UP   jump 2.0%")
+        print("    eta2 Gamma(4,0.16): mean 25 -> mean DOWN jump 4.0%")
+        print("    NEGATIVE jump skew - the equity direction, and the exact")
+        print("    mirror of --priors asym. E[Y^2] is identical under both at")
+        print("    p=0.5, so if the window is skew-blind this should return")
+        print("    sigma, lambda and total vol within noise of asym, an eta")
+        print("    separation near -19.8 against asym's +19.8, and pprob near")
+        print("    0.519 against asym's 0.481. A DIFFERENCE between the two is")
+        print("    the only result that would overturn that reading.")
     if a.priors.startswith("capped"):
         print("    pprob CAPPED at 0.6 - watch for the posterior piling up")
         print("    against the cap in 2007, 2013, 2017, 2018, 2021, 2024,")

@@ -86,6 +86,25 @@ SYSTEMATIC_ID = "^SPX"
 # Full-sample fits are stored under their own underlying id so they cannot
 # collide with, or be mistaken for, a rolling estimate.
 FULL_SAMPLE_ID = "^SPX_FULLSAMPLE"
+
+# Where the ESTIMATES are stored, as opposed to where the PRICES come from.
+#
+# These have to be different, and the reason is a trap that has already cost a
+# run. run() skips any date already on disk, which is what makes a 5,000-date
+# job interruptible. But "already on disk" was keyed on the underlying alone,
+# so changing a prior and rerunning skipped every date and reprinted the OLD
+# posteriors under the NEW prior's header - a silent, entirely plausible-looking
+# wrong answer. Prices are the same ^SPX series whatever the prior; estimates
+# are not, and must not share a drawer.
+#
+# "paper" keeps the bare id so the committed replication files under
+# Study/Estimated Parameters PMLE/^SPX/ stay exactly where Scripts/ expects.
+STORE_SUFFIX = {"paper": "", "recentred": "__recentred", "capped": "__capped",
+                "capped-beta": "__cappedbeta", "gaps": "__gaps"}
+
+# Set by main() from --priors, alongside PRIORS_IN_FORCE.
+STORE_ID = SYSTEMATIC_ID
+PRIORS_TAG = "paper"
 DATE_FMT = "%Y%m%d"
 
 BEG = "20070101"
@@ -141,7 +160,8 @@ def run_full_sample(beg=BEG, end=END):
     # ~8 minutes and an earlier version lost one entirely to a serialisation
     # error raised after the sampler had finished. Nothing expensive should be
     # destroyed by a failure in how it gets written down.
-    raw = os.path.join(_REPO_ROOT, "poc", "full_sample_params.json")
+    raw = os.path.join(_REPO_ROOT, "poc",
+                       "full_sample_params%s.json" % STORE_SUFFIX[PRIORS_TAG])
     with open(raw, "w") as fh:
         json.dump({"beg": beg, "end": end, "n_returns": int(len(rv)),
                    "seconds": round(elapsed, 1),
@@ -155,7 +175,8 @@ def run_full_sample(beg=BEG, end=END):
     # with the rolling estimate for that date, and so load_series() - which
     # reads SYSTEMATIC_ID - never picks a full-sample fit up as a rolling one.
     try:
-        out = save_pmle_params(end, FULL_SAMPLE_ID, params)
+        out = save_pmle_params(
+            end, FULL_SAMPLE_ID + STORE_SUFFIX[PRIORS_TAG], params)
         print("  saved to %s" % out)
     except Exception as exc:                                      # noqa: BLE001
         print("  WARNING could not write to the parameter store: %s: %s"
@@ -255,7 +276,7 @@ def run(dates, workers=None):
               % (first_ok.date(), BEG))
         print("  snapshot must start ~%d business days earlier." % LOOKBACK)
 
-    todo = [d for d in usable if not pmle_params_exists(d, SYSTEMATIC_ID)]
+    todo = [d for d in usable if not pmle_params_exists(d, STORE_ID)]
     print("  %d dates requested, %d usable, %d already on disk, %d to estimate."
           % (len(dates), len(usable), len(usable) - len(todo), len(todo)))
     if not todo:
@@ -266,7 +287,7 @@ def run(dates, workers=None):
         rv = (return_ts.loc[return_ts.index <= dt, SYSTEMATIC_ID]
               .iloc[-LOOKBACK:].to_numpy())
         args.append((dt, rv, np.array(1 / BASE_DAYS), SEED, N_MC_PATHS,
-                     SYSTEMATIC_ID, PRIORS_IN_FORCE))
+                     STORE_ID, PRIORS_IN_FORCE))
 
     workers = workers or default_workers()
     print("  %d workers x 4 chains = %d concurrent samplers on %d cores"
@@ -339,10 +360,10 @@ def run(dates, workers=None):
 
 def load_series():
     """All estimated systematic parameters as a DataFrame indexed by date."""
-    dates = available_pmle_dates(SYSTEMATIC_ID)
+    dates = available_pmle_dates(STORE_ID)
     rows = []
     for dt in dates:
-        s = get_pmle_params(dt, SYSTEMATIC_ID)
+        s = get_pmle_params(dt, STORE_ID)
         row = {"date": pd.to_datetime(dt, format=DATE_FMT)}
         for k in SYSTEMATIC_PARAMS:
             if k in s:
@@ -509,8 +530,10 @@ def main():
                          "the cheap test of whether more jumps fixes eta1/eta2.")
     a = ap.parse_args()
 
-    global COLOR, PRIORS_IN_FORCE
+    global COLOR, PRIORS_IN_FORCE, STORE_ID, PRIORS_TAG
     COLOR = a.color
+    PRIORS_TAG = a.priors
+    STORE_ID = SYSTEMATIC_ID + STORE_SUFFIX[a.priors]
     PRIORS_IN_FORCE = {"paper": None,
                        "recentred": SYSTEMATIC_PRIORS_RECENTRED,
                        "capped": SYSTEMATIC_PRIORS_CAPPED,
@@ -524,6 +547,7 @@ def main():
           % (a.beg, a.end, a.step, LOOKBACK))
     print("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
     print("  priors: %s" % a.priors)
+    print("  estimates stored under: %s" % STORE_ID)
     if a.priors == "gaps":
         print("    eta1 and eta2 share Gamma(4,0.2): mean 20, i.e. a 5% jump")
         print("    lambda Gamma(3,0.5): mean 6, kept coherent with that size")
@@ -552,7 +576,8 @@ def main():
     if a.verify:
         verify(df)
 
-    out = os.path.join(_REPO_ROOT, "poc", "systematic_params.csv")
+    out = os.path.join(_REPO_ROOT, "poc",
+                       "systematic_params%s.csv" % STORE_SUFFIX[PRIORS_TAG])
     df.to_csv(out)
     print("\nWritten to %s" % out)
     print("This series is the rolling systematic input to backfill_poc.py.")

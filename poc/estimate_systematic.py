@@ -735,9 +735,6 @@ def main():
         print("    interval here is not information. Do NOT read these columns")
         print("    as better estimated than skew's; they are the same evidence")
         print("    reported against a stronger assertion.")
-        print("    NOTE dALPHA is halved here against advice. It is the control")
-        print("    for the identification argument elsewhere - cite --priors")
-        print("    skew, not this arm, for any claim that alpha is prior-driven.")
     if a.priors.startswith("capped"):
         print("    pprob CAPPED at 0.6 - watch for the posterior piling up")
         print("    against the cap in 2007, 2013, 2017, 2018, 2021, 2024,")

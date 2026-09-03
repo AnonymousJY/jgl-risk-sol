@@ -353,12 +353,6 @@ SYSTEMATIC_PRIORS_SKEW.update({
 # tight credible interval is not evidence of identification. Table 1's tight
 # intervals on parameters a 252-day window cannot see are what it looks like
 # when this happens by accident instead of on purpose.
-#
-# NOTE alpha is halved here at the user's instruction and against my advice.
-# It is the control for the rest of the programme - four runs have shown its
-# posterior tracking whatever centre it is handed, and that argument holds only
-# while the prior is wide enough to have been contradicted. Use SKEW, not this,
-# for any claim about alpha being prior-driven.
 SYSTEMATIC_PRIORS_SKEW_TIGHT = dict(SYSTEMATIC_PRIORS_SKEW)
 SYSTEMATIC_PRIORS_SKEW_TIGHT.update({
     "eta1":     ("Gamma", {"alpha": 16.0, "beta": 0.32}),    # mean 50.000 sd 12.500

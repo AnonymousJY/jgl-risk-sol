@@ -304,6 +304,34 @@ def run_full_sample(beg=BEG, end=END):
     print("  only then is the option-implied route worth the complexity.")
 
 
+# Recycle workers periodically. ProcessPoolExecutor keeps each worker alive for
+# the life of the pool, so anything PyMC/nutpie fails to release accumulates
+# over the ~150 fits one worker handles in a long run. That is the shape of the
+# failure seen here: a pool that ran 1,010 fits over 2.8 hours and then lost a
+# worker to the OOM killer. A pool short of memory fails EARLY; a pool that
+# leaks fails LATE, and late is what happened.
+#
+# max_tasks_per_child restarts a worker after N tasks, which returns its memory
+# to the OS. It is Python 3.11+ and requires a non-fork start method (we use
+# forkserver), so it is probed rather than assumed - on 3.10 the run simply
+# proceeds as before. A restart costs one re-import of the PyMC stack, ~10s
+# against ~25 fits of ~60s each: under 1% for the thing that ends long runs.
+MAX_TASKS_PER_CHILD = int(os.environ.get("JGL_MAX_TASKS_PER_CHILD", "25"))
+
+
+def _pool_kwargs(workers):
+    kw = {"max_workers": workers, "initializer": _init_child}
+    import inspect
+    if "max_tasks_per_child" in inspect.signature(ProcessPoolExecutor).parameters:
+        kw["max_tasks_per_child"] = MAX_TASKS_PER_CHILD
+    else:
+        print("  NOTE Python %d.%d has no max_tasks_per_child; workers will not"
+              % (sys.version_info[0], sys.version_info[1]))
+        print("       be recycled. If a long run dies late, that is the likely")
+        print("       cause - 3.11+ or a smaller --end range avoids it.")
+    return kw
+
+
 def valuation_dates(beg, end, step):
     days = pd.bdate_range(pd.to_datetime(beg, format=DATE_FMT),
                           pd.to_datetime(end, format=DATE_FMT))
@@ -386,8 +414,7 @@ def run(dates, workers=None):
     t0 = time.perf_counter()
     done = failed = 0
     try:
-        with ProcessPoolExecutor(max_workers=workers,
-                                 initializer=_init_child) as ex:
+        with ProcessPoolExecutor(**_pool_kwargs(workers)) as ex:
             futures = {ex.submit(pmle_kimyirisk_systematic_helper, a): a[0]
                        for a in args}
             for fut in as_completed(futures):
@@ -429,12 +456,15 @@ def run(dates, workers=None):
         print("  it was killed by a signal rather than failing in Python.")
         print("  Confirm the cause before rerunning:")
         print()
-        print("      dmesg -T | grep -i -E 'killed process|out of memory' | tail")
+        print("      sudo dmesg -T | grep -i -E 'killed process|out of memory' | tail")
+        print("      journalctl -k --since '3 hours ago' | grep -i 'killed process'")
         print()
         print("  If that shows an OOM kill, rerun with fewer workers - memory")
         print("  scales with worker count, cores do not:")
         print()
-        print("      ./run_daily.sh %d" % max(1, workers // 2))
+        print("      JGL_MAX_TASKS_PER_CHILD=10 <same command>   (recycle sooner)")
+        print("      ./run_daily.sh %d                            (fewer workers)"
+              % max(1, workers // 2))
         print()
         print("  If it shows nothing, suspect a native crash in the sampler.")
         print("  Reproduce one date in the foreground to get a real traceback:")
@@ -519,11 +549,13 @@ def report(df):
             PRIORS = {k: (str(PRIORS_IN_FORCE[v]),
                           *prior_moments(PRIORS_IN_FORCE[v]))
                       for k, v in _MAP.items()}
-            PRIORS = {k: (str(PRIORS_IN_FORCE[v]),
-                          *prior_moments(PRIORS_IN_FORCE[v]))
-                      for k, v in _map.items()}
         prior_sd = {k: v[2] for k, v in PRIORS.items()}
-    except Exception:                                            # noqa: BLE001
+    except Exception as exc:                                     # noqa: BLE001
+        # Say so. A silent {} here drops the entire identification table, which
+        # is the one part of this report the conclusions rest on - a bug in this
+        # block once removed it from every run without a word.
+        print("\n  WARNING identification table skipped: %s: %s"
+              % (type(exc).__name__, exc))
         prior_sd = {}
 
     if prior_sd:

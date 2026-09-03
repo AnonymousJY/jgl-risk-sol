@@ -84,7 +84,7 @@ from Scripts.run_pmle_kimyi2025 import (                     # noqa: E402
 from poc.estimate_systematic import (                        # noqa: E402
     SYSTEMATIC_ID, DATE_FMT, LOOKBACK, BASE_DAYS, SEED, N_MC_PATHS,
     STORE_SUFFIX, priors_digest, store_id, valuation_dates,
-    _init_child, default_workers,
+    _init_child, default_workers, _pool_kwargs,
 )
 from Library.RiskEngineKimYi2025 import (                    # noqa: E402
     SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
@@ -238,8 +238,7 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None):
     t0 = time.perf_counter()
     done = failed = 0
     try:
-        with ProcessPoolExecutor(max_workers=workers,
-                                 initializer=_init_child) as ex:
+        with ProcessPoolExecutor(**_pool_kwargs(workers)) as ex:
             futures = {ex.submit(pmle_kimyirisk_idiosyncratic_helper, t[0]): t
                        for t in tasks}
             for fut in as_completed(futures):
@@ -251,7 +250,8 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None):
                 except Exception as exc:                      # noqa: BLE001
                     failed += 1
                     print("    FAILED  %-8s %s  %s: %s"
-                          % (name, futures[fut][0][0], type(exc).__name__, exc))
+                          % (name, futures[fut][0][0],
+                             type(exc).__name__, exc))
                     continue
                 save_pmle_params(
                     dt, drawer,
@@ -263,11 +263,19 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None):
                           % (done, len(tasks), el,
                              el / done * (len(tasks) - done)))
     except BrokenProcessPool:
-        print("\n  A worker died - almost always the OOM killer, not a bug in")
-        print("  the model. %d fit(s) are safely on disk and a rerun skips" % done)
-        print("  them. Retry with fewer workers (--workers %d), and check with:"
-              % max(1, (workers or 1) // 2))
-        print("    dmesg -T | tail -40 | grep -i 'killed process'")
+        print("\n  A worker died. Late in a long run this is usually memory")
+        print("  accumulating in a reused worker rather than a bug in the model.")
+        print("  %d fit(s) are safely on disk and a rerun skips them." % done)
+        print()
+        print("  Rerun the same command - it resumes. If it dies again, lower")
+        print("  the recycle interval or the worker count:")
+        print("    JGL_MAX_TASKS_PER_CHILD=10 <same command>")
+        print("    <same command> --workers %d" % max(1, (workers or 2) // 2))
+        print()
+        print("  To confirm the OOM killer (dmesg needs root on Ubuntu):")
+        print("    sudo dmesg -T | grep -i 'killed process' | tail")
+        print("    journalctl -k --since '3 hours ago' | grep -i 'killed process'")
+        print("    grep -i 'killed process' /var/log/kern.log | tail")
         raise SystemExit(1)
 
     if failed:

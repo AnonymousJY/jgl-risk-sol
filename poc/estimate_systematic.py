@@ -32,6 +32,7 @@ then decide whether finer stepping changes anything.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -75,7 +76,7 @@ from Library.TableHeatmap import (                          # noqa: E402
 COLOR = None
 from Library.DataAccess import (                            # noqa: E402
     get_price_panel, get_pmle_params, pmle_params_exists,
-    save_pmle_params, available_pmle_dates,
+    save_pmle_params, available_pmle_dates, PMLE_DIR,
 )
 from Scripts.run_pmle_kimyi2025 import (                    # noqa: E402
     pmle_kimyirisk_systematic_helper, assemble_systematic_params,
@@ -105,6 +106,83 @@ STORE_SUFFIX = {"paper": "", "recentred": "__recentred", "capped": "__capped",
 # Set by main() from --priors, alongside PRIORS_IN_FORCE.
 STORE_ID = SYSTEMATIC_ID
 PRIORS_TAG = "paper"
+
+
+def priors_digest(priors):
+    """An 8-hex fingerprint of a RESOLVED prior specification.
+
+    Naming the drawer after --priors is not enough, and the reason is the
+    mistake this function exists to prevent. The tag "gaps" names a variable,
+    not a value: recentring alpha inside SYSTEMATIC_PRIORS_RECENTRED changes
+    every spec that inherits from it - gaps, capped, capped-beta - while every
+    tag stays the same. A rerun then finds 245 dates "already on disk", skips
+    all of them, and reprints posteriors fitted under the OLD alpha prior under
+    a header naming the NEW one.
+
+    Hashing the numbers themselves removes the judgement call. Any edit to any
+    prior in the spec produces a different drawer automatically, so a stale
+    result cannot be silently reused no matter how the spec was reached. The
+    converse matters just as much: an unchanged spec keeps its digest, so an
+    interrupted run still resumes.
+    """
+    if priors is None:
+        payload = "paper-defaults"           # the engine's published literals
+    else:
+        payload = json.dumps(
+            {k: [kind, {kk: float(vv) for kk, vv in sorted(kw.items())}]
+             for k, (kind, kw) in sorted(priors.items())},
+            sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+
+
+def store_id(tag, priors):
+    """Where estimates fitted under (tag, priors) are stored.
+
+    "paper" keeps the bare id: those literals are frozen by publication and the
+    committed replication files under Study/Estimated Parameters PMLE/^SPX/ are
+    addressed by it. Everything else is tag + digest, so the name says which
+    arm it is and the digest says which VERSION of that arm.
+    """
+    if tag == "paper":
+        return SYSTEMATIC_ID
+    return "%s%s_%s" % (SYSTEMATIC_ID, STORE_SUFFIX[tag], priors_digest(priors))
+
+
+def artifact_suffix(tag, priors):
+    """Filename suffix for the loose poc/ artefacts, matching the drawer.
+
+    systematic_params.csv and full_sample_params.json have to carry the digest
+    too. Tagging them by name alone would let an edited spec overwrite the
+    assembled series of the run it was compared against - the same failure as
+    the drawer, on the file you actually read.
+    """
+    if tag == "paper":
+        return ""
+    return "%s_%s" % (STORE_SUFFIX[tag], priors_digest(priors))
+
+
+def write_manifest(drawer_id, tag, priors):
+    """Drop a _priors.json beside the estimates so the drawer is self-describing.
+
+    A digest tells you two runs differ. It does not tell you how. Without this
+    file, ^SPX__gaps_3f9a1c2b six months from now is an unreadable hash over a
+    spec that has since been edited, and the estimates in it are unusable
+    because nobody can say what produced them.
+    """
+    folder = os.path.join(PMLE_DIR, drawer_id)
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "_priors.json")
+    spec = ({k: [kind, kw] for k, (kind, kw) in sorted(priors.items())}
+            if priors is not None else "engine defaults (SYSTEMATIC_PRIORS)")
+    with open(path, "w") as fh:
+        json.dump({"tag": tag,
+                   "digest": priors_digest(priors),
+                   "lookback": LOOKBACK,
+                   "base_days": BASE_DAYS,
+                   "seed": int(SEED),
+                   "n_mc_paths": N_MC_PATHS,
+                   "priors": spec}, fh, indent=2)
+    return path
 DATE_FMT = "%Y%m%d"
 
 BEG = "20070101"
@@ -160,8 +238,9 @@ def run_full_sample(beg=BEG, end=END):
     # ~8 minutes and an earlier version lost one entirely to a serialisation
     # error raised after the sampler had finished. Nothing expensive should be
     # destroyed by a failure in how it gets written down.
-    raw = os.path.join(_REPO_ROOT, "poc",
-                       "full_sample_params%s.json" % STORE_SUFFIX[PRIORS_TAG])
+    raw = os.path.join(
+        _REPO_ROOT, "poc",
+        "full_sample_params%s.json" % artifact_suffix(PRIORS_TAG, PRIORS_IN_FORCE))
     with open(raw, "w") as fh:
         json.dump({"beg": beg, "end": end, "n_returns": int(len(rv)),
                    "seconds": round(elapsed, 1),
@@ -175,8 +254,11 @@ def run_full_sample(beg=BEG, end=END):
     # with the rolling estimate for that date, and so load_series() - which
     # reads SYSTEMATIC_ID - never picks a full-sample fit up as a rolling one.
     try:
-        out = save_pmle_params(
-            end, FULL_SAMPLE_ID + STORE_SUFFIX[PRIORS_TAG], params)
+        fs_id = (FULL_SAMPLE_ID if PRIORS_TAG == "paper"
+                 else "%s%s_%s" % (FULL_SAMPLE_ID, STORE_SUFFIX[PRIORS_TAG],
+                                   priors_digest(PRIORS_IN_FORCE)))
+        write_manifest(fs_id, PRIORS_TAG, PRIORS_IN_FORCE)
+        out = save_pmle_params(end, fs_id, params)
         print("  saved to %s" % out)
     except Exception as exc:                                      # noqa: BLE001
         print("  WARNING could not write to the parameter store: %s: %s"
@@ -281,6 +363,12 @@ def run(dates, workers=None):
           % (len(dates), len(usable), len(usable) - len(todo), len(todo)))
     if not todo:
         return
+
+    # Before any fitting, so an interrupted run still leaves a drawer that
+    # says what it holds.
+    print("  priors recorded in %s"
+          % os.path.relpath(write_manifest(STORE_ID, PRIORS_TAG, PRIORS_IN_FORCE),
+                            _REPO_ROOT))
 
     args = []
     for dt in todo:
@@ -533,12 +621,12 @@ def main():
     global COLOR, PRIORS_IN_FORCE, STORE_ID, PRIORS_TAG
     COLOR = a.color
     PRIORS_TAG = a.priors
-    STORE_ID = SYSTEMATIC_ID + STORE_SUFFIX[a.priors]
     PRIORS_IN_FORCE = {"paper": None,
                        "recentred": SYSTEMATIC_PRIORS_RECENTRED,
                        "capped": SYSTEMATIC_PRIORS_CAPPED,
                        "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA,
                        "gaps": SYSTEMATIC_PRIORS_GAPS}[a.priors]
+    STORE_ID = store_id(a.priors, PRIORS_IN_FORCE)
 
     print("=" * 72)
     print("Step 1 :: SPX P-measure parameters via the repository's P-MLE")
@@ -548,6 +636,9 @@ def main():
     print("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
     print("  priors: %s" % a.priors)
     print("  estimates stored under: %s" % STORE_ID)
+    print("    the trailing digest fingerprints the prior VALUES, so editing"
+          "\n    any prior opens a new drawer instead of silently reusing the"
+          "\n    old one. _priors.json in the drawer records the full spec.")
     if a.priors == "gaps":
         print("    eta1 and eta2 share Gamma(4,0.2): mean 20, i.e. a 5% jump")
         print("    lambda Gamma(3,0.5): mean 6, kept coherent with that size")
@@ -576,8 +667,9 @@ def main():
     if a.verify:
         verify(df)
 
-    out = os.path.join(_REPO_ROOT, "poc",
-                       "systematic_params%s.csv" % STORE_SUFFIX[PRIORS_TAG])
+    out = os.path.join(
+        _REPO_ROOT, "poc",
+        "systematic_params%s.csv" % artifact_suffix(PRIORS_TAG, PRIORS_IN_FORCE))
     df.to_csv(out)
     print("\nWritten to %s" % out)
     print("This series is the rolling systematic input to backfill_poc.py.")

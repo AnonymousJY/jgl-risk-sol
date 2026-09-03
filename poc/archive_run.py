@@ -1,25 +1,30 @@
-"""Move a completed estimation run out of the untagged drawer.
+"""Give a finished estimation run a readable name.
 
-Until now every rolling run wrote to Study/Estimated Parameters PMLE/^SPX/
-regardless of which priors produced it, and run() skips any date already on
-disk. So changing a prior and rerunning skipped every date and reprinted the
-OLD posteriors under the NEW prior's header. estimate_systematic.py now stores
-each prior set separately (^SPX__gaps, ^SPX__recentred, ...), which fixes it
-going forward but leaves whatever is currently in ^SPX/ unlabelled.
+estimate_systematic.py now stores each run in a drawer named after the priors
+that produced it, fingerprinted by their VALUES:
 
-This moves that run into its proper drawer so it is kept, correctly named, and
-out of the way of the next one. The per-date CSVs are RENAMED as well as moved:
-DataAccess builds each filename from the underlying id, so a directory rename
-alone would leave the archive on disk but unreadable by --report-only.
+    Study/Estimated Parameters PMLE/^SPX__gaps_3f9a1c2b/
 
-    python poc/archive_run.py --tag gaps            # dry run, shows the plan
-    python poc/archive_run.py --tag gaps --apply
+so editing a prior opens a new drawer and a stale run can no longer be silently
+resumed. That makes archiving unnecessary for safety. It is still useful for
+memory: a digest tells you two runs differ, not which was which.
 
-Nothing is deleted and nothing is overwritten: if the destination already
-exists the script refuses and tells you.
+This renames a drawer to something you will still recognise later, and moves
+the loose poc/ artefacts that belong with it:
+
+    python poc/archive_run.py --list
+    python poc/archive_run.py --drawer '^SPX__gaps_3f9a1c2b' --label alpha0.037
+    python poc/archive_run.py --drawer '^SPX__gaps_3f9a1c2b' --label alpha0.037 --apply
+
+The per-date CSVs are RENAMED as well as moved: DataAccess builds each filename
+from the underlying id, so a directory rename alone would leave the archive on
+disk but unreadable by --report-only. Nothing is deleted, and an existing
+destination is refused rather than overwritten.
 """
 import argparse
+import json
 import os
+import re
 import shutil
 import sys
 
@@ -29,62 +34,74 @@ sys.path.insert(0, _REPO_ROOT)
 from Library.DataAccess import PMLE_DIR                       # noqa: E402
 
 # Mirrored from poc/estimate_systematic.py rather than imported. Importing it
-# drags in pymc, and a script whose entire job is to rename four paths should
-# run in any environment - including one where the estimation stack is broken,
-# which is exactly when you most want to rescue a finished run. The assertion
-# below catches drift whenever the real module happens to be importable.
+# drags in pymc, and a script whose entire job is to rename paths should run in
+# any environment - including one where the estimation stack is broken, which
+# is exactly when you most want to rescue a finished run.
 SYSTEMATIC_ID = "^SPX"
-FULL_SAMPLE_ID = "^SPX_FULLSAMPLE"
-STORE_SUFFIX = {"paper": "", "recentred": "__recentred", "capped": "__capped",
-                "capped-beta": "__cappedbeta", "gaps": "__gaps"}
-
-try:                                                          # pragma: no cover
-    from poc import estimate_systematic as _es
-    assert _es.SYSTEMATIC_ID == SYSTEMATIC_ID
-    assert _es.FULL_SAMPLE_ID == FULL_SAMPLE_ID
-    assert _es.STORE_SUFFIX == STORE_SUFFIX, (
-        "poc/archive_run.py is out of step with estimate_systematic.py")
-except ImportError:
-    pass
 
 
-def plan(tag):
-    """Every (src, dst) this archive would perform, skipping absent sources."""
-    suffix = STORE_SUFFIX[tag]
-    if not suffix:
-        raise SystemExit("--tag paper is the untagged drawer itself; nothing "
-                         "to move. Archive the run that is IN it under the "
-                         "prior that actually produced it.")
-
-    poc = os.path.join(_REPO_ROOT, "poc")
-    pairs = [
-        # the per-date CSVs: the expensive part, one file per valuation date
-        (os.path.join(PMLE_DIR, SYSTEMATIC_ID),
-         os.path.join(PMLE_DIR, SYSTEMATIC_ID + suffix)),
-        # the full-sample fit, keyed on its own underlying id
-        (os.path.join(PMLE_DIR, FULL_SAMPLE_ID),
-         os.path.join(PMLE_DIR, FULL_SAMPLE_ID + suffix)),
-        # the assembled series and the raw full-sample dump
-        (os.path.join(poc, "systematic_params.csv"),
-         os.path.join(poc, "systematic_params%s.csv" % suffix)),
-        (os.path.join(poc, "full_sample_params.json"),
-         os.path.join(poc, "full_sample_params%s.json" % suffix)),
-    ]
-    return [(s, d) for s, d in pairs if os.path.exists(s)]
+def drawers():
+    """Every estimate drawer on disk, with what is known about each."""
+    if not os.path.isdir(PMLE_DIR):
+        return []
+    out = []
+    for name in sorted(os.listdir(PMLE_DIR)):
+        folder = os.path.join(PMLE_DIR, name)
+        if not os.path.isdir(folder):
+            continue
+        files = os.listdir(folder)
+        csvs = [f for f in files if f.endswith(".csv")]
+        manifest = None
+        mpath = os.path.join(folder, "_priors.json")
+        if os.path.exists(mpath):
+            try:
+                with open(mpath) as fh:
+                    manifest = json.load(fh)
+            except (ValueError, OSError):
+                manifest = {"tag": "(unreadable _priors.json)"}
+        out.append({"id": name, "n": len(csvs), "manifest": manifest})
+    return out
 
 
-def _retag_contents(src_dir, dst_dir):
+def describe_priors(manifest):
+    """One line naming the priors, so --list is readable without opening files."""
+    if not manifest:
+        return "no manifest - predates content tagging"
+    spec = manifest.get("priors")
+    if not isinstance(spec, dict):
+        return "%s (%s)" % (manifest.get("tag", "?"), spec)
+    bits = []
+    for k in ("alpha_rv", "sigma", "pprob_rv", "lamb", "eta1", "eta2"):
+        if k in spec:
+            kind, kw = spec[k]
+            args = ",".join("%g" % v for _, v in sorted(kw.items()))
+            bits.append("%s=%s(%s)" % (k, kind, args))
+    return "%s  %s" % (manifest.get("tag", "?"), " ".join(bits))
+
+
+def do_list():
+    found = drawers()
+    if not found:
+        print("No estimate drawers under %s" % PMLE_DIR)
+        return
+    print("=" * 72)
+    print("Estimate drawers")
+    print("=" * 72)
+    for d in found:
+        print("  %-34s %4d date(s)" % (d["id"], d["n"]))
+        print("      %s" % describe_priors(d["manifest"]))
+    print("\n  Rename one with --drawer <id> --label <name>.")
+
+
+def _retag_contents(old_id, dst_dir):
     """Rename the CSVs inside a moved drawer so they can still be read.
 
     available_pmle_dates() and pmle_params_path() both build the filename from
-    the underlying id: estimated_params_pmle_<id>_<YYYYMMDD>.csv. Move
-    ^SPX/ to ^SPX__gaps/ without touching the files and every date inside
-    becomes invisible - the archive survives as bytes but not as data, which is
-    the worst of both outcomes. Rename them to match their new drawer.
+    the underlying id: estimated_params_pmle_<id>_<YYYYMMDD>.csv. Rename the
+    directory without touching the files and every date inside becomes
+    invisible - the archive survives as bytes but not as data, which is the
+    worst of both outcomes.
     """
-    if not os.path.isdir(dst_dir):
-        return 0
-    old_id = os.path.basename(src_dir)
     new_id = os.path.basename(dst_dir)
     old_prefix = "estimated_params_pmle_%s_" % old_id
     new_prefix = "estimated_params_pmle_%s_" % new_id
@@ -99,63 +116,86 @@ def _retag_contents(src_dir, dst_dir):
 
 def describe(path):
     if os.path.isdir(path):
-        n = sum(len(f) for _, _, f in os.walk(path))
-        return "directory, %d file(s)" % n
+        return "directory, %d file(s)" % len(os.listdir(path))
     return "%.1f KB" % (os.path.getsize(path) / 1024.0)
+
+
+def plan(drawer, label):
+    """Every (src, dst) this rename would perform, skipping absent sources."""
+    src_dir = os.path.join(PMLE_DIR, drawer)
+    if not os.path.isdir(src_dir):
+        raise SystemExit("No such drawer: %s\n  Run --list to see what exists."
+                         % src_dir)
+    new_id = "%s__%s" % (drawer, label)
+
+    # The loose poc/ artefacts carry the drawer's suffix. Strip the leading
+    # underlying id to recover it, then move any file that matches.
+    suffix = drawer[len(SYSTEMATIC_ID):] if drawer.startswith(SYSTEMATIC_ID) else ""
+    poc = os.path.join(_REPO_ROOT, "poc")
+    pairs = [(src_dir, os.path.join(PMLE_DIR, new_id))]
+    for stem, ext in (("systematic_params", ".csv"),
+                      ("full_sample_params", ".json")):
+        src = os.path.join(poc, stem + suffix + ext)
+        if os.path.exists(src):
+            pairs.append((src, os.path.join(poc, stem + suffix + "__" + label + ext)))
+    return [(s, d) for s, d in pairs if os.path.exists(s)]
 
 
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tag", required=True, choices=sorted(STORE_SUFFIX),
-                    help="the priors that produced the run currently sitting "
-                         "in the untagged drawer")
+    ap.add_argument("--list", action="store_true",
+                    help="show every drawer on disk and the priors behind it")
+    ap.add_argument("--drawer",
+                    help="the drawer to rename, as --list prints it")
+    ap.add_argument("--label",
+                    help="what to call it, e.g. alpha0.037 or pre-bugfix. "
+                         "Letters, digits, dot, dash and underscore.")
     ap.add_argument("--apply", action="store_true",
-                    help="actually move. Without this the plan is printed and "
-                         "nothing is touched.")
+                    help="actually rename. Without this the plan is printed "
+                         "and nothing is touched.")
     a = ap.parse_args()
 
-    moves = plan(a.tag)
-    if not moves:
-        print("Nothing to archive - the untagged drawer is already empty.")
-        print("A rerun will estimate from scratch, which is what you want.")
+    if a.list or not (a.drawer or a.label):
+        do_list()
         return
+    if not (a.drawer and a.label):
+        raise SystemExit("--drawer and --label go together.")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", a.label):
+        raise SystemExit("--label must be letters, digits, dot, dash, "
+                         "underscore. It becomes a path.")
 
+    moves = plan(a.drawer, a.label)
     print("=" * 72)
-    print("Archive the current run as '%s'%s"
-          % (a.tag, "" if a.apply else "   (DRY RUN)"))
+    print("Rename '%s' -> '%s__%s'%s"
+          % (a.drawer, a.drawer, a.label, "" if a.apply else "   (DRY RUN)"))
     print("=" * 72)
 
     collisions = [(s, d) for s, d in moves if os.path.exists(d)]
     for src, dst in moves:
-        mark = "BLOCKED" if os.path.exists(dst) else "move   "
-        print("  %s  %s" % (mark, os.path.relpath(src, _REPO_ROOT)))
+        print("  %s  %s" % ("BLOCKED" if os.path.exists(dst) else "move   ",
+                            os.path.relpath(src, _REPO_ROOT)))
         print("           -> %s" % os.path.relpath(dst, _REPO_ROOT))
         print("           (%s)" % describe(src))
 
     if collisions:
-        print("\n  %d destination(s) already exist. Refusing to overwrite an"
+        print("\n  %d destination(s) already exist. Refusing to overwrite."
               % len(collisions))
-        print("  earlier archive. Rename or remove them first, then rerun.")
         raise SystemExit(1)
 
     if not a.apply:
-        print("\n  Dry run. Add --apply to move.")
+        print("\n  Dry run. Add --apply to rename.")
         return
 
     for src, dst in moves:
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.move(src, dst)
-        n = _retag_contents(src, dst)
-        print("  moved %s%s"
-              % (os.path.relpath(dst, _REPO_ROOT),
-                 "  (%d file(s) retagged)" % n if n else ""))
-
-    print("\nDone. The untagged drawer is now empty, so")
-    print("  python poc/estimate_systematic.py --priors <name> --step 21")
-    print("will estimate every date afresh instead of skipping them, and will")
-    print("write to its own tagged drawer from here on.")
+        n = _retag_contents(a.drawer, dst) if os.path.isdir(dst) else 0
+        print("  moved %s%s" % (os.path.relpath(dst, _REPO_ROOT),
+                                "  (%d file(s) retagged)" % n if n else ""))
+    print("\nDone. The original drawer name is free again, so a rerun under "
+          "those\npriors will estimate from scratch rather than resume.")
 
 
 if __name__ == "__main__":

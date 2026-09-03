@@ -314,37 +314,57 @@ SYSTEMATIC_PRIORS_SKEW.update({
     "eta2": ("Gamma", {"alpha": 4.0, "beta": 0.16}),    # mean 25.0 sd 12.5
 })
 
-# SKEW with both eta prior sds HALVED, means unchanged.
+# SKEW with every WIDE prior sd HALVED, all means unchanged.
 #
-# For a Gamma, halving the sd at a fixed mean is (a, b) -> (4a, 4b):
-#     eta1  Gamma(4, 0.08)  mean 50, sd 25.0  ->  Gamma(16, 0.32)  sd 12.5
-#     eta2  Gamma(4, 0.16)  mean 25, sd 12.5  ->  Gamma(16, 0.64)  sd  6.25
+# Gamma, halving sd at fixed mean:  (a, b) -> (4a, 4b)
+# Beta,  halving sd at fixed mean:  k = a+b -> 4k+3, so k goes 4 -> 19
 #
-# The eta columns under SKEW are wide - dETA1_W runs 85-104 - and the obvious
-# reading is that the estimator is imprecise and a tighter prior would fix it.
-# It will narrow them. It will not fix anything, and this arm exists to show
-# the difference between those two statements on the same data.
+#     eta1      Gamma(4, 0.08)    mean 50.000  sd 25.000 -> Gamma(16, 0.32)   12.500
+#     eta2      Gamma(4, 0.16)    mean 25.000  sd 12.500 -> Gamma(16, 0.64)    6.250
+#     alpha_rv  Beta(2, 2)        mean  0.500  sd  0.224 -> Beta(9.5, 9.5)     0.112
+#     pprob_rv  Beta(2.3, 1.7)    mean  0.575  sd  0.221 -> Beta(10.925,8.075) 0.111
 #
-# The widths are not loose priors. An exponential rate from n observations has
-# relative standard error 1/sqrt(n), and a 252-day window holds ~4.8 up jumps
-# and ~4.0 down: 45.6% and 50.2%, i.e. a data-alone 95% width of 95 on eta1
-# against the 84 observed. The interval is already close to what the evidence
-# supports; it is wide because four observations are few.
+# sigma and lamb are left alone: sigma is identified by 252 observations so its
+# prior barely registers, and lamb is identified by LOCATION (2020 fits 26.7
+# against 2024's 4.2), which tightening would not improve.
 #
-# So the prediction, from a normal-approximation update:
+# The wide columns invite the reading that the estimator is imprecise and a
+# tighter prior would fix it. It will narrow them. It will not add anything,
+# and this arm exists to make the difference measurable rather than arguable.
 #
-#     dETA1   width 84.2 -> 43.5   ratio 0.70 -> 0.89
-#     dETA2   width 46.7 -> 22.7   ratio 0.77 -> 0.92
+# The widths were never loose priors. An exponential rate from n observations
+# has relative standard error 1/sqrt(n), and a 252-day window holds ~4.8 up
+# jumps and ~4.0 down - 45.6% and 50.2%, a data-alone 95% width of 95 on eta1
+# against the 84 observed. Backing the data's own precision out of the SKEW
+# posteriors the same way gives sd 0.48 for alpha and 0.29 for pprob.
 #
-# The width halves and the RATIO gets WORSE, because numerator and denominator
-# shrink together. A narrower credible interval here is not more information -
-# it is the same information reported against a stronger assertion, which is
-# precisely how Table 1 came to show tight intervals on parameters a window
-# cannot identify. If the run matches this prediction, that is the finding.
+# Hence the prediction, and it is the whole point of the run:
+#
+#     dETA1   width 84.24 -> 43.5    ratio 0.70 -> 0.89
+#     dETA2   width 46.73 -> 22.7    ratio 0.77 -> 0.92
+#     dALPHA  width 0.795 -> 0.427   ratio 0.91 -> 0.97
+#     dPPROB  width 0.688 -> 0.404   ratio 0.79 -> 0.93
+#
+# Every interval shrinks by roughly half. Every ratio moves TOWARD 1, i.e.
+# every parameter scores as LESS identified than before. The prior shrinks
+# faster than the posterior, because the posterior still contains the data.
+#
+# That is the mechanism behind this whole exercise, reproduced on demand: a
+# tight credible interval is not evidence of identification. Table 1's tight
+# intervals on parameters a 252-day window cannot see are what it looks like
+# when this happens by accident instead of on purpose.
+#
+# NOTE alpha is halved here at the user's instruction and against my advice.
+# It is the control for the rest of the programme - four runs have shown its
+# posterior tracking whatever centre it is handed, and that argument holds only
+# while the prior is wide enough to have been contradicted. Use SKEW, not this,
+# for any claim about alpha being prior-driven.
 SYSTEMATIC_PRIORS_SKEW_TIGHT = dict(SYSTEMATIC_PRIORS_SKEW)
 SYSTEMATIC_PRIORS_SKEW_TIGHT.update({
-    "eta1": ("Gamma", {"alpha": 16.0, "beta": 0.32}),   # mean 50.0 sd 12.50
-    "eta2": ("Gamma", {"alpha": 16.0, "beta": 0.64}),   # mean 25.0 sd  6.25
+    "eta1":     ("Gamma", {"alpha": 16.0, "beta": 0.32}),    # mean 50.000 sd 12.500
+    "eta2":     ("Gamma", {"alpha": 16.0, "beta": 0.64}),    # mean 25.000 sd  6.250
+    "alpha_rv": ("Beta",  {"alpha": 9.5,  "beta": 9.5}),     # mean  0.500 sd  0.112
+    "pprob_rv": ("Beta",  {"alpha": 10.925, "beta": 8.075}), # mean  0.575 sd  0.111
 })
 
 # A variant that forbids pprob above 0.6.

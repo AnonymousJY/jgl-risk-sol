@@ -90,6 +90,7 @@ from Library.RiskEngineKimYi2025 import (                    # noqa: E402
     SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
     SYSTEMATIC_PRIORS_CAPPED_BETA, SYSTEMATIC_PRIORS_GAPS,
     SYSTEMATIC_PRIORS_ASYM, SYSTEMATIC_PRIORS_SKEW,
+    SYSTEMATIC_PRIORS_SKEW_TIGHT,
 )
 
 PRIOR_SETS = {"paper": None,
@@ -98,7 +99,8 @@ PRIOR_SETS = {"paper": None,
               "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA,
               "gaps": SYSTEMATIC_PRIORS_GAPS,
               "asym": SYSTEMATIC_PRIORS_ASYM,
-              "skew": SYSTEMATIC_PRIORS_SKEW}
+              "skew": SYSTEMATIC_PRIORS_SKEW,
+              "skew-tight": SYSTEMATIC_PRIORS_SKEW_TIGHT}
 
 IDIO_PARAMS = ["dBETAI", "dKAPPAI", "dGAMMAI", "dRHOIX", "dMUI"]
 

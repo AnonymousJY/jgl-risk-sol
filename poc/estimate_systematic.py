@@ -63,7 +63,8 @@ from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 from Library.RiskEngineKimYi2025 import (                     # noqa: E402
     SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
     SYSTEMATIC_PRIORS_CAPPED_BETA, SYSTEMATIC_PRIORS_GAPS,
-    SYSTEMATIC_PRIORS_ASYM, SYSTEMATIC_PRIORS_SKEW, FULL_SAMPLE,
+    SYSTEMATIC_PRIORS_ASYM, SYSTEMATIC_PRIORS_SKEW,
+    SYSTEMATIC_PRIORS_SKEW_TIGHT, FULL_SAMPLE,
 )
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -103,7 +104,8 @@ FULL_SAMPLE_ID = "^SPX_FULLSAMPLE"
 # Study/Estimated Parameters PMLE/^SPX/ stay exactly where Scripts/ expects.
 STORE_SUFFIX = {"paper": "", "recentred": "__recentred", "capped": "__capped",
                 "capped-beta": "__cappedbeta", "gaps": "__gaps",
-                "asym": "__asym", "skew": "__skew"}
+                "asym": "__asym", "skew": "__skew",
+                "skew-tight": "__skewtight"}
 
 # Set by main() from --priors, alongside PRIORS_IN_FORCE.
 STORE_ID = SYSTEMATIC_ID
@@ -629,7 +631,7 @@ def main():
                          "fit already uses 4 chains on 4 cores.")
     ap.add_argument("--priors",
                     choices=("paper", "recentred", "capped", "capped-beta",
-                             "gaps", "asym", "skew"),
+                             "gaps", "asym", "skew", "skew-tight"),
                     default="paper",
                     help="paper: the published priors; reproduces prior work "
                          "and stays the default so Scripts/ is untouched. "
@@ -657,7 +659,12 @@ def main():
                          "and the paper's own assertion at the gaps scale. Run "
                          "it against asym: the pair have identical jump "
                          "variance, so any difference between them is the "
-                         "window expressing a preference on SIGN.")
+                         "window expressing a preference on SIGN. "
+                         "skew-tight: skew with both eta prior sds HALVED "
+                         "(25->12.5, 12.5->6.25), means unchanged. Narrows the "
+                         "eta columns without adding evidence - run it to see "
+                         "the width fall while the prior/posterior ratio gets "
+                         "WORSE.")
     ap.add_argument("--full-sample", action="store_true",
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
@@ -672,7 +679,8 @@ def main():
                        "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA,
                        "gaps": SYSTEMATIC_PRIORS_GAPS,
                        "asym": SYSTEMATIC_PRIORS_ASYM,
-                       "skew": SYSTEMATIC_PRIORS_SKEW}[a.priors]
+                       "skew": SYSTEMATIC_PRIORS_SKEW,
+                       "skew-tight": SYSTEMATIC_PRIORS_SKEW_TIGHT}[a.priors]
     STORE_ID = store_id(a.priors, PRIORS_IN_FORCE)
 
     print("=" * 72)
@@ -709,6 +717,16 @@ def main():
         print("    separation near -19.8 against asym's +19.8, and pprob near")
         print("    0.519 against asym's 0.481. A DIFFERENCE between the two is")
         print("    the only result that would overturn that reading.")
+    if a.priors == "skew-tight":
+        print("    eta1 Gamma(16,0.32): mean 50, sd 12.50 (was 25.00)")
+        print("    eta2 Gamma(16,0.64): mean 25, sd  6.25 (was 12.50)")
+        print("    Same centres as skew, half the width. Predicted:")
+        print("      dETA1  width 84.2 -> 43.5   ratio 0.70 -> 0.89")
+        print("      dETA2  width 46.7 -> 22.7   ratio 0.77 -> 0.92")
+        print("    The interval narrows and the RATIO gets WORSE - numerator")
+        print("    and denominator shrink together. Narrower is not better")
+        print("    informed here; it is the same evidence against a stronger")
+        print("    assertion. Do NOT read the tighter column as identification.")
     if a.priors.startswith("capped"):
         print("    pprob CAPPED at 0.6 - watch for the posterior piling up")
         print("    against the cap in 2007, 2013, 2017, 2018, 2021, 2024,")

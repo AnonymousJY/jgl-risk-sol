@@ -314,6 +314,39 @@ SYSTEMATIC_PRIORS_SKEW.update({
     "eta2": ("Gamma", {"alpha": 4.0, "beta": 0.16}),    # mean 25.0 sd 12.5
 })
 
+# SKEW with both eta prior sds HALVED, means unchanged.
+#
+# For a Gamma, halving the sd at a fixed mean is (a, b) -> (4a, 4b):
+#     eta1  Gamma(4, 0.08)  mean 50, sd 25.0  ->  Gamma(16, 0.32)  sd 12.5
+#     eta2  Gamma(4, 0.16)  mean 25, sd 12.5  ->  Gamma(16, 0.64)  sd  6.25
+#
+# The eta columns under SKEW are wide - dETA1_W runs 85-104 - and the obvious
+# reading is that the estimator is imprecise and a tighter prior would fix it.
+# It will narrow them. It will not fix anything, and this arm exists to show
+# the difference between those two statements on the same data.
+#
+# The widths are not loose priors. An exponential rate from n observations has
+# relative standard error 1/sqrt(n), and a 252-day window holds ~4.8 up jumps
+# and ~4.0 down: 45.6% and 50.2%, i.e. a data-alone 95% width of 95 on eta1
+# against the 84 observed. The interval is already close to what the evidence
+# supports; it is wide because four observations are few.
+#
+# So the prediction, from a normal-approximation update:
+#
+#     dETA1   width 84.2 -> 43.5   ratio 0.70 -> 0.89
+#     dETA2   width 46.7 -> 22.7   ratio 0.77 -> 0.92
+#
+# The width halves and the RATIO gets WORSE, because numerator and denominator
+# shrink together. A narrower credible interval here is not more information -
+# it is the same information reported against a stronger assertion, which is
+# precisely how Table 1 came to show tight intervals on parameters a window
+# cannot identify. If the run matches this prediction, that is the finding.
+SYSTEMATIC_PRIORS_SKEW_TIGHT = dict(SYSTEMATIC_PRIORS_SKEW)
+SYSTEMATIC_PRIORS_SKEW_TIGHT.update({
+    "eta1": ("Gamma", {"alpha": 16.0, "beta": 0.32}),   # mean 50.0 sd 12.50
+    "eta2": ("Gamma", {"alpha": 16.0, "beta": 0.64}),   # mean 25.0 sd  6.25
+})
+
 # A variant that forbids pprob above 0.6.
 #
 # The cap is expressed as a FLAT prior on the allowed region, not as a

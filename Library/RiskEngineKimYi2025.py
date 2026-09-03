@@ -245,6 +245,44 @@ SYSTEMATIC_PRIORS_GAPS.update({
     "lamb": ("Gamma", {"alpha": 3.0, "beta": 0.5}),     # mean 6.0   sd 3.5
 })
 
+# Asymmetric eta priors: eta1 mean 25, eta2 mean 50.
+#
+# READ THE DIRECTION BEFORE USING THIS. eta1 is the UP branch (it multiplies
+# pprob at line ~774) and eta2 the DOWN branch (it multiplies qprob at ~777),
+# and each is a DECAY rate, so the mean jump is its reciprocal:
+#
+#     eta1 = 25  ->  mean UP   jump  1/25 = 4.0%
+#     eta2 = 50  ->  mean DOWN jump  1/50 = 2.0%
+#
+# That is POSITIVE jump skew - upward gaps twice the size of downward ones.
+# It runs against the equity prior, against the paper's own defaults
+# (Gamma(50,1)/Gamma(25,1), i.e. eta1 50 and eta2 25, asserting the opposite),
+# and against the full sample, which put eta2 BELOW eta1 (60.68 vs 78.59, a
+# 1.65% down jump against a 1.27% up jump). Swapping the two beta values below
+# flips it to the equity direction.
+#
+# Kept because a wrong-signed prior is a real test, and a cheap one. Arm G
+# showed the data separating identical etas by 17.9 unaided; if it can also
+# drag a deliberately inverted prior back toward eta2 < eta1, the asymmetry is
+# a measurement in the strongest sense available - it survives being told the
+# opposite. If instead the posterior sits where it was put, the separation seen
+# elsewhere was never the data's doing.
+#
+# Both keep CV 0.5, the shape _ETA_GAP uses, so the priors overlap heavily and
+# neither is tight enough to dictate.
+#
+# lambda is inherited from GAPS (mean 6) rather than retuned. The jump variance
+# falls out of the change on its own: E[Y^2] = p*2/eta1^2 + q*2/eta2^2 is
+# 0.0020 at p=0.5 against 0.0050 under GAPS, so jump vol goes from
+# sqrt(6*0.005) = 17.3% to sqrt(6*0.002) = 11.0%. That happens to relieve some
+# of the calm-year overstatement GAPS produced - 14.9% fitted against 6.7%
+# realised in 2017 - but it is a side effect, not the reason for the arm.
+SYSTEMATIC_PRIORS_ASYM = dict(SYSTEMATIC_PRIORS_GAPS)
+SYSTEMATIC_PRIORS_ASYM.update({
+    "eta1": ("Gamma", {"alpha": 4.0, "beta": 0.16}),    # mean 25.0 sd 12.5
+    "eta2": ("Gamma", {"alpha": 4.0, "beta": 0.08}),    # mean 50.0 sd 25.0
+})
+
 # A variant that forbids pprob above 0.6.
 #
 # The cap is expressed as a FLAT prior on the allowed region, not as a

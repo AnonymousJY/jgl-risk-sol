@@ -62,7 +62,8 @@ from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
 from Library.RiskEngineKimYi2025 import (                     # noqa: E402
     SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
-    SYSTEMATIC_PRIORS_CAPPED_BETA, SYSTEMATIC_PRIORS_GAPS, FULL_SAMPLE,
+    SYSTEMATIC_PRIORS_CAPPED_BETA, SYSTEMATIC_PRIORS_GAPS,
+    SYSTEMATIC_PRIORS_ASYM, FULL_SAMPLE,
 )
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -101,7 +102,8 @@ FULL_SAMPLE_ID = "^SPX_FULLSAMPLE"
 # "paper" keeps the bare id so the committed replication files under
 # Study/Estimated Parameters PMLE/^SPX/ stay exactly where Scripts/ expects.
 STORE_SUFFIX = {"paper": "", "recentred": "__recentred", "capped": "__capped",
-                "capped-beta": "__cappedbeta", "gaps": "__gaps"}
+                "capped-beta": "__cappedbeta", "gaps": "__gaps",
+                "asym": "__asym"}
 
 # Set by main() from --priors, alongside PRIORS_IN_FORCE.
 STORE_ID = SYSTEMATIC_ID
@@ -595,7 +597,7 @@ def main():
                          "fit already uses 4 chains on 4 cores.")
     ap.add_argument("--priors",
                     choices=("paper", "recentred", "capped", "capped-beta",
-                             "gaps"),
+                             "gaps", "asym"),
                     default="paper",
                     help="paper: the published priors; reproduces prior work "
                          "and stays the default so Scripts/ is untouched. "
@@ -612,7 +614,12 @@ def main():
                          "eta prior at mean 20 (5% mean jump) with lambda "
                          "brought down to mean 6 for coherence - asserts that "
                          "a jump is a GAP, against a full sample that prefers "
-                         "many small ones.")
+                         "many small ones. asym: gaps with the two etas pulled "
+                         "apart, eta1 mean 25 and eta2 mean 50 - a 4% mean UP "
+                         "jump against a 2% mean DOWN one, which is the "
+                         "OPPOSITE sign to equity skew and to the full sample. "
+                         "A deliberately wrong-signed prior, to see whether "
+                         "the data drags it back.")
     ap.add_argument("--full-sample", action="store_true",
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
@@ -625,7 +632,8 @@ def main():
                        "recentred": SYSTEMATIC_PRIORS_RECENTRED,
                        "capped": SYSTEMATIC_PRIORS_CAPPED,
                        "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA,
-                       "gaps": SYSTEMATIC_PRIORS_GAPS}[a.priors]
+                       "gaps": SYSTEMATIC_PRIORS_GAPS,
+                       "asym": SYSTEMATIC_PRIORS_ASYM}[a.priors]
     STORE_ID = store_id(a.priors, PRIORS_IN_FORCE)
 
     print("=" * 72)
@@ -644,6 +652,14 @@ def main():
         print("    lambda Gamma(3,0.5): mean 6, kept coherent with that size")
         print("    NOTE this asserts a jump scale the full sample argues")
         print("    against - watch whether the posterior is dragged back up")
+    if a.priors == "asym":
+        print("    eta1 Gamma(4,0.16): mean 25 -> mean UP   jump 4.0%")
+        print("    eta2 Gamma(4,0.08): mean 50 -> mean DOWN jump 2.0%")
+        print("    NOTE this asserts POSITIVE jump skew - bigger up moves than")
+        print("    down. It is the opposite of the paper's own defaults and of")
+        print("    the full sample (eta1 78.6 / eta2 60.7). Watch whether the")
+        print("    posterior pulls eta2 back BELOW eta1; if it stays put, the")
+        print("    separation seen elsewhere was never the data's doing.")
     if a.priors.startswith("capped"):
         print("    pprob CAPPED at 0.6 - watch for the posterior piling up")
         print("    against the cap in 2007, 2013, 2017, 2018, 2021, 2024,")

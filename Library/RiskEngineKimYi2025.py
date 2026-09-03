@@ -179,9 +179,40 @@ FULL_SAMPLE = {
 # values, 70, wide enough that both 60.7 and 78.6 are inside one sd.
 _ETA_SHARED = ("Gamma", {"alpha": 12.0, "beta": 0.1714})    # mean 70.0  sd 20.2
 
+# alpha_rv sits at a SYMMETRIC Beta(2,2): mean 0.5, sd 0.224.
+#
+# This is not a claim that the mean-reversion rate is 0.5. It is the opposite -
+# a deliberate refusal to claim anything, placed where the claim is cheapest to
+# audit. In a 252-day window alpha is unidentifiable: its full-sample half-life
+# is 19 years, so alpha*dt is 1.4e-4 per day and the window sees essentially
+# none of the pull. The rolling posteriors proved it - under Beta(1,26) the
+# posterior sd was 0.0327 against a prior sd of 0.0357 (ratio 0.92), and a
+# SINGLE window's posterior sd was 5.0x the entire 20-year spread of the point
+# estimates. The estimates were the prior, reproduced.
+#
+# Centring at 0.5 makes that visible instead of plausible. Beta(1,26) centred
+# at 0.037 produced rolling values of 0.035-0.038, which read like a converged
+# estimate because they happened to sit near the full-sample 0.036. If the
+# posterior now returns ~0.5 with sd near 0.224, the parameter is confirmed to
+# be carrying no information from a one-year window and the rolling alpha column
+# should be read as prior, not estimate. If it instead pulls down toward 0.04,
+# the window does contain the signal after all and the earlier reading was wrong.
+# Either outcome is informative; the old centre could only ever confirm itself.
+#
+# One thing this centre changes that the old one did not: it makes the test
+# fair. The engine uses alpha_rv directly as the mean-reversion rate (line ~751
+# forms y - (1 - alpha*dt)*x, and the log/exp round-trips), so at alpha = 0.037
+# a 252-day window absorbs only 1 - exp(-0.037) = 3.6% of the pull - the window
+# is close to blind by construction and CANNOT push back on the prior wherever
+# it is centred. At alpha = 0.5 the window absorbs 1 - exp(-0.5) = 39%, which a
+# year of returns can actually see. So a posterior that stays at 0.5 is much
+# stronger evidence of prior dominance than a posterior that stayed at 0.037.
+#
+# The full sample is where alpha IS identified - 0.036 with a prior/posterior sd
+# ratio of 0.09 - so nothing here affects the FULL_SAMPLE calibration above.
 SYSTEMATIC_PRIORS_RECENTRED = {
     "sigma":    ("Gamma", {"alpha": 2.0,  "beta": 10.0}),   # mean 0.200 sd 0.141
-    "alpha_rv": ("Beta",  {"alpha": 1.0,  "beta": 26.0}),   # mean 0.037 sd 0.036
+    "alpha_rv": ("Beta",  {"alpha": 2.0,  "beta": 2.0}),    # mean 0.500 sd 0.224
     "pprob_rv": ("Beta",  {"alpha": 2.3,  "beta": 1.7}),    # mean 0.575 sd 0.221
     "lamb":     ("Gamma", {"alpha": 9.0,  "beta": 0.15}),   # mean 60.0  sd 20.0
     "eta1":     _ETA_SHARED,

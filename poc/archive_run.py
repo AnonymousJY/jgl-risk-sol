@@ -51,22 +51,43 @@ def drawers():
             continue
         files = os.listdir(folder)
         csvs = [f for f in files if f.endswith(".csv")]
+        # Systematic runs drop _priors.json, idiosyncratic runs
+        # _conditioning.json. Read whichever is there - a drawer you cannot
+        # identify is a drawer you cannot resume, which is the whole reason
+        # to look at this listing.
         manifest = None
-        mpath = os.path.join(folder, "_priors.json")
-        if os.path.exists(mpath):
+        for fn in ("_priors.json", "_conditioning.json"):
+            mpath = os.path.join(folder, fn)
+            if not os.path.exists(mpath):
+                continue
             try:
                 with open(mpath) as fh:
                     manifest = json.load(fh)
             except (ValueError, OSError):
-                manifest = {"tag": "(unreadable _priors.json)"}
+                manifest = {"tag": "(unreadable %s)" % fn}
+            break
         out.append({"id": name, "n": len(csvs), "manifest": manifest})
     return out
+
+
+def resume_command(m):
+    """The command that continues an idiosyncratic drawer, from its manifest."""
+    if not m or "anchor" not in m:
+        return None
+    return ("python poc/estimate_idiosyncratic.py --names %s --anchor %s "
+            "--priors %s" % (m.get("name", "?"), m["anchor"],
+                             m.get("systematic_priors", "?")))
 
 
 def describe_priors(manifest):
     """One line naming the priors, so --list is readable without opening files."""
     if not manifest:
         return "no manifest - predates content tagging"
+    if "anchor" in manifest:                      # an idiosyncratic drawer
+        return ("idiosyncratic  name=%s  anchor=%s  systematic=%s (%s)"
+                % (manifest.get("name", "?"), manifest["anchor"],
+                   manifest.get("systematic_priors", "?"),
+                   manifest.get("systematic_digest", "?")))
     spec = manifest.get("priors")
     if not isinstance(spec, dict):
         return "%s (%s)" % (manifest.get("tag", "?"), spec)
@@ -90,7 +111,12 @@ def do_list():
     for d in found:
         print("  %-34s %4d date(s)" % (d["id"], d["n"]))
         print("      %s" % describe_priors(d["manifest"]))
+        cmd = resume_command(d["manifest"])
+        if cmd:
+            print("      resume: %s" % cmd)
     print("\n  Rename one with --drawer <id> --label <name>.")
+    print("  A 'resume' line re-runs that drawer's remaining dates; the run")
+    print("  skips what is already there, so it is safe to repeat.")
 
 
 def _retag_contents(old_id, dst_dir):

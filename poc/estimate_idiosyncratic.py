@@ -63,7 +63,7 @@ import multiprocessing
 multiprocessing.set_start_method(
     os.environ.get("JGL_MP_START", "forkserver"), force=True)
 from concurrent.futures import (                            # noqa: E402
-    ProcessPoolExecutor, as_completed,
+    ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED,
 )
 from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
@@ -84,7 +84,7 @@ from Scripts.run_pmle_kimyi2025 import (                     # noqa: E402
 from poc.estimate_systematic import (                        # noqa: E402
     SYSTEMATIC_ID, DATE_FMT, LOOKBACK, BASE_DAYS, SEED, N_MC_PATHS,
     priors_digest, store_id, valuation_dates,
-    _init_child, default_workers, _pool_kwargs,
+    _init_child, default_workers, _pool_kwargs, POOL_CHUNK, _drain,
 )
 from Library.RiskEngineKimYi2025 import (                    # noqa: E402
     SYSTEMATIC_PRIOR_SETS as PRIOR_SETS,
@@ -228,39 +228,52 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None,
 
     t0 = time.perf_counter()
     done = failed = 0
+    chunk = POOL_CHUNK if POOL_CHUNK > 0 else len(tasks)
     try:
-        with ProcessPoolExecutor(**_pool_kwargs(workers)) as ex:
-            futures = {ex.submit(pmle_kimyirisk_idiosyncratic_helper, t[0]): t
-                       for t in tasks}
-            for fut in as_completed(futures):
-                _, sys_series, name = futures[fut]
-                try:
-                    dt, drawer, results = fut.result()
-                except BrokenProcessPool:
-                    raise
-                except Exception as exc:                      # noqa: BLE001
-                    failed += 1
-                    print("    FAILED  %-8s %s  %s: %s"
-                          % (name, futures[fut][0][0],
-                             type(exc).__name__, exc))
-                    continue
-                save_pmle_params(
-                    dt, drawer,
-                    assemble_idiosyncratic_params(results, sys_series))
-                done += 1
-                if done % 10 == 0 or done == len(tasks):
-                    el = time.perf_counter() - t0
-                    print("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
-                          % (done, len(tasks), el,
-                             el / done * (len(tasks) - done)))
+        # One pool per CHUNK fits, not one pool for the whole run. Tearing the
+        # pool down returns every worker's memory to the OS, which is what
+        # max_tasks_per_child would do on Python 3.11+ and does not do here
+        # (this environment is 3.10, where the argument is silently absent).
+        for start in range(0, len(tasks), chunk):
+            batch = tasks[start:start + chunk]
+            with ProcessPoolExecutor(**_pool_kwargs(workers)) as ex:
+                futures = {ex.submit(pmle_kimyirisk_idiosyncratic_helper, t[0]): t
+                           for t in batch}
+
+                def _on_done(fut, _f=futures):
+                    nonlocal done, failed
+                    _, sys_series, name = _f[fut]
+                    try:
+                        dt, drawer, results = fut.result()
+                    except BrokenProcessPool:
+                        raise
+                    except Exception as exc:                  # noqa: BLE001
+                        failed += 1
+                        print("    FAILED  %-8s %s  %s: %s"
+                              % (name, _f[fut][0][0],
+                                 type(exc).__name__, exc), flush=True)
+                        return
+                    save_pmle_params(
+                        dt, drawer,
+                        assemble_idiosyncratic_params(results, sys_series))
+                    done += 1
+                    if done % 10 == 0 or done == len(tasks):
+                        el = time.perf_counter() - t0
+                        print("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
+                              % (done, len(tasks), el,
+                                 el / done * (len(tasks) - done)), flush=True)
+
+                _drain(set(futures), _on_done, "fits")
+            if start + chunk < len(tasks):
+                print("    -- pool recycled after %d fits --" % done, flush=True)
     except BrokenProcessPool:
         print("\n  A worker died. Late in a long run this is usually memory")
         print("  accumulating in a reused worker rather than a bug in the model.")
         print("  %d fit(s) are safely on disk and a rerun skips them." % done)
         print()
-        print("  Rerun the same command - it resumes. If it dies again, lower")
-        print("  the recycle interval or the worker count:")
-        print("    JGL_MAX_TASKS_PER_CHILD=10 <same command>")
+        print("  Rerun the same command - it resumes. If it dies again, recycle")
+        print("  the pool more often or use fewer workers:")
+        print("    JGL_POOL_CHUNK=20 <same command>")
         print("    <same command> --workers %d" % max(1, (workers or 2) // 2))
         print()
         print("  To confirm the OOM killer (dmesg needs root on Ubuntu):")

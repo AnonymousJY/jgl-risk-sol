@@ -54,7 +54,7 @@ import multiprocessing
 multiprocessing.set_start_method(
     os.environ.get("JGL_MP_START", "forkserver"), force=True)
 from concurrent.futures import (                           # noqa: E402
-    ProcessPoolExecutor, as_completed,
+    ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED,
 )
 # BrokenProcessPool is NOT re-exported by concurrent.futures - its __all__
 # carries the generic BrokenExecutor only. It lives in the .process submodule.
@@ -299,31 +299,38 @@ def run_full_sample(beg=BEG, end=END):
     print("  only then is the option-implied route worth the complexity.")
 
 
-# Recycle workers periodically. ProcessPoolExecutor keeps each worker alive for
-# the life of the pool, so anything PyMC/nutpie fails to release accumulates
-# over the ~150 fits one worker handles in a long run. That is the shape of the
-# failure seen here: a pool that ran 1,010 fits over 2.8 hours and then lost a
-# worker to the OOM killer. A pool short of memory fails EARLY; a pool that
-# leaks fails LATE, and late is what happened.
+# Worker recycling: explicit pool teardown, NOT max_tasks_per_child.
 #
-# max_tasks_per_child restarts a worker after N tasks, which returns its memory
-# to the OS. It is Python 3.11+ and requires a non-fork start method (we use
-# forkserver), so it is probed rather than assumed - on 3.10 the run simply
-# proceeds as before. A restart costs one re-import of the PyMC stack, ~10s
-# against ~25 fits of ~60s each: under 1% for the thing that ends long runs.
-MAX_TASKS_PER_CHILD = int(os.environ.get("JGL_MAX_TASKS_PER_CHILD", "25"))
+# ProcessPoolExecutor keeps each worker for the life of the pool, so whatever
+# PyMC/nutpie fail to release accumulates over a long run. Two ways to fix it,
+# and the history here matters:
+#
+#   max_tasks_per_child (3.11+) respawns a worker after N tasks. It was set to
+#   25 and it is the prime suspect for the hang that followed: a run stopped at
+#   120/435 and sat there SIX HOURS, process alive, no output. Under forkserver
+#   every respawn re-imports the whole PyMC/nutpie stack, and a wedge in that
+#   path deadlocks the executor rather than raising. DEFAULT OFF for that
+#   reason - set JGL_MAX_TASKS_PER_CHILD to re-enable it deliberately.
+#
+#   POOL_CHUNK tears the whole pool down and builds a new one every N fits.
+#   Same memory effect, but it happens at a synchronisation point where every
+#   worker has already exited, so there is no respawn racing live tasks. Cost
+#   is one stack re-import per chunk, ~10s against N fits of 10-60s each.
+MAX_TASKS_PER_CHILD = int(os.environ.get("JGL_MAX_TASKS_PER_CHILD", "0"))
+POOL_CHUNK = int(os.environ.get("JGL_POOL_CHUNK", "50"))
 
 
 def _pool_kwargs(workers):
     kw = {"max_workers": workers, "initializer": _init_child}
-    import inspect
-    if "max_tasks_per_child" in inspect.signature(ProcessPoolExecutor).parameters:
-        kw["max_tasks_per_child"] = MAX_TASKS_PER_CHILD
-    else:
-        print("  NOTE Python %d.%d has no max_tasks_per_child; workers will not"
-              % (sys.version_info[0], sys.version_info[1]))
-        print("       be recycled. If a long run dies late, that is the likely")
-        print("       cause - 3.11+ or a smaller --end range avoids it.")
+    if MAX_TASKS_PER_CHILD > 0:
+        import inspect
+        if "max_tasks_per_child" in inspect.signature(ProcessPoolExecutor).parameters:
+            kw["max_tasks_per_child"] = MAX_TASKS_PER_CHILD
+            print("  NOTE max_tasks_per_child=%d requested. This has hung a run"
+                  % MAX_TASKS_PER_CHILD)
+            print("       before; POOL_CHUNK is the safer recycler.")
+        else:
+            print("  NOTE max_tasks_per_child needs Python 3.11+; ignoring.")
     return kw
 
 
@@ -426,31 +433,40 @@ def run(dates, workers=None, force=False):
 
     t0 = time.perf_counter()
     done = failed = 0
+    chunk = POOL_CHUNK if POOL_CHUNK > 0 else len(args)
     try:
-        with ProcessPoolExecutor(**_pool_kwargs(workers)) as ex:
-            futures = {ex.submit(pmle_kimyirisk_systematic_helper, a): a[0]
-                       for a in args}
-            for fut in as_completed(futures):
-                requested = futures[fut]
-                try:
-                    dt, sid, results = fut.result()
-                except BrokenProcessPool:
-                    raise
-                except Exception as exc:                      # noqa: BLE001
-                    # One bad date must not end a run of thousands. Record it
-                    # and carry on; the date simply stays absent from disk and
-                    # a later rerun will retry it.
-                    failed += 1
-                    print("    FAILED  %s  %s: %s"
-                          % (requested, type(exc).__name__, exc))
-                    continue
-                save_pmle_params(dt, sid, assemble_systematic_params(results))
-                done += 1
-                if done % 10 == 0 or done == len(todo):
-                    el = time.perf_counter() - t0
-                    print("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
-                          % (done, len(todo), el,
-                             el / done * (len(todo) - done)))
+        # One pool per CHUNK fits. Tearing it down is the only way this
+        # environment's workers ever release memory - see POOL_CHUNK.
+        for start in range(0, len(args), chunk):
+            batch = args[start:start + chunk]
+            with ProcessPoolExecutor(**_pool_kwargs(workers)) as ex:
+                futures = {ex.submit(pmle_kimyirisk_systematic_helper, a): a[0]
+                           for a in batch}
+
+                def _on_done(fut, _f=futures):
+                    nonlocal done, failed
+                    requested = _f[fut]
+                    try:
+                        dt, sid, results = fut.result()
+                    except BrokenProcessPool:
+                        raise
+                    except Exception as exc:                  # noqa: BLE001
+                        # One bad date must not end a run of thousands.
+                        failed += 1
+                        print("    FAILED  %s  %s: %s"
+                              % (requested, type(exc).__name__, exc), flush=True)
+                        return
+                    save_pmle_params(dt, sid, assemble_systematic_params(results))
+                    done += 1
+                    if done % 10 == 0 or done == len(todo):
+                        el = time.perf_counter() - t0
+                        print("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
+                              % (done, len(todo), el,
+                                 el / done * (len(todo) - done)), flush=True)
+
+                _drain(set(futures), _on_done, "dates")
+            if start + chunk < len(args):
+                print("    -- pool recycled after %d dates --" % done, flush=True)
     except BrokenProcessPool:
         # A worker died without raising - it was killed by a signal, not by a
         # Python exception. Overwhelmingly this is the kernel OOM killer:
@@ -475,7 +491,7 @@ def run(dates, workers=None, force=False):
         print("  If that shows an OOM kill, rerun with fewer workers - memory")
         print("  scales with worker count, cores do not:")
         print()
-        print("      JGL_MAX_TASKS_PER_CHILD=10 <same command>   (recycle sooner)")
+        print("      JGL_POOL_CHUNK=20 <same command>            (recycle sooner)")
         print("      ./run_daily.sh %d                            (fewer workers)"
               % max(1, workers // 2))
         print()

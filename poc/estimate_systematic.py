@@ -366,8 +366,17 @@ def default_workers():
 PRIORS_IN_FORCE = None
 
 
-def run(dates, workers=None):
-    """Estimate the systematic parameters for each date not already on disk."""
+def run(dates, workers=None, force=False):
+    """Estimate the systematic parameters for each date not already on disk.
+
+    force=True re-estimates every usable date and overwrites what is there.
+    The drawer is content-addressed on the prior values, so a forced rerun
+    under an unchanged spec is a REPRODUCIBILITY CHECK - same seed, same
+    priors, same data should give the same numbers. It is a destructive one:
+    the old estimates are replaced in place, so if the point is to COMPARE
+    old against new, archive first (poc/archive_run.py --drawer ... --label ...)
+    rather than forcing over them.
+    """
     price_ts = get_price_panel([SYSTEMATIC_ID])
     return_ts = price_ts.pct_change().dropna()
 
@@ -383,9 +392,18 @@ def run(dates, workers=None):
               % (first_ok.date(), BEG))
         print("  snapshot must start ~%d business days earlier." % LOOKBACK)
 
-    todo = [d for d in usable if not pmle_params_exists(d, STORE_ID)]
+    on_disk = [d for d in usable if pmle_params_exists(d, STORE_ID)]
+    todo = usable if force else [d for d in usable if d not in set(on_disk)]
     print("  %d dates requested, %d usable, %d already on disk, %d to estimate."
-          % (len(dates), len(usable), len(usable) - len(todo), len(todo)))
+          % (len(dates), len(usable), len(on_disk), len(todo)))
+    if force and on_disk:
+        print()
+        print("  --force: OVERWRITING %d existing estimate(s) in %s"
+              % (len(on_disk), STORE_ID))
+        print("  They are replaced in place. To keep them, stop now and run")
+        print("    python poc/archive_run.py --drawer '%s' --label <name> --apply"
+              % STORE_ID)
+        print()
     if not todo:
         return
 
@@ -615,6 +633,11 @@ def main():
                     help="also check April 2025 against the paper")
     ap.add_argument("--report-only", action="store_true",
                     help="skip estimation, just summarise what is on disk")
+    ap.add_argument("--force", "--overwrite", dest="force", action="store_true",
+                    help="re-estimate every date even if already on disk, "
+                         "overwriting in place. Under an unchanged spec this "
+                         "is a reproducibility check; to compare old against "
+                         "new, archive_run.py the drawer first instead.")
     ap.add_argument("--color", dest="color", action="store_true", default=None,
                     help="force heat shading on (default: on for a terminal)")
     ap.add_argument("--no-color", dest="color", action="store_false",
@@ -726,7 +749,8 @@ def main():
         return
 
     if not a.report_only:
-        run(valuation_dates(a.beg, a.end, a.step), workers=a.workers)
+        run(valuation_dates(a.beg, a.end, a.step), workers=a.workers,
+            force=a.force)
 
     df = load_series()
     if not len(df):

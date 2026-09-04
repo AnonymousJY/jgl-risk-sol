@@ -157,7 +157,8 @@ def systematic_for(dt, sys_store, anchor):
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
-def run(names, dates, sys_store, anchor, tag, priors, workers=None):
+def run(names, dates, sys_store, anchor, tag, priors, workers=None,
+        force=False):
     panel, report = get_aligned_price_panel([SYSTEMATIC_ID] + names,
                                             reference=SYSTEMATIC_ID)
     rets = panel.pct_change().dropna()
@@ -181,7 +182,7 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None):
                 continue
             if sys_dates is not None and dt not in sys_dates:
                 continue                      # no systematic fit to condition on
-            if pmle_params_exists(dt, drawer):
+            if not force and pmle_params_exists(dt, drawer):
                 continue
             rv = rets.loc[rets.index <= d, name].dropna()
             if len(rv) < LOOKBACK:
@@ -364,6 +365,9 @@ def main():
                          "--anchor full)")
     ap.add_argument("--workers", type=int, default=None)
     ap.add_argument("--report-only", action="store_true")
+    ap.add_argument("--force", "--overwrite", dest="force", action="store_true",
+                    help="re-fit every (name, date) even if already on disk, "
+                         "overwriting in place")
     a = ap.parse_args()
 
     if a.names.startswith("@"):
@@ -398,7 +402,8 @@ def main():
 
     if not a.report_only:
         run(names, valuation_dates(a.beg, a.end, a.step),
-            sys_store, a.anchor, a.priors, priors, workers=a.workers)
+            sys_store, a.anchor, a.priors, priors, workers=a.workers,
+            force=a.force)
 
     for name in names:
         df = load_series(name, a.anchor, a.priors, priors)

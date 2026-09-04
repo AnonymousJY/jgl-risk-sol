@@ -61,10 +61,7 @@ from concurrent.futures import (                           # noqa: E402
 from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
 from Library.RiskEngineKimYi2025 import (                     # noqa: E402
-    SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
-    SYSTEMATIC_PRIORS_CAPPED_BETA, SYSTEMATIC_PRIORS_GAPS,
-    SYSTEMATIC_PRIORS_ASYM, SYSTEMATIC_PRIORS_SKEW,
-    SYSTEMATIC_PRIORS_SKEW_TIGHT, FULL_SAMPLE,
+    SYSTEMATIC_PRIOR_SETS, STORE_SUFFIX, FULL_SAMPLE,
 )
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -102,10 +99,6 @@ FULL_SAMPLE_ID = "^SPX_FULLSAMPLE"
 #
 # "paper" keeps the bare id so the committed replication files under
 # Study/Estimated Parameters PMLE/^SPX/ stay exactly where Scripts/ expects.
-STORE_SUFFIX = {"paper": "", "recentred": "__recentred", "capped": "__capped",
-                "capped-beta": "__cappedbeta", "gaps": "__gaps",
-                "asym": "__asym", "skew": "__skew",
-                "skew-tight": "__skewtight"}
 
 # Set by main() from --priors, alongside PRIORS_IN_FORCE.
 STORE_ID = SYSTEMATIC_ID
@@ -117,9 +110,9 @@ def priors_digest(priors):
 
     Naming the drawer after --priors is not enough, and the reason is the
     mistake this function exists to prevent. The tag "gaps" names a variable,
-    not a value: recentring alpha inside SYSTEMATIC_PRIORS_RECENTRED changes
-    every spec that inherits from it - gaps, capped, capped-beta - while every
-    tag stays the same. A rerun then finds 245 dates "already on disk", skips
+    not a value. When the specs still inherited from one another, recentring
+    alpha inside the shared base changed every spec derived from it while
+    every tag stayed the same. A rerun then finds 245 dates "already on disk", skips
     all of them, and reprints posteriors fitted under the OLD alpha prior under
     a header naming the NEW one.
 
@@ -630,8 +623,7 @@ def main():
                     help="outer pool width. Default cpu_count//4, because each "
                          "fit already uses 4 chains on 4 cores.")
     ap.add_argument("--priors",
-                    choices=("paper", "recentred", "capped", "capped-beta",
-                             "gaps", "asym", "skew", "skew-tight"),
+                    choices=tuple(SYSTEMATIC_PRIOR_SETS),
                     default="paper",
                     help="paper: the published priors; reproduces prior work "
                          "and stays the default so Scripts/ is untouched. "
@@ -673,14 +665,7 @@ def main():
     global COLOR, PRIORS_IN_FORCE, STORE_ID, PRIORS_TAG
     COLOR = a.color
     PRIORS_TAG = a.priors
-    PRIORS_IN_FORCE = {"paper": None,
-                       "recentred": SYSTEMATIC_PRIORS_RECENTRED,
-                       "capped": SYSTEMATIC_PRIORS_CAPPED,
-                       "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA,
-                       "gaps": SYSTEMATIC_PRIORS_GAPS,
-                       "asym": SYSTEMATIC_PRIORS_ASYM,
-                       "skew": SYSTEMATIC_PRIORS_SKEW,
-                       "skew-tight": SYSTEMATIC_PRIORS_SKEW_TIGHT}[a.priors]
+    PRIORS_IN_FORCE = SYSTEMATIC_PRIOR_SETS[a.priors]
     STORE_ID = store_id(a.priors, PRIORS_IN_FORCE)
 
     print("=" * 72)
@@ -735,13 +720,6 @@ def main():
         print("    interval here is not information. Do NOT read these columns")
         print("    as better estimated than skew's; they are the same evidence")
         print("    reported against a stronger assertion.")
-    if a.priors.startswith("capped"):
-        print("    pprob CAPPED at 0.6 - watch for the posterior piling up")
-        print("    against the cap in 2007, 2013, 2017, 2018, 2021, 2024,")
-        print("    which currently sit above it")
-    if a.priors == "recentred":
-        print("    all six free; eta1 and eta2 share one prior "
-              "(mean %.0f) so no asymmetry is asserted" % 70.0)
 
     if a.full_sample:
         run_full_sample(a.beg, a.end)

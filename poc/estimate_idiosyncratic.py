@@ -67,7 +67,7 @@ from concurrent.futures import (                            # noqa: E402
 )
 from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
-from Library.RiskEngineKimYi2025 import FULL_SAMPLE          # noqa: E402
+from Library.RiskEngineKimYi2025 import FULL_SAMPLE, STORE_SUFFIX  # noqa: E402
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
 )
@@ -83,24 +83,12 @@ from Scripts.run_pmle_kimyi2025 import (                     # noqa: E402
 # things that must match: how a drawer is named, and how work is sized.
 from poc.estimate_systematic import (                        # noqa: E402
     SYSTEMATIC_ID, DATE_FMT, LOOKBACK, BASE_DAYS, SEED, N_MC_PATHS,
-    STORE_SUFFIX, priors_digest, store_id, valuation_dates,
+    priors_digest, store_id, valuation_dates,
     _init_child, default_workers, _pool_kwargs,
 )
 from Library.RiskEngineKimYi2025 import (                    # noqa: E402
-    SYSTEMATIC_PRIORS_RECENTRED, SYSTEMATIC_PRIORS_CAPPED,
-    SYSTEMATIC_PRIORS_CAPPED_BETA, SYSTEMATIC_PRIORS_GAPS,
-    SYSTEMATIC_PRIORS_ASYM, SYSTEMATIC_PRIORS_SKEW,
-    SYSTEMATIC_PRIORS_SKEW_TIGHT,
+    SYSTEMATIC_PRIOR_SETS as PRIOR_SETS,
 )
-
-PRIOR_SETS = {"paper": None,
-              "recentred": SYSTEMATIC_PRIORS_RECENTRED,
-              "capped": SYSTEMATIC_PRIORS_CAPPED,
-              "capped-beta": SYSTEMATIC_PRIORS_CAPPED_BETA,
-              "gaps": SYSTEMATIC_PRIORS_GAPS,
-              "asym": SYSTEMATIC_PRIORS_ASYM,
-              "skew": SYSTEMATIC_PRIORS_SKEW,
-              "skew-tight": SYSTEMATIC_PRIORS_SKEW_TIGHT}
 
 IDIO_PARAMS = ["dBETAI", "dKAPPAI", "dGAMMAI", "dRHOIX", "dMUI"]
 

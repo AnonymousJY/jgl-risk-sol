@@ -125,38 +125,63 @@ def _dist_loglike_idiosyncratic(y, mui, kappai, gammai, betai, rhoix, alpha, sig
 # ---------------------------------------------------------------------------
 # Priors on the systematic block
 # ---------------------------------------------------------------------------
-# These are the values the paper was estimated with, kept here as data rather
-# than as literals inside the model so a sensitivity arm can override one
-# without a second copy of the model definition. Passing priors=None
-# reproduces the published configuration exactly.
+# EVERY SPEC BELOW LISTS ALL SIX PRIORS EXPLICITLY. None inherits from another.
 #
-# Note what the DEFAULTS assert. eta1 ~ Gamma(50,1) and eta2 ~ Gamma(25,1)
-# say the mean down-jump (1/eta2 = 4%) is twice the mean up-jump (1/eta1 = 2%)
-# BEFORE any data is seen. Since both parameters come back prior-driven, that
-# assertion passes untouched into the posterior - so the model's negative jump
-# skew, which is its most equity-plausible feature, is currently an assumption
-# rather than an estimate. Giving the two the same prior and asking whether the
-# data separates them is the test; see poc/prior_sensitivity.py.
+# They used to. SKEW_TIGHT was dict(SKEW), SKEW was dict(GAPS), GAPS was
+# dict(RECENTRED) - four levels, and reading any one of them told you nothing
+# about what it actually contained. That cost real work twice:
+#
+#   - Recentring alpha inside RECENTRED silently changed GAPS, ASYM, SKEW and
+#     both CAPPED variants. Since the drawer was named after the ARM and not
+#     the values, a rerun found the dates already on disk, skipped them, and
+#     reprinted posteriors fitted under the OLD alpha beneath the NEW header.
+#   - "What is lambda's prior mean under skew-tight?" needed a four-hop trace
+#     to answer, and the answer (6.0, from GAPS) was not visible anywhere near
+#     the spec that used it.
+#
+# Explicit repetition is the cheaper mistake. If two specs should share a value
+# and one is edited, the diff shows it; under inheritance the diff shows
+# nothing and the change happens somewhere else.
+#
+# REMOVED, 4 September 2026: SYSTEMATIC_PRIORS_RECENTRED, _CAPPED and
+# _CAPPED_BETA. RECENTRED existed only as GAPS's base; the two CAPPED arms
+# tested a pprob <= 0.6 constraint that the identification work made moot -
+# pprob is barely identified in a window, so capping it constrains the prior
+# rather than the data. Estimates already on disk under those drawers are
+# untouched and still readable; only the ability to launch new runs of those
+# arms is gone. `python poc/archive_run.py --list` shows what is there.
+
+# The published configuration. Passing priors=None reproduces it exactly.
+#
+# Note what these DEFAULTS assert. eta1 ~ Gamma(50,1) and eta2 ~ Gamma(25,1)
+# say the mean down jump (1/eta2 = 4%) is twice the mean up jump (1/eta1 = 2%)
+# BEFORE any data is seen - and the rolling work showed a 252-day window
+# returns that assertion untouched, so the model's negative jump skew is an
+# assumption at this horizon rather than an estimate. On the full sample it IS
+# measured, and in the same direction.
 SYSTEMATIC_PRIORS = {
-    "sigma":    ("Gamma", {"alpha": 1.0,  "beta": 1.0}),
-    "alpha_rv": ("Beta",  {"alpha": 5.0,  "beta": 2.0}),
-    "pprob_rv": ("Beta",  {"alpha": 5.0,  "beta": 2.0}),
-    "lamb":     ("Gamma", {"alpha": 10.0, "beta": 0.5}),
-    "eta1":     ("Gamma", {"alpha": 50.0, "beta": 1.0}),
-    "eta2":     ("Gamma", {"alpha": 25.0, "beta": 1.0}),
+    "sigma":    ("Gamma", {"alpha":  1.0,  "beta": 1.0}),    # mean  1.000 sd 1.000
+    "alpha_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
+    "pprob_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
+    "lamb":     ("Gamma", {"alpha": 10.0,  "beta": 0.5}),    # mean 20.000 sd 6.325
+    "eta1":     ("Gamma", {"alpha": 50.0,  "beta": 1.0}),    # mean 50.000 sd 7.071
+    "eta2":     ("Gamma", {"alpha": 25.0,  "beta": 1.0}),    # mean 25.000 sd 5.000
 }
 
 # ---------------------------------------------------------------------------
 # Full-sample calibration, 2007-01-01 to 2026-08-31 (~4,950 returns, ~193 jumps)
 # ---------------------------------------------------------------------------
-# eta1, eta2 and pprob are taken from the arm that asserts NOTHING: the two
-# decays share a Gamma(35,1) prior and pprob is Uniform(0,1). Starting from
-# zero asserted separation they ended 17.9 apart - three prior sd - and landed
-# within 1.7% of eta2 from the asymmetric-prior fit. Convergence from opposite
-# priors is what makes this a measurement rather than an assumption.
+# eta1, eta2 and pprob come from the arm that asserts NOTHING: the two decays
+# share a Gamma(35,1) prior and pprob is Uniform(0,1). From zero asserted
+# separation they finished 17.9 apart - three prior sd - in the equity
+# direction. Convergence from an uninformative start is what makes this a
+# measurement rather than an assumption.
 #
-# alpha is from the baseline full-sample fit. It cannot be estimated in a
-# window at all: its half-life is 19 years against a one-year window.
+# alpha is from the baseline full-sample fit. A 252-day window cannot estimate
+# it at all: half-life 19 years against a one-year window.
+#
+# NOT one run. eta1/eta2/pprob and alpha/sigma/lamb come from different arms,
+# so quote it as a calibration, never as a single re-estimation result.
 FULL_SAMPLE = {
     "alpha_rv": 0.036,      # half-life 19.3 yr; Psi is near a random walk
     "sigma":    0.105,
@@ -166,228 +191,90 @@ FULL_SAMPLE = {
     "eta2":     60.68,      # mean down jump 1.65%  -> jump skew -0.55
 }
 
-# Priors recentred on the full-sample calibration, with deliberately generous
-# widths. This is empirical Bayes: the same returns inform the prior and are
-# then fitted again, so the widths must be wide enough that the prior guides
-# rather than dictates. Compare the old centres - sigma at 1.0 against a fitted
-# 0.105, lambda at 20 against 77, pprob at 0.714 against 0.575 - all of which
-# dragged the rolling estimates.
-# eta1 and eta2 get the SAME prior here. Arm G showed the data separates them
-# unaided - from an identical Gamma(35,1) start they finished 17.9 apart, three
-# prior sd - so there is no reason left to assert the asymmetry, and every
-# reason not to. The shared centre sits at the midpoint of the two full-sample
-# values, 70, wide enough that both 60.7 and 78.6 are inside one sd.
-_ETA_SHARED = ("Gamma", {"alpha": 12.0, "beta": 0.1714})    # mean 70.0  sd 20.2
-
-# alpha_rv sits at a SYMMETRIC Beta(2,2): mean 0.5, sd 0.224.
-#
-# This is not a claim that the mean-reversion rate is 0.5. It is the opposite -
-# a deliberate refusal to claim anything, placed where the claim is cheapest to
-# audit. In a 252-day window alpha is unidentifiable: its full-sample half-life
-# is 19 years, so alpha*dt is 1.4e-4 per day and the window sees essentially
-# none of the pull. The rolling posteriors proved it - under Beta(1,26) the
-# posterior sd was 0.0327 against a prior sd of 0.0357 (ratio 0.92), and a
-# SINGLE window's posterior sd was 5.0x the entire 20-year spread of the point
-# estimates. The estimates were the prior, reproduced.
-#
-# Centring at 0.5 makes that visible instead of plausible. Beta(1,26) centred
-# at 0.037 produced rolling values of 0.035-0.038, which read like a converged
-# estimate because they happened to sit near the full-sample 0.036. If the
-# posterior now returns ~0.5 with sd near 0.224, the parameter is confirmed to
-# be carrying no information from a one-year window and the rolling alpha column
-# should be read as prior, not estimate. If it instead pulls down toward 0.04,
-# the window does contain the signal after all and the earlier reading was wrong.
-# Either outcome is informative; the old centre could only ever confirm itself.
-#
-# One thing this centre changes that the old one did not: it makes the test
-# fair. The engine uses alpha_rv directly as the mean-reversion rate (line ~751
-# forms y - (1 - alpha*dt)*x, and the log/exp round-trips), so at alpha = 0.037
-# a 252-day window absorbs only 1 - exp(-0.037) = 3.6% of the pull - the window
-# is close to blind by construction and CANNOT push back on the prior wherever
-# it is centred. At alpha = 0.5 the window absorbs 1 - exp(-0.5) = 39%, which a
-# year of returns can actually see. So a posterior that stays at 0.5 is much
-# stronger evidence of prior dominance than a posterior that stayed at 0.037.
-#
-# The full sample is where alpha IS identified - 0.036 with a prior/posterior sd
-# ratio of 0.09 - so nothing here affects the FULL_SAMPLE calibration above.
-SYSTEMATIC_PRIORS_RECENTRED = {
-    "sigma":    ("Gamma", {"alpha": 2.0,  "beta": 10.0}),   # mean 0.200 sd 0.141
-    "alpha_rv": ("Beta",  {"alpha": 2.0,  "beta": 2.0}),    # mean 0.500 sd 0.224
-    "pprob_rv": ("Beta",  {"alpha": 2.3,  "beta": 1.7}),    # mean 0.575 sd 0.221
-    "lamb":     ("Gamma", {"alpha": 9.0,  "beta": 0.15}),   # mean 60.0  sd 20.0
-    "eta1":     _ETA_SHARED,
-    "eta2":     _ETA_SHARED,
+# "A jump is a GAP": both etas at mean 20, a 5% mean jump, with lambda brought
+# down to mean 6 so jump volatility stays coherent (sqrt(6 * 2/20^2) = 17.3%).
+# Identical priors on the two etas assert no asymmetry, so any separation in
+# the posterior has to come from the data. It produced +0.40 - 0.04 prior sd,
+# i.e. none.
+SYSTEMATIC_PRIORS_GAPS = {
+    "sigma":    ("Gamma", {"alpha":  2.0,  "beta": 10.0}),   # mean  0.200 sd  0.141
+    "alpha_rv": ("Beta",  {"alpha":  2.0,  "beta":  2.0}),   # mean  0.500 sd  0.224
+    "pprob_rv": ("Beta",  {"alpha":  2.3,  "beta":  1.7}),   # mean  0.575 sd  0.221
+    "lamb":     ("Gamma", {"alpha":  3.0,  "beta":  0.5}),   # mean  6.000 sd  3.464
+    "eta1":     ("Gamma", {"alpha":  4.0,  "beta":  0.2}),   # mean 20.000 sd 10.000
+    "eta2":     ("Gamma", {"alpha":  4.0,  "beta":  0.2}),   # mean 20.000 sd 10.000
 }
 
-# "A jump is a GAP" - the shared eta prior centred at 20, mean jump 5%.
-#
-# This is a deliberate modelling assertion, not a recentring on data. The full
-# sample pulls the other way: arm G's shared prior sat at Gamma(35,1), a 2.86%
-# mean jump, and with 193 jumps behind it the posterior moved AWAY to 78.6/60.7
-# - a 1.27% mean jump firing every three days. Statistically that fits, but a
-# component of 1-2 daily sd every few days is a fat-tailed diffusion in a jump
-# costume, not the gap risk the model is meant to isolate. Since lambda and
-# jump size slide along a ridge and only their product is pinned by the data,
-# the modeller has to say which end of the ridge counts as a jump. This spec
-# says a jump is 5% - five to eight daily sd at typical sigma.
-#
-# lambda MUST come down with it. Jump vol is sqrt(lambda * 2/eta^2), so eta=20
-# with the recentred lambda of 60 would imply 55% volatility from jumps alone.
-# At eta=20 the coherent lambda is 3-6, giving 12-17% jump vol against SPX
-# total of 15-20%. Leaving lambda at 60 would make the prior self-contradictory
-# before any data is seen.
-_ETA_GAP = ("Gamma", {"alpha": 4.0, "beta": 0.2})       # mean 20.0  sd 10.0
+# GAPS with the etas pulled apart the WRONG WAY: eta1 25 (4% mean UP jump)
+# against eta2 50 (2% mean DOWN jump). Positive skew - the opposite sign to
+# equities, to the paper's defaults, and to the full sample. A deliberately
+# wrong-signed prior, to test whether the data drags it back. It did not:
+# eta2 moved 0.00 prior sd.
+SYSTEMATIC_PRIORS_ASYM = {
+    "sigma":    ("Gamma", {"alpha":  2.0,  "beta": 10.0}),   # mean  0.200 sd  0.141
+    "alpha_rv": ("Beta",  {"alpha":  2.0,  "beta":  2.0}),   # mean  0.500 sd  0.224
+    "pprob_rv": ("Beta",  {"alpha":  2.3,  "beta":  1.7}),   # mean  0.575 sd  0.221
+    "lamb":     ("Gamma", {"alpha":  3.0,  "beta":  0.5}),   # mean  6.000 sd  3.464
+    "eta1":     ("Gamma", {"alpha":  4.0,  "beta":  0.16}),  # mean 25.000 sd 12.500
+    "eta2":     ("Gamma", {"alpha":  4.0,  "beta":  0.08}),  # mean 50.000 sd 25.000
+}
 
-SYSTEMATIC_PRIORS_GAPS = dict(SYSTEMATIC_PRIORS_RECENTRED)
-SYSTEMATIC_PRIORS_GAPS.update({
-    "eta1": _ETA_GAP,
-    "eta2": _ETA_GAP,
-    "lamb": ("Gamma", {"alpha": 3.0, "beta": 0.5}),     # mean 6.0   sd 3.5
-})
+# The exact mirror of ASYM, in the equity direction: eta1 50 (2% up) against
+# eta2 25 (4% down). At p = 0.5 the pair have identical jump variance, so any
+# difference between their fits is the window expressing a preference on SIGN.
+# It expressed none - both returned their orderings, and the fitted
+# distributions came back mirror images (total vol 18.82% vs 18.72%, jump third
+# moment +6.76e-04 vs -6.74e-04).
+SYSTEMATIC_PRIORS_SKEW = {
+    "sigma":    ("Gamma", {"alpha":  2.0,  "beta": 10.0}),   # mean  0.200 sd  0.141
+    "alpha_rv": ("Beta",  {"alpha":  2.0,  "beta":  2.0}),   # mean  0.500 sd  0.224
+    "pprob_rv": ("Beta",  {"alpha":  2.3,  "beta":  1.7}),   # mean  0.575 sd  0.221
+    "lamb":     ("Gamma", {"alpha":  3.0,  "beta":  0.5}),   # mean  6.000 sd  3.464
+    "eta1":     ("Gamma", {"alpha":  4.0,  "beta":  0.08}),  # mean 50.000 sd 25.000
+    "eta2":     ("Gamma", {"alpha":  4.0,  "beta":  0.16}),  # mean 25.000 sd 12.500
+}
 
-# Asymmetric eta priors: eta1 mean 25, eta2 mean 50.
+# SKEW with every wide prior sd HALVED and every centre unchanged.
+#   Gamma: halving sd at fixed mean is (a, b) -> (4a, 4b)
+#   Beta:  halving sd at fixed mean is k = a+b -> 4k+3, here 4 -> 19
+# sigma and lamb are left alone - sigma has 252 observations behind it, and
+# lamb is identified by LOCATION (2020 fits 27.9 against 2024's 4.0), which a
+# tighter prior would not improve.
 #
-# READ THE DIRECTION BEFORE USING THIS. eta1 is the UP branch (it multiplies
-# pprob at line ~774) and eta2 the DOWN branch (it multiplies qprob at ~777),
-# and each is a DECAY rate, so the mean jump is its reciprocal:
-#
-#     eta1 = 25  ->  mean UP   jump  1/25 = 4.0%
-#     eta2 = 50  ->  mean DOWN jump  1/50 = 2.0%
-#
-# That is POSITIVE jump skew - upward gaps twice the size of downward ones.
-# It runs against the equity prior, against the paper's own defaults
-# (Gamma(50,1)/Gamma(25,1), i.e. eta1 50 and eta2 25, asserting the opposite),
-# and against the full sample, which put eta2 BELOW eta1 (60.68 vs 78.59, a
-# 1.65% down jump against a 1.27% up jump). Swapping the two beta values below
-# flips it to the equity direction.
-#
-# Kept because a wrong-signed prior is a real test, and a cheap one. Arm G
-# showed the data separating identical etas by 17.9 unaided; if it can also
-# drag a deliberately inverted prior back toward eta2 < eta1, the asymmetry is
-# a measurement in the strongest sense available - it survives being told the
-# opposite. If instead the posterior sits where it was put, the separation seen
-# elsewhere was never the data's doing.
-#
-# Both keep CV 0.5, the shape _ETA_GAP uses, so the priors overlap heavily and
-# neither is tight enough to dictate.
-#
-# lambda is inherited from GAPS (mean 6) rather than retuned. The jump variance
-# falls out of the change on its own: E[Y^2] = p*2/eta1^2 + q*2/eta2^2 is
-# 0.0020 at p=0.5 against 0.0050 under GAPS, so jump vol goes from
-# sqrt(6*0.005) = 17.3% to sqrt(6*0.002) = 11.0%. That happens to relieve some
-# of the calm-year overstatement GAPS produced - 14.9% fitted against 6.7%
-# realised in 2017 - but it is a side effect, not the reason for the arm.
-SYSTEMATIC_PRIORS_ASYM = dict(SYSTEMATIC_PRIORS_GAPS)
-SYSTEMATIC_PRIORS_ASYM.update({
-    "eta1": ("Gamma", {"alpha": 4.0, "beta": 0.16}),    # mean 25.0 sd 12.5
-    "eta2": ("Gamma", {"alpha": 4.0, "beta": 0.08}),    # mean 50.0 sd 25.0
-})
+# RESULT, and it is the point of the arm. Widths landed within 1-6% of the
+# predicted halving; every ratio moved TOWARD 1, i.e. every parameter scored as
+# LESS identified; and every parameter whose prior was tightened slid to its
+# prior centre while sigma and lamb, untouched, did not move at all
+# (0.1514 -> 0.1512 and 8.7824 -> 8.7657). The reported CVs collapsed - dALPHA
+# 0.124 -> 0.032, dPPROB 0.166 -> 0.053 - so the table LOOKS far more precise
+# while containing strictly less information. That is how a published table of
+# tight, stable estimates on unidentifiable parameters comes about without
+# anyone doing anything careless.
+SYSTEMATIC_PRIORS_SKEW_TIGHT = {
+    "sigma":    ("Gamma", {"alpha":  2.0,   "beta": 10.0}),  # mean  0.200 sd  0.141
+    "alpha_rv": ("Beta",  {"alpha":  9.5,   "beta":  9.5}),  # mean  0.500 sd  0.112
+    "pprob_rv": ("Beta",  {"alpha": 10.925, "beta":  8.075}),# mean  0.575 sd  0.111
+    "lamb":     ("Gamma", {"alpha":  3.0,   "beta":  0.5}),  # mean  6.000 sd  3.464
+    "eta1":     ("Gamma", {"alpha": 16.0,   "beta":  0.32}), # mean 50.000 sd 12.500
+    "eta2":     ("Gamma", {"alpha": 16.0,   "beta":  0.64}), # mean 25.000 sd  6.250
+}
 
-# The mirror of ASYM: eta1 mean 50, eta2 mean 25.
-#
-#     eta1 = 50  ->  mean UP   jump  1/50 = 2.0%
-#     eta2 = 25  ->  mean DOWN jump  1/25 = 4.0%
-#
-# NEGATIVE jump skew - the equity direction, the paper's own assertion
-# (Gamma(50,1)/Gamma(25,1)) restated at the GAPS scale, and the sign the full
-# sample measured unaided.
-#
-# This exists to close the experiment rather than to produce a preferred fit.
-# ASYM showed a 252-day window preserving an inverted ordering it was handed,
-# moving eta2 by 0.00 prior sd. GAPS showed the same window creating no
-# ordering at all from identical priors. The remaining possibility is that the
-# window resists specifically the WRONG sign and would have moved had the
-# prior been closer to the truth - in which case ASYM's result is about that
-# prior being far away, not about the window being blind.
-#
-# The two arms are exact mirrors, so that possibility is testable. At p = 0.5,
-# E[Y^2] = p*2/eta1^2 + q*2/eta2^2 is identical under both (0.0020), so jump
-# volatility, and with it the variance fit, should be unchanged. If the window
-# is genuinely skew-blind, this arm should return sigma, lambda and total
-# volatility within noise of ASYM's, an eta separation of about -19.8 mirroring
-# ASYM's +19.8, and pprob near 0.519 mirroring ASYM's 0.4815 about 0.5. Any
-# ASYMMETRY between the two arms is the window expressing a preference, and is
-# the one result here that would overturn the reading.
-SYSTEMATIC_PRIORS_SKEW = dict(SYSTEMATIC_PRIORS_GAPS)
-SYSTEMATIC_PRIORS_SKEW.update({
-    "eta1": ("Gamma", {"alpha": 4.0, "beta": 0.08}),    # mean 50.0 sd 25.0
-    "eta2": ("Gamma", {"alpha": 4.0, "beta": 0.16}),    # mean 25.0 sd 12.5
-})
+# The registry the drivers select from. One source of truth: poc/ scripts used
+# to keep their own copies of this mapping and of the drawer suffixes, which is
+# how estimate_systematic and estimate_idiosyncratic came to offer different
+# arms from the same library.
+SYSTEMATIC_PRIOR_SETS = {
+    "paper":      None,                      # priors=None -> SYSTEMATIC_PRIORS
+    "gaps":       SYSTEMATIC_PRIORS_GAPS,
+    "asym":       SYSTEMATIC_PRIORS_ASYM,
+    "skew":       SYSTEMATIC_PRIORS_SKEW,
+    "skew-tight": SYSTEMATIC_PRIORS_SKEW_TIGHT,
+}
 
-# SKEW with every WIDE prior sd HALVED, all means unchanged.
-#
-# Gamma, halving sd at fixed mean:  (a, b) -> (4a, 4b)
-# Beta,  halving sd at fixed mean:  k = a+b -> 4k+3, so k goes 4 -> 19
-#
-#     eta1      Gamma(4, 0.08)    mean 50.000  sd 25.000 -> Gamma(16, 0.32)   12.500
-#     eta2      Gamma(4, 0.16)    mean 25.000  sd 12.500 -> Gamma(16, 0.64)    6.250
-#     alpha_rv  Beta(2, 2)        mean  0.500  sd  0.224 -> Beta(9.5, 9.5)     0.112
-#     pprob_rv  Beta(2.3, 1.7)    mean  0.575  sd  0.221 -> Beta(10.925,8.075) 0.111
-#
-# sigma and lamb are left alone: sigma is identified by 252 observations so its
-# prior barely registers, and lamb is identified by LOCATION (2020 fits 26.7
-# against 2024's 4.2), which tightening would not improve.
-#
-# The wide columns invite the reading that the estimator is imprecise and a
-# tighter prior would fix it. It will narrow them. It will not add anything,
-# and this arm exists to make the difference measurable rather than arguable.
-#
-# The widths were never loose priors. An exponential rate from n observations
-# has relative standard error 1/sqrt(n), and a 252-day window holds ~4.8 up
-# jumps and ~4.0 down - 45.6% and 50.2%, a data-alone 95% width of 95 on eta1
-# against the 84 observed. Backing the data's own precision out of the SKEW
-# posteriors the same way gives sd 0.48 for alpha and 0.29 for pprob.
-#
-# Hence the prediction, and it is the whole point of the run:
-#
-#     dETA1   width 84.24 -> 43.5    ratio 0.70 -> 0.89
-#     dETA2   width 46.73 -> 22.7    ratio 0.77 -> 0.92
-#     dALPHA  width 0.795 -> 0.427   ratio 0.91 -> 0.97
-#     dPPROB  width 0.688 -> 0.404   ratio 0.79 -> 0.93
-#
-# Every interval shrinks by roughly half. Every ratio moves TOWARD 1, i.e.
-# every parameter scores as LESS identified than before. The prior shrinks
-# faster than the posterior, because the posterior still contains the data.
-#
-# That is the mechanism behind this whole exercise, reproduced on demand: a
-# tight credible interval is not evidence of identification. Table 1's tight
-# intervals on parameters a 252-day window cannot see are what it looks like
-# when this happens by accident instead of on purpose.
-SYSTEMATIC_PRIORS_SKEW_TIGHT = dict(SYSTEMATIC_PRIORS_SKEW)
-SYSTEMATIC_PRIORS_SKEW_TIGHT.update({
-    "eta1":     ("Gamma", {"alpha": 16.0, "beta": 0.32}),    # mean 50.000 sd 12.500
-    "eta2":     ("Gamma", {"alpha": 16.0, "beta": 0.64}),    # mean 25.000 sd  6.250
-    "alpha_rv": ("Beta",  {"alpha": 9.5,  "beta": 9.5}),     # mean  0.500 sd  0.112
-    "pprob_rv": ("Beta",  {"alpha": 10.925, "beta": 8.075}), # mean  0.575 sd  0.111
-})
-
-# A variant that forbids pprob above 0.6.
-#
-# The cap is expressed as a FLAT prior on the allowed region, not as a
-# truncated Beta, and the reason is a real tradeoff. Truncating the recentred
-# Beta(2.3,1.7) at 0.6 discards 48% of its mass and drags the mean from 0.575
-# down to 0.397 - so it does not just cap, it recentres. Choosing a shape whose
-# TRUNCATED mean stays near 0.575 requires piling the mass against the boundary:
-# Beta(6,2) gets a truncated mean of 0.503 but keeps only 16% of its mass and
-# has sd 0.08, tight enough to dictate rather than guide, which would put pprob
-# straight back to prior-driven.
-#
-# Uniform(0, 0.6) exerts no pull anywhere inside the interval. It excludes and
-# nothing else, which is exactly what "pprob <= 0.6" means. Its nominal mean of
-# 0.30 is not a pull toward 0.30; a flat prior has no preferred location.
-#
-# Read the result by asking whether the posterior PILES UP against 0.6. Six of
-# the twenty rolling years currently sit above it - 2007, 2013, 2017, 2018,
-# 2021 and 2024 - so the cap will bind there, and how hard it binds is the
-# measurement of how much the constraint is fighting the data.
-SYSTEMATIC_PRIORS_CAPPED = dict(SYSTEMATIC_PRIORS_RECENTRED)
-SYSTEMATIC_PRIORS_CAPPED["pprob_rv"] = ("Uniform", {"lower": 0.0, "upper": 0.6})
-
-# The truncated-Beta alternative, kept for comparison. Caps at 0.6 while
-# retaining a central tendency, at the cost of a much tighter prior.
-SYSTEMATIC_PRIORS_CAPPED_BETA = dict(SYSTEMATIC_PRIORS_RECENTRED)
-SYSTEMATIC_PRIORS_CAPPED_BETA["pprob_rv"] = (
-    "Beta", {"alpha": 3.0, "beta": 2.0, "upper": 0.6})   # trunc mean 0.426
+# Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
+# replication files under Study/Estimated Parameters PMLE/^SPX/ stay addressable.
+STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
+                "skew": "__skew", "skew-tight": "__skewtight"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.

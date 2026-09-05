@@ -844,6 +844,33 @@ def _exit_now(code=0):
     os._exit(code)
 
 
+def _exit_now(code=0):
+    """Leave the process immediately, skipping interpreter teardown.
+
+    A completed run printed its last line - the summary CSV was written -
+    and then never returned the shell. Nothing was still computing: PyMC and
+    nutpie start native (Rust) threads, and multiprocessing's forkserver
+    leaves a helper process behind, and CPython's shutdown path joins those
+    before exiting. If one does not come back, the process sits there forever
+    looking exactly like a hang.
+
+    Every result this script produces is already durably on disk when main()
+    returns - per-date CSVs through save_pmle_params, the summary through
+    to_csv - so an orderly teardown buys nothing. Flush explicitly, because
+    os._exit does not.
+    """
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:                                            # noqa: BLE001
+        pass
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    main()
-    _exit_now()
+    try:
+        main()
+        _code = 0
+    except SystemExit as _e:                # the stall watchdog exits 3
+        _code = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+    _exit_now(_code)

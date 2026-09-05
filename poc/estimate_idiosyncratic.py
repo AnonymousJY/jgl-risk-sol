@@ -86,7 +86,7 @@ from Scripts.run_pmle_kimyi2025 import (                     # noqa: E402
 # things that must match: how a drawer is named, and how work is sized.
 from poc.estimate_systematic import (                        # noqa: E402
     SYSTEMATIC_ID, DATE_FMT, LOOKBACK, BASE_DAYS, SEED, N_MC_PATHS,
-    priors_digest, store_id, valuation_dates,
+    priors_digest, store_id, valuation_dates, sampler_settings,
     _init_child, default_workers, _pool_kwargs, POOL_CHUNK, _drain,
 )
 from Library.RiskEngineKimYi2025 import (                    # noqa: E402
@@ -312,6 +312,7 @@ def write_manifest(drawer, name, anchor, tag, priors):
                    "systematic_priors": tag,
                    "systematic_digest": priors_digest(priors),
                    "lookback": LOOKBACK, "seed": int(SEED),
+                   "sampler": sampler_settings(),
                    "note": "idiosyncratic parameters are fitted with the six "
                            "systematic values held as constants; gamma_i is a "
                            "jump scale RELATIVE to the systematic eta"},

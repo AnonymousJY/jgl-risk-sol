@@ -97,7 +97,12 @@ def describe_priors(manifest):
             kind, kw = spec[k]
             args = ",".join("%g" % v for _, v in sorted(kw.items()))
             bits.append("%s=%s(%s)" % (k, kind, args))
-    return "%s  %s" % (manifest.get("tag", "?"), " ".join(bits))
+    out = "%s  %s" % (manifest.get("tag", "?"), " ".join(bits))
+    sm = manifest.get("sampler")
+    if isinstance(sm, dict):
+        out += "\n      sampler: draws %s  chains %s  cores %s  tune %s" % (
+            sm.get("draws"), sm.get("chains"), sm.get("cores"), sm.get("tune"))
+    return out
 
 
 def do_list():

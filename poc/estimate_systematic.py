@@ -62,6 +62,7 @@ from concurrent.futures.process import BrokenProcessPool     # noqa: E402
 
 from Library.RiskEngineKimYi2025 import (                     # noqa: E402
     SYSTEMATIC_PRIOR_SETS, STORE_SUFFIX, FULL_SAMPLE,
+    JGL_CHAINS, JGL_CORES, JGL_DRAWS,
 )
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
@@ -158,6 +159,20 @@ def artifact_suffix(tag, priors):
     return "%s_%s" % (STORE_SUFFIX[tag], priors_digest(priors))
 
 
+def sampler_settings():
+    """What the sampler was actually configured to do for this run.
+
+    The drawer digest covers PRIOR VALUES only, so two runs with different
+    sampler settings land in the SAME drawer and become indistinguishable once
+    written. Draw count moves the credible-interval endpoints - 1,000 draws
+    gives ~2,150 min tail ess against 10,000's ~26,000 - so a series that
+    silently mixes them has intervals that are not comparable across dates.
+    Recording it does not prevent the mixing; it makes it detectable.
+    """
+    return {"chains": JGL_CHAINS, "cores": JGL_CORES,
+            "draws": JGL_DRAWS or N_MC_PATHS, "tune": 1000,
+            "nuts_sampler": "nutpie"}
+
 def write_manifest(drawer_id, tag, priors):
     """Drop a _priors.json beside the estimates so the drawer is self-describing.
 
@@ -178,6 +193,7 @@ def write_manifest(drawer_id, tag, priors):
                    "base_days": BASE_DAYS,
                    "seed": int(SEED),
                    "n_mc_paths": N_MC_PATHS,
+                   "sampler": sampler_settings(),
                    "priors": spec}, fh, indent=2)
     return path
 DATE_FMT = "%Y%m%d"

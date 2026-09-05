@@ -1,0 +1,44 @@
+========================================================================
+refit all   arms='skew skew-tight'  names='C,BAC,JPM'  anchor=hybrid
+            JGL_CORES=1  workers=4  draws=default (1000)
+            DRY RUN - nothing will be touched
+========================================================================
+
+-- 1. what is on disk now --
+========================================================================
+Estimate drawers
+========================================================================
+  AAPL__hybrid__skew_4af58b62           2 date(s)
+      idiosyncratic  name=AAPL  anchor=hybrid  systematic=skew (4af58b62)
+      resume: python poc/estimate_idiosyncratic.py --names AAPL --anchor hybrid --priors skew
+
+  Rename one with --drawer <id> --label <name>.
+  A 'resume' line re-runs that drawer's remaining dates; the run
+  skips what is already there, so it is safe to repeat.
+
+-- 2. archive the existing drawers as 'draws10000' --
++ python poc/archive_run.py --drawer AAPL__hybrid__skew_4af58b62 --label draws10000 --apply
+
+-- 3. systematic, one run per arm (must precede the names) --
++ python -u poc/estimate_systematic.py --priors skew --step 21 --workers 4 --no-color
++ python -u poc/estimate_systematic.py --priors skew-tight --step 21 --workers 4 --no-color
+
+-- 4. full-sample calibration, per arm (the anchor for --anchor full/hybrid) --
++ python -u poc/estimate_systematic.py --priors skew --full-sample --no-color
++ python -u poc/estimate_systematic.py --priors skew-tight --full-sample --no-color
+
+-- 5. idiosyncratic --
++ python -u poc/estimate_idiosyncratic.py --names C,BAC,JPM --priors skew --anchor hybrid --workers 4
++ python -u poc/estimate_idiosyncratic.py --names C,BAC,JPM --priors skew-tight --anchor hybrid --workers 4
+
+-- done --
+========================================================================
+Estimate drawers
+========================================================================
+  AAPL__hybrid__skew_4af58b62           2 date(s)
+      idiosyncratic  name=AAPL  anchor=hybrid  systematic=skew (4af58b62)
+      resume: python poc/estimate_idiosyncratic.py --names AAPL --anchor hybrid --priors skew
+
+  Rename one with --drawer <id> --label <name>.
+  A 'resume' line re-runs that drawer's remaining dates; the run
+  skips what is already there, so it is safe to repeat.

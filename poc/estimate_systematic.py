@@ -334,6 +334,47 @@ def _pool_kwargs(workers):
     return kw
 
 
+# Stall watchdog.
+#
+# A run sat at 120/435 for SIX HOURS: process alive, no output, no exception.
+# as_completed() blocks forever by construction, so a deadlocked executor is
+# indistinguishable from a slow one - and under forkserver a worker that dies
+# while the pool is respawning another can wedge it without ever raising
+# BrokenProcessPool.
+#
+# So wait in bounded slices instead. If NOTHING completes within STALL_TIMEOUT
+# the pool is wedged: say so, name the pending count, exit non-zero. Everything
+# finished is already on disk and a rerun resumes, so a false positive costs
+# one restart while a missed hang costs a night.
+STALL_TIMEOUT = float(os.environ.get("JGL_STALL_TIMEOUT", "900"))
+
+
+def _drain(pending, on_done, label="tasks"):
+    """Consume futures, aborting if the pool stops making progress."""
+    while pending:
+        finished, pending = wait(pending, timeout=STALL_TIMEOUT,
+                                 return_when=FIRST_COMPLETED)
+        if not finished:
+            print("\n" + "=" * 72, flush=True)
+            print("  STALLED - no %s completed in %.0fs. The pool is wedged."
+                  % (label, STALL_TIMEOUT), flush=True)
+            print("=" * 72, flush=True)
+            print("  %d still pending. Everything finished is on disk; rerun"
+                  % len(pending), flush=True)
+            print("  to resume. To cut the risk, reduce memory pressure:", flush=True)
+            print("    JGL_POOL_CHUNK=20 <same command>", flush=True)
+            print("    <same command> --workers 2", flush=True)
+            print(flush=True)
+            print("  Check whether the kernel killed a worker:", flush=True)
+            print("    sudo dmesg -T | grep -i 'killed process' | tail", flush=True)
+            print("    free -h        # is the machine in swap?", flush=True)
+            for f in pending:
+                f.cancel()
+            raise SystemExit(3)
+        for fut in finished:
+            on_done(fut)
+
+
 def valuation_dates(beg, end, step):
     days = pd.bdate_range(pd.to_datetime(beg, format=DATE_FMT),
                           pd.to_datetime(end, format=DATE_FMT))

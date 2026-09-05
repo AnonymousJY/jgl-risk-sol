@@ -188,6 +188,34 @@ JGL_CHAINS = int(os.environ.get("JGL_CHAINS", "4"))
 JGL_CORES  = int(os.environ.get("JGL_CORES", "4"))
 JGL_DRAWS  = int(os.environ.get("JGL_DRAWS", "0")) or None   # None = caller's value
 
+# Warn when a fit's minimum tail ess falls below this. Draws were cut from
+# 10,000 to 1,000 on a benchmark of ONE date; sampling efficiency varies by
+# date and the idiosyncratic model has a different geometry, so the cut is
+# checked on every fit rather than assumed to hold. 400 is the usual floor for
+# a usable tail quantile; the benchmark date returned 2,153.
+JGL_MIN_TAIL_ESS = float(os.environ.get("JGL_MIN_TAIL_ESS", "400"))
+
+
+def _warn_low_ess(idata, names, label):
+    """Print a warning if any parameter's tail ess is too low to support a
+    95% equal-tailed interval. Never raises - a noisy fit is still a fit, and
+    the run must not die on a diagnostic."""
+    try:
+        import arviz as az
+        have = [v for v in names if v in idata.posterior]
+        if not have:
+            return
+        e = az.ess(idata, var_names=have, method="tail")
+        low = {v: float(e[v].values) for v in have
+               if float(e[v].values) < JGL_MIN_TAIL_ESS}
+        if low:
+            print("    LOW TAIL ESS (%s): %s  - interval endpoints for these "
+                  "are unreliable at this draw count"
+                  % (label, ", ".join("%s %.0f" % (k, v) for k, v in low.items())),
+                  flush=True)
+    except Exception:                                            # noqa: BLE001
+        pass
+
 
 SYSTEMATIC_PRIORS = {
     "sigma":    ("Gamma", {"alpha":  1.0,  "beta": 1.0}),    # mean  1.000 sd 1.000
@@ -446,6 +474,10 @@ def pmle_kimyirisk_systematic(
             return v, v, v
         return summarize(idata_systematic, var)
 
+    _warn_low_ess(idata_systematic,
+                  ["sigma", "alpha_rv", "pprob_rv", "lamb", "eta1", "eta2"],
+                  "systematic")
+
     a_m, a_lo, a_hi = _summ("alpha_rv", "alpha_rv")
     s_m, s_lo, s_hi = _summ("sigma", "sigma")
     p_m, p_lo, p_hi = _summ("pprob_rv", "pprob_rv")
@@ -528,6 +560,10 @@ def pmle_kimyirisk_idiosyncratic(
     # See the note in pmle_kimyirisk_systematic. Transforms are applied to the
     # DRAWS, not to the summary, so means are arithmetic and intervals are the
     # transformed quantiles rather than quantiles of the transform's input.
+    _warn_low_ess(idata_idiosyncratic,
+                  ["mui", "kappai_rv", "gamma_rv", "betai_rv", "rhoix_rv"],
+                  "idiosyncratic")
+
     mu_m, mu_lo, mu_hi = summarize(idata_idiosyncratic, "mui")
     k_m, k_lo, k_hi = summarize(idata_idiosyncratic, "kappai", transform=np.exp)
     g_m, g_lo, g_hi = summarize(idata_idiosyncratic, "gammai", transform=np.exp)

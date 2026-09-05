@@ -203,7 +203,26 @@ END = "20260831"
 LOOKBACK = 252
 BASE_DAYS = 252
 SEED = np.uint64(20240114)
-N_MC_PATHS = 10_000
+# Draws per chain. Was 10,000; the benchmark (poc/bench_sampler.py, ^SPX
+# 2025-06-30, 24 cpus) says that is ~26x more than the reported intervals use:
+#
+#   draws   sec/fit   min tail ess
+#    1000       6.8           2153
+#    2000       7.3           4843
+#   10000      13.4          26032
+#
+# A 95% equal-tailed interval needs enough TAIL ess to pin the 2.5%/97.5%
+# quantiles - order 1,000. 1,000 draws over 4 chains delivers 2,153, and a fit
+# costs half as long. Most of what remains is fixed cost: seconds = 6.13 +
+# 0.00073 x draws, so compilation plus 1,000 tuning steps is ~90% of a 1,000-
+# draw fit and cutting further buys almost nothing.
+#
+# This was measured on ONE date and the systematic model. Sampling efficiency
+# varies by date and the idiosyncratic geometry differs, so the engine now
+# checks min tail ess on every fit and warns when it falls below
+# JGL_MIN_TAIL_ESS - the assumption is monitored rather than trusted.
+# JGL_DRAWS overrides this for a whole run.
+N_MC_PATHS = 1_000
 
 # The paper's reported April 2025 ranges. Reproducing these end to end is the
 # strongest available check that this pipeline is wired correctly.

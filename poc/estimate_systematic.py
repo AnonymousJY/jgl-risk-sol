@@ -825,5 +825,25 @@ def main():
     print("This series is the rolling systematic input to backfill_poc.py.")
 
 
+def _exit_now(code=0):
+    """Leave without waiting for interpreter shutdown.
+
+    A completed run hung for an hour AFTER main() returned: the last report
+    printed, the CSV was written, and the process would not exit. Nothing was
+    still computing. Interpreter shutdown has to join the forkserver process
+    and whatever native threads nutpie/numba left behind, and after dozens of
+    pool create/destroy cycles that can wedge - a hang with the work already
+    finished and safely on disk.
+
+    Every output is written and flushed before this point, so there is nothing
+    for a clean shutdown to do that matters. os._exit skips atexit handlers and
+    the GC entirely and returns control immediately.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
+
+
 if __name__ == "__main__":
     main()
+    _exit_now()

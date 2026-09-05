@@ -1,3 +1,4 @@
+import os
 import pymc as pm
 import numpy as np
 import pandas as pd
@@ -159,6 +160,35 @@ def _dist_loglike_idiosyncratic(y, mui, kappai, gammai, betai, rhoix, alpha, sig
 # returns that assertion untouched, so the model's negative jump skew is an
 # assumption at this horizon rather than an estimate. On the full sample it IS
 # measured, and in the same direction.
+# Sampler layout, overridable by environment so a whole run can be retimed
+# without editing any call site.
+#
+# The defaults were chains=4, cores=4, draws=10000. A benchmark on an unloaded
+# 24-core box (poc/bench_sampler.py, ^SPX 2025-06-30) says both are wrong:
+#
+#   cores  sec/fit  workers=24/cores  fits/hour
+#       4      7.4                 6       2914
+#       2      9.5                12       4527
+#       1     13.9                24       6216      <- 2.13x
+#
+# Four threaded chains return only 1.88x over one, i.e. 47% threading
+# efficiency, so giving each fit four cores wastes half of them. The outer
+# process pool converts them at 100%.
+#
+#   draws   sec/fit   min tail ess
+#     500      14.3           1025     <- includes ~7s of one-off compilation
+#    1000       7.1           2153
+#    2000       7.2           4843
+#   10000      13.4          26032
+#
+# 10,000 draws buys 26,000 tail ess to report a 95% interval that needs about
+# 1,000. Most of a fit is fixed cost - compile plus 1,000 tuning steps - so
+# cutting draws is 1.86x, not the 5x a naive draws-are-everything reading gives.
+JGL_CHAINS = int(os.environ.get("JGL_CHAINS", "4"))
+JGL_CORES  = int(os.environ.get("JGL_CORES", "4"))
+JGL_DRAWS  = int(os.environ.get("JGL_DRAWS", "0")) or None   # None = caller's value
+
+
 SYSTEMATIC_PRIORS = {
     "sigma":    ("Gamma", {"alpha":  1.0,  "beta": 1.0}),    # mean  1.000 sd 1.000
     "alpha_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
@@ -394,7 +424,8 @@ def pmle_kimyirisk_systematic(
         )
 
         rng_pymc = np.random.default_rng(SEED)
-        idata_systematic = pm.sample(N_SIMS_MCMC, chains=4, tune=1000, cores=4, target_accept=0.95,
+        idata_systematic = pm.sample(JGL_DRAWS or N_SIMS_MCMC, chains=JGL_CHAINS, tune=1000,
+                                     cores=JGL_CORES, target_accept=0.95,
                                      progressbar=is_progress_bar, random_seed=rng_pymc, nuts_sampler=nuts_sampler)
 
     # Summaries come from Library.PosteriorSummary, not az.summary. The old code
@@ -490,7 +521,8 @@ def pmle_kimyirisk_idiosyncratic(
         )
 
         rng_pymc = np.random.default_rng(SEED)
-        idata_idiosyncratic = pm.sample(N_SIMS_MCMC, chains=4, tune=1000, cores=4, target_accept=0.95,
+        idata_idiosyncratic = pm.sample(JGL_DRAWS or N_SIMS_MCMC, chains=JGL_CHAINS, tune=1000,
+                                     cores=JGL_CORES, target_accept=0.95,
                                         progressbar=is_progress_bar, random_seed=rng_pymc, nuts_sampler=nuts_sampler)
 
     # See the note in pmle_kimyirisk_systematic. Transforms are applied to the

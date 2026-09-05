@@ -94,6 +94,25 @@ def one_fit(rv, priors, **override):
     return el, (_CAPTURED[0] if _CAPTURED else None)
 
 
+def _grad_evals(idata):
+    """Actual leapfrog steps, not draws.
+
+    NUTS takes a whole trajectory per draw - commonly 7 to 31 leapfrog steps -
+    so dividing wall time by DRAWS overstates the per-gradient cost by the
+    average tree size. That is what made a healthy sampler look like 639
+    us/grad. sample_stats carries the real count."""
+    try:
+        ss = idata.sample_stats
+        for k in ("n_steps", "tree_size", "num_steps"):
+            if k in ss:
+                return int(ss[k].values.sum())
+        if "tree_depth" in ss:
+            return int((2 ** ss["tree_depth"].values - 1).sum())
+    except Exception:                                            # noqa: BLE001
+        pass
+    return None
+
+
 def tail_ess(idata):
     try:
         import arviz as az
@@ -146,20 +165,29 @@ def main():
         print("\nLAYOUT  what matters is fits/hour ACROSS THE MACHINE, not per fit")
         print("  chains cores  workers  sec/fit   fits/hour   vs cores=4")
         print("  " + "-" * 60)
-        ref = None
-        for c in [int(x) for x in a.cores.split(",")]:
+        cs = [int(x) for x in a.cores.split(",")]
+        meas = []
+        for c in cs:
             el, _ = one_fit(rv, priors, draws=2000, chains=4, cores=c)
-            w = max(1, ncpu // c)
-            thr = 3600.0 * w / el
-            if c == 4:
-                ref = thr
+            meas.append((c, el, max(1, ncpu // c), 3600.0 * max(1, ncpu // c) / el))
+        ref = next((t for c, _, _, t in meas if c == max(cs)), None)
+        for c, el, w, thr in meas:
             print("  %6d %5d  %7d  %7.1f  %10.1f   %s"
                   % (4, c, w, el, thr,
-                     "reference" if c == 4 else
-                     ("%+.0f%%" % (100 * (thr / ref - 1)) if ref else "-")))
+                     "reference" if c == max(cs) else "%+.0f%%" % (100 * (thr / ref - 1))))
         print("\n  cores=1 is slower per fit and can still win on throughput,")
         print("  because the outer pool then runs %d fits at once instead of %d."
               % (ncpu, max(1, ncpu // 4)))
+        print()
+        print("  CAVEAT: these fits run ALONE on an idle machine, so fits/hour")
+        print("  assumes perfect scaling to a full pool and is optimistic - a")
+        print("  real run at 6 workers took ~47s/fit against 7.4s here. The")
+        print("  RANKING should survive, because contention penalises the")
+        print("  4-thread layout hardest, but confirm it with a real short run:")
+        print("    JGL_CORES=1 ./run_bg.sh poc/estimate_systematic.py --priors skew --step 21 --workers %d"
+              % ncpu)
+        print("    JGL_CORES=4 ./run_bg.sh poc/estimate_systematic.py --priors skew --step 21 --workers %d"
+              % max(1, ncpu // 4))
 
     if a.only in (None, "backend"):
         print("\nBACKEND  (draws=2000, chains=4, cores=4)")
@@ -172,11 +200,16 @@ def main():
             except Exception as exc:                             # noqa: BLE001
                 print("  %-10s  unavailable: %s" % (b, type(exc).__name__))
                 continue
-            n = 4 * (2000 + 1000)
-            print("  %-10s  %7.1f  %11d  %8.1f" % (b, el, n, 1e6 * el / n))
-        print("\n  ~1000 us/grad on a 252-point likelihood means the logp is not")
-        print("  compiling to anything tight. Under ~100 us/grad it is fine and")
-        print("  the only remaining lever is draws.")
+            n, note = _grad_evals(idata), ""
+            if n is None:
+                n, note = 4 * (2000 + 1000), "  (DRAWS, not grads - see note)"
+            print("  %-10s  %7.1f  %11d  %8.1f%s"
+                  % (b, el, n, 1e6 * el / n, note))
+        print("\n  This counts LEAPFROG STEPS from sample_stats, not draws. A")
+        print("  NUTS draw is a whole trajectory - often 7 to 31 gradients - so")
+        print("  time/draws overstates per-gradient cost by the average tree")
+        print("  size. Under ~100 us/grad the logp is compiling fine and draws")
+        print("  and layout are the only levers left.")
 
 
 def _exit_now(code=0):

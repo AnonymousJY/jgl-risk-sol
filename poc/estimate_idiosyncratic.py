@@ -71,6 +71,9 @@ from Library.RiskEngineKimYi2025 import FULL_SAMPLE, STORE_SUFFIX  # noqa: E402
 from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
 )
+from Library.TableHeatmap import (                           # noqa: E402
+    render as heat, legend as heat_legend,
+)
 from Library.DataAccess import (                             # noqa: E402
     get_aligned_price_panel, get_pmle_params, pmle_params_exists,
     save_pmle_params, available_pmle_dates, PMLE_DIR,
@@ -90,7 +93,21 @@ from Library.RiskEngineKimYi2025 import (                    # noqa: E402
     SYSTEMATIC_PRIOR_SETS as PRIOR_SETS,
 )
 
+COLOR = None
+
 IDIO_PARAMS = ["dBETAI", "dKAPPAI", "dGAMMAI", "dRHOIX", "dMUI"]
+
+# The priors the idiosyncratic block is actually sampled under
+# (RiskEngineKimYi2025.pmle_kimyirisk_idiosyncratic, lines ~457-468).
+# dRHOIX is reported as 2*Beta(5,2) - 1, so its prior moments are the Beta's
+# scaled by 2 and shifted - NOT the Beta's own.
+IDIO_PRIORS = {
+    "dBETAI":  ("Gamma(3,1)",        3.0000, 1.7321),
+    "dKAPPAI": ("Gamma(2,1)",        2.0000, 1.4142),
+    "dGAMMAI": ("Gamma(3,1)",        3.0000, 1.7321),
+    "dRHOIX":  ("2*Beta(5,2)-1",     0.4286, 0.3196),
+    "dMUI":    ("Normal(0,1)",       0.0000, 1.0000),
+}
 
 BEG = "20070101"
 END = "20260831"
@@ -323,39 +340,86 @@ def load_series(name, anchor, tag, priors):
 
 
 def report(name, df):
+    """Same treatment the systematic report gives SPX, per name."""
     print("\n" + "=" * 72)
-    print("%s :: %d valuation date(s)" % (name, len(df)))
+    print("%s :: %s to %s   (%d valuation dates)"
+          % (name, df.index.min().date(), df.index.max().date(), len(df)))
     print("=" * 72)
     print("  credible intervals: %.0f%% equal-tailed (%s)"
           % (100 * CI_PROB, CI_CONVENTION))
 
-    cols = [c for c in IDIO_PARAMS if c in df]
-    print("\n" + df[cols].describe().loc[
-        ["mean", "std", "min", "50%", "max"]].to_string(float_format="%.4f"))
-
-    # The quantity the shock translation actually uses. Reported here because
-    # it is a FUNCTION of four parameters - reading beta_i alone understates
-    # the systematic loading whenever kappa_i rho_iX is material.
+    # b_i is a FUNCTION of four parameters, so it belongs in the tables as a
+    # column of its own - reading beta_i alone understates the systematic
+    # loading whenever kappa_i rho_iX is material.
     if all(c in df for c in ("dBETAI", "dKAPPAI", "dRHOIX", "dSIGMA")):
-        b = df["dBETAI"] + df["dKAPPAI"] * df["dRHOIX"] / df["dSIGMA"]
-        print("\n  b_i = beta_i + kappa_i rho_iX / sigma   "
-              "(diffusive loading on the systematic factor)")
-        print("    mean %.4f   sd %.4f   min %.4f   max %.4f"
-              % (b.mean(), b.std(), b.min(), b.max()))
-        print("    beta_i alone: mean %.4f - the gap is the correlated-liquidity"
-              % df["dBETAI"].mean())
-        print("    channel, which beta_i does not carry.")
+        df = df.copy()
+        df["b_i"] = df["dBETAI"] + df["dKAPPAI"] * df["dRHOIX"] / df["dSIGMA"]
+
+    cols = [c for c in IDIO_PARAMS + ["b_i"] if c in df]
+    print("\nDistribution across valuation dates:")
+    print(df[cols].describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]]
+            .round(4).to_string())
+
+    if len(df) < 2:
+        print("\nStability - needs at least 2 valuation dates.")
+    else:
+        print("\nStability - coefficient of variation (sd / |mean|):")
+        cv = (df[cols].std() / df[cols].mean().abs()).sort_values()
+        for k, v in cv.items():
+            note = "" if v < 0.25 else "   <-- varies a lot across windows"
+            print("   %-9s %6.3f%s" % (k, v, note))
+        print("\n   A low CV is evidence of identification only if the")
+        print("   parameter is identified. A prior-driven one is stable")
+        print("   because its prior is - read this with the table below.")
+
+    for stat in ("mean", "median"):
+        t = getattr(df[cols].groupby(df.index.year), stat)().round(4)
+        t.index = [str(i) for i in t.index]
+        print("\nBy year (%s):" % stat)
+        print(heat(t, decimals=4, color=COLOR))
+    print(heat_legend(color=COLOR))
+
+    print("\nIdentification over time - share of valuation dates where the")
+    print("posterior is narrower than the prior (ratio < 0.70):")
+    for k in IDIO_PARAMS:
+        w = k + "_W"
+        if k not in IDIO_PRIORS or w not in df:
+            continue
+        label, pmean, psd = IDIO_PRIORS[k]
+        ratio = (df[w] * CI_WIDTH_TO_SD) / psd
+        shift = (df[k].median() - pmean) / psd
+        share = 100.0 * float((ratio < 0.70).mean())
+        print("   %-8s %-14s %5.1f%%   median ratio %.2f   shift %+.2f sd"
+              % (k, label, share, ratio.median(), shift))
+    print("\n   0% means never identified at any date - that column is a")
+    print("   series of priors. A large |shift| is decisive evidence of data")
+    print("   dominance regardless of width: a prior cannot drag a posterior")
+    print("   several sd away from itself.")
 
     if "dGAMMAI" in df:
-        print("\n  gamma_i mean %.4f. In the likelihood it enters only as"
-              % df["dGAMMAI"].mean())
-        print("  eta1/gamma_i and eta2/gamma_i, so it is a jump scale RELATIVE")
-        print("  to the systematic eta, not an absolute one.")
+        print("\nGap loading dGAMMAI at known stress episodes:")
+        for lab, (a, b_) in {
+            "GFC 2008H2":   ("2008-07-01", "2008-12-31"),
+            "Euro 2011":    ("2011-07-01", "2011-12-31"),
+            "Covid 2020":   ("2020-02-01", "2020-06-30"),
+            "SVB 2023":     ("2023-03-01", "2023-06-30"),
+            "Tariffs 2025": ("2025-04-01", "2025-07-31"),
+        }.items():
+            wnd = df.loc[a:b_, "dGAMMAI"]
+            if len(wnd):
+                print("   %-14s median %6.3f   (full-sample median %6.3f)"
+                      % (lab, wnd.median(), df["dGAMMAI"].median()))
+        print("\n   gamma_i enters the likelihood only as eta1/gamma_i and")
+        print("   eta2/gamma_i, so it is a jump scale RELATIVE to the")
+        print("   systematic eta, not an absolute one.")
 
-    if "dGAMMAI_W" in df:
-        sd = df["dGAMMAI_W"] * CI_WIDTH_TO_SD
-        print("  posterior sd %.4f against a Gamma(3,1) prior sd of 1.7321 "
-              "-> ratio %.2f" % (sd.median(), sd.median() / 1.7320508))
+    if "b_i" in df and "dGAMMAI" in df:
+        r = (df["dGAMMAI"] / df["b_i"]).median()
+        print("\n  gamma_i / b_i median %.3f - %s"
+              % (r, "gaps HARDER than ordinary days imply" if r > 1
+                 else "gaps SOFTER than ordinary days imply"))
+        print("  This ratio crossing 1.0 across names is what a regression")
+        print("  beta cannot reproduce; see poc/product_curve.py.")
 
 
 def main():
@@ -378,10 +442,17 @@ def main():
                          "--anchor full)")
     ap.add_argument("--workers", type=int, default=None)
     ap.add_argument("--report-only", action="store_true")
+    ap.add_argument("--color", dest="color", action="store_true", default=None,
+                    help="force heat shading on (default: on for a terminal)")
+    ap.add_argument("--no-color", dest="color", action="store_false",
+                    help="plain numbers, no shading")
     ap.add_argument("--force", "--overwrite", dest="force", action="store_true",
                     help="re-fit every (name, date) even if already on disk, "
                          "overwriting in place")
     a = ap.parse_args()
+
+    global COLOR
+    COLOR = a.color
 
     if a.names.startswith("@"):
         with open(a.names[1:]) as fh:

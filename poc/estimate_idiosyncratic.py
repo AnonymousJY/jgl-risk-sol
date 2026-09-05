@@ -492,7 +492,25 @@ def main():
     for name in names:
         df = load_series(name, a.anchor, a.priors, priors)
         if not len(df):
-            print("\n%s: nothing estimated." % name)
+            # "nothing estimated" on its own sends you looking for a bug that
+            # is not there. Say WHICH drawer was empty, whether the systematic
+            # fit it would need exists, and the command that fills it.
+            drawer = name_store_id(name, a.anchor, a.priors, priors)
+            print("\n%s: nothing on disk in drawer %s" % (name, drawer))
+            if a.anchor != "full":
+                have = len(available_pmle_dates(sys_store))
+                print("   systematic %s: %d date(s) %s"
+                      % (sys_store, have,
+                         "- run estimate_systematic.py first" if not have else "ready"))
+            print("   this run was --report-only, which never fits anything.")
+            print("   to create it:")
+            print("     ./run_bg.sh poc/estimate_idiosyncratic.py --names %s"
+                  " --anchor %s --priors %s" % (name, a.anchor, a.priors))
+            if a.anchor == "hybrid":
+                print("   NOTE --anchor hybrid takes dALPHA/dETA1/dETA2 from")
+                print("   FULL_SAMPLE, so --priors %s only selects sigma, lambda"
+                      % a.priors)
+                print("   and pprob. For all six from that run, use --anchor rolling.")
             continue
         report(name, df)
         out = os.path.join(_REPO_ROOT, "poc",

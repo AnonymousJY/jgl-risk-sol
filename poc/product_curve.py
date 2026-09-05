@@ -165,11 +165,26 @@ def main():
     print("VERDICT")
     print("=" * 78)
 
-    print("\n1. CURVATURE  b_eff(-20%%) / b_eff(-1%%)")
+    n = len(df)
+    if n < 8:
+        print("\n  *** ONLY %d NAME(S). The statistics below cannot decide" % n)
+        print("      anything. Spearman rho on n=3 can only be +-1.0 or +-0.5,")
+        print("      and a CV over 3 points is noise. Worse, a sample drawn")
+        print("      from ONE SECTOR will show a tight ratio whatever the model")
+        print("      does, because those names share a business model. Use 15+")
+        print("      names across at least four sectors before reading test 3.")
+
+    curv = df.curv.median()
+    print("\n1. CURVATURE  b_eff(-20%) / b_eff(-1%)")
     print("   median %.3f   range %.3f - %.3f"
-          % (df.curv.median(), df.curv.min(), df.curv.max()))
-    print("   near 1.0 for every name  ->  the multiplier does not move;")
-    print("   the whole two-beta construction collapses to one beta.")
+          % (curv, df.curv.min(), df.curv.max()))
+    if curv < 1.10:
+        print("   FAIL - near 1.0, so the multiplier barely moves with shock")
+        print("   size and the two-beta construction collapses to one beta.")
+    else:
+        print("   PASS - the multiplier moves %.0f%% between a 1%% and a 20%%"
+              % (100 * (curv - 1)))
+        print("   shock, which no single beta reproduces.")
 
     print("\n2. SPREAD  gamma_i vs b_diff")
     print("   b_diff  median %.3f  range %.3f - %.3f"
@@ -181,12 +196,26 @@ def main():
     r = df.ratio.dropna()
     print("   median %.3f   sd %.3f   CV %.3f   range %.3f - %.3f"
           % (r.median(), r.std(), r.std() / abs(r.mean()), r.min(), r.max()))
+    cv = r.std() / abs(r.mean())
     if len(df) > 2:
         rho = df[["b_diff", "gamma"]].corr(method="spearman").iloc[0, 1]
-        print("   Spearman rank corr(b_diff, gamma) = %+.3f" % rho)
-        print("   near +1.0 with a tight CV means gamma_i just re-scales beta:")
-        print("   a client reproduces every number by multiplying their own")
-        print("   beta by %.2f, and there is no product." % r.median())
+        print("   Spearman rank corr(b_diff, gamma) = %+.3f%s"
+              % (rho, "   (meaningless at n=%d)" % len(df) if len(df) < 15 else ""))
+    crossed = ((r > 1).any() and (r < 1).any())
+    if crossed:
+        print("   PASS - the ratio CROSSES 1.0: some names gap harder than their")
+        print("   ordinary loading implies and others gap softer. An ordering")
+        print("   reversal cannot be reproduced by scaling beta by any constant.")
+    elif cv > 0.15:
+        print("   PASS - CV %.3f. The ratio varies enough across names that a"
+              % cv)
+        print("   single multiplier does not reproduce it.")
+    elif len(df) < 8:
+        print("   INCONCLUSIVE - CV %.3f, but see the sample warning above." % cv)
+    else:
+        print("   FAIL - CV %.3f. gamma_i is close to a fixed multiple of" % cv)
+        print("   b_diff, so a client reproduces every number by multiplying")
+        print("   their own beta by %.2f. No product." % r.median())
     print("""
    What you need to see: a CV well above ~0.15 and a rank correlation
    materially below 1. That is names re-ordering between ordinary and gap

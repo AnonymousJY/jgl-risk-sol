@@ -1,4 +1,4 @@
-"""
+r"""
 Translate a prescribed systematic shock into a name-level shock.
 
 The CAPM answer is one number: r_i = beta_i * r_market. This model says that

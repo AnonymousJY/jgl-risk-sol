@@ -619,3 +619,106 @@ class PathDependentContingentTwoAssets(PathDependentBase):
 #         if not isinstance(value, PayoffBridge):
 #             raise TypeError("arg 'forward_payoff' must be type PayoffBridge")
 #         self._forward_payoff = value
+
+class PathDependentWorstOfAutocallable(PathDependentBase):
+    """Worst-of autocallable note with memory coupons and a final barrier.
+
+    The fixings ARE the observation dates - quarterly or semi-annual on a
+    typical note - and each one is a potential cash flow, so
+    max_number_of_cash_flows() is the number of fixings. On any given path
+    exactly one flow carries the redemption and the rest carry coupons or zero.
+
+    On each date the WORST performer, S_i(t) / S_i(0), is compared against
+    three levels quoted as fractions of the initial fixing:
+
+      autocall_barriers[j]  at or above -> redeems early at par, path stops
+      coupon_barriers[j]    at or above -> the period coupon is paid; with
+                            memory=True any previously missed coupons are paid
+                            alongside it
+      protection_barrier    at maturity, and only if never called. At or above
+                            -> par. Below -> par is written down to the worst
+                            performer, so the holder takes its full downside
+
+    A daily-observed barrier needs no separate machinery: pass the daily grid
+    as fixing_times with autocall_barriers set to np.inf and coupon_amounts to
+    zero on the non-coupon dates, and set continuous_protection=True.
+    """
+
+    def __init__(
+            self,
+            fixing_times: NDArray[np.float64],
+            initial_levels: NDArray[np.float64],
+            autocall_barriers: NDArray[np.float64],
+            coupon_barriers: NDArray[np.float64],
+            coupon_amounts: NDArray[np.float64],
+            protection_barrier: np.float64,
+            notional: np.float64 = np.float64(1.),
+            memory: bool = True,
+            continuous_protection: bool = False
+    ) -> None:
+        initial_levels = np.asarray(initial_levels, dtype=np.float64).reshape(-1)
+        super().__init__(fixings=np.asarray(fixing_times, dtype=np.float64).reshape(-1),
+                         number_of_assets=np.uint64(initial_levels.shape[0]))
+        n = self.fixings.shape[0]
+        self.initial_levels = initial_levels
+        self.autocall_barriers = np.broadcast_to(np.asarray(autocall_barriers, dtype=np.float64).reshape(-1), (n,)).copy()
+        self.coupon_barriers = np.broadcast_to(np.asarray(coupon_barriers, dtype=np.float64).reshape(-1), (n,)).copy()
+        self.coupon_amounts = np.broadcast_to(np.asarray(coupon_amounts, dtype=np.float64).reshape(-1), (n,)).copy()
+        self.protection_barrier = np.float64(protection_barrier)
+        self.notional = np.float64(notional)
+        self.memory = bool(memory)
+        self.continuous_protection = bool(continuous_protection)
+        self.number_of_times = n
+
+    def __deepcopy__(self, memodict={}) -> PathDependentBase:
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memodict[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memodict))
+        return result
+
+    def max_number_of_cash_flows(self) -> np.uint64:
+        return np.uint64(self.fixings.shape[0])
+
+    def possible_cash_flow_times(self) -> NDArray[np.float64]:
+        return self.fixings.reshape((-1, 1))
+
+    def cash_flows(self, spot_values: NDArray[np.float64], generated_flows: List[CashFlow]) -> np.uint64:
+
+        n_paths = spot_values.shape[1]
+        perf = spot_values / self.initial_levels.reshape((-1, 1, 1))
+        worst = perf.min(axis=0)                                  # (n_paths, n_fixings)
+
+        breached = ((worst < self.protection_barrier).any(axis=1)
+                    if self.continuous_protection
+                    else worst[:, -1] < self.protection_barrier)
+
+        alive = np.ones(n_paths, dtype=bool)
+        unpaid = np.zeros(n_paths)
+        n = self.fixings.shape[0]
+
+        for j in range(n):
+            w = worst[:, j]
+
+            accrued = unpaid + self.coupon_amounts[j]
+            pays = alive & (w >= self.coupon_barriers[j])
+            coupon_now = np.where(pays, accrued if self.memory else self.coupon_amounts[j], 0.)
+            unpaid = np.where(pays, 0., accrued if self.memory else 0.)
+
+            called = alive & (w >= self.autocall_barriers[j])
+            if j == n - 1:
+                redeem = np.where(alive, np.where(called | ~breached, 1., w), 0.)
+            else:
+                redeem = np.where(called, 1., 0.)
+
+            # assign a fresh CashFlow into the slot rather than mutating the one
+            # the engine pre-allocated: the buffer is sized by
+            # max_number_of_cash_flows(), and its entries are placeholders.
+            generated_flows[j] = CashFlow(
+                amount=(self.notional * (redeem + coupon_now)).reshape((-1, 1)),
+                time_idx=np.uint64(j))
+
+            alive = alive & ~called
+
+        return np.uint64(n)

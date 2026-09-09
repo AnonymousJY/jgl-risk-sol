@@ -30,3 +30,7 @@ venv/
 # clone, diff and status slow for no benefit.
 Study/Estimated Parameters PMLE/
 !poc/systematic_params.csv
+
+# Monte-Carlo ES ladder cache written by poc/autocallable_stress.py.
+# Regenerable in a minute; one file per (vintage, alpha, horizon set).
+poc/_es_ladder_cache/

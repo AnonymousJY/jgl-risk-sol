@@ -49,6 +49,7 @@ that prior rather than against a measured quantity.
 import argparse
 import json
 import os
+import signal
 import sys
 import time
 
@@ -521,23 +522,24 @@ def main():
         print("\n  written to %s" % os.path.relpath(out, _REPO_ROOT))
 
 
-def _exit_now(code=0):
-    """Leave without waiting for interpreter shutdown.
+def _reap_forkserver():
+    """Kill the forkserver helper before we go.
 
-    A completed run hung for an hour AFTER main() returned: the last report
-    printed, the CSV was written, and the process would not exit. Nothing was
-    still computing. Interpreter shutdown has to join the forkserver process
-    and whatever native threads nutpie/numba left behind, and after dozens of
-    pool create/destroy cycles that can wedge - a hang with the work already
-    finished and safely on disk.
-
-    Every output is written and flushed before this point, so there is nothing
-    for a clean shutdown to do that matters. os._exit skips atexit handlers and
-    the GC entirely and returns control immediately.
+    os._exit skips atexit, which is the point - but multiprocessing's atexit
+    handler is also what shuts the forkserver helper down. Skipping it orphans
+    that helper, and an orphan holds the terminal's pty open, so the shell
+    never gets its prompt back even though this process is gone. That looked
+    exactly like the original hang and was the fix trading one symptom for
+    another. Kill it explicitly instead; it holds no state we need.
     """
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(code)
+    try:
+        from multiprocessing import forkserver
+        pid = getattr(forkserver._forkserver, "_forkserver_pid", None)
+        if pid:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+    except Exception:                                            # noqa: BLE001
+        pass                       # never let cleanup stop the exit
 
 
 def _exit_now(code=0):
@@ -560,6 +562,7 @@ def _exit_now(code=0):
         sys.stderr.flush()
     except Exception:                                            # noqa: BLE001
         pass
+    _reap_forkserver()
     os._exit(code)
 
 

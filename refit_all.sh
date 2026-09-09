@@ -31,7 +31,9 @@ LOG="refit_all_${STAMP}.log"
 say() { echo "$@" | tee -a "$LOG"; }
 run() {
     say "+ $*"
-    [ "$APPLY" = "1" ] && { "$@" >>"$LOG" 2>&1 || { say "  FAILED: $*"; exit 1; }; }
+    # < /dev/null so a child (or an orphaned forkserver helper) cannot keep
+    # the terminal open after the script itself has finished.
+    [ "$APPLY" = "1" ] && { "$@" >>"$LOG" 2>&1 < /dev/null || { say "  FAILED: $*"; exit 1; }; }
     return 0
 }
 

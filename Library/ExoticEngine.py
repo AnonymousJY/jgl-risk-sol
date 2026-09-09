@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 from numpy.typing import NDArray
 from typing import Union
@@ -110,12 +111,17 @@ class ExoticEngineBlackScholesMerton(ExoticEngine):
         for i in range(self.number_of_assets):
             for j in range(1, self.number_of_fixings):
                 volatility_sq = imp_volatility[i].integral_square(self.times[j-1], self.times[j])
-                self.drifts[:, :, j] = (
+                # Index the asset. These two lines used to assign to [:, :, j],
+                # so every asset ended up with the LAST asset's volatility and
+                # dividend yield on every fixing after the first - silently
+                # correct whenever all the vols happened to be equal, and
+                # silently wrong the moment they were not.
+                self.drifts[i, :, j] = (
                     risk_free_rate.integral(self.times[j-1], self.times[j]) -
                     dividend_yield[i].integral(self.times[j-1], self.times[j]) -
                     volatility_sq * .5
                 )
-                self.stddev[:, :, j] = np.sqrt(volatility_sq)
+                self.stddev[i, :, j] = np.sqrt(volatility_sq)
 
         self.log_spot[:, :, 0] = np.log(self.spot_price)
 
@@ -275,7 +281,9 @@ class ExoticEngineKimYi(ExoticEngine):
 
     @generator_ptr.setter
     def generator_ptr(self, generator_ptr: RandomBase) -> None:
-        self._generator_ptr = generator_ptr.clone()
+        # clone() is the C++ prototype idiom and was never written on the
+        # RandomBase hierarchy; __deepcopy__ is its Python equivalent there.
+        self._generator_ptr = copy.deepcopy(generator_ptr)
 
     @property
     def spot(self) -> NDArray[np.float64]:

@@ -34,3 +34,11 @@ Study/Estimated Parameters PMLE/
 # Monte-Carlo ES ladder cache written by poc/autocallable_stress.py.
 # Regenerable in a minute; one file per (vintage, alpha, horizon set).
 poc/_es_ladder_cache/
+
+# Archived PMLE stores. The store is moved aside rather than deleted when it
+# is rebuilt from scratch, so a drawer that produced a reported table stays
+# readable with its manifest. The live path below is ignored by name, so an
+# archive under any other name would otherwise show up as several thousand
+# untracked files and disable half the IDE.
+Study/PMLE __archived_*/
+Study/*__archived_*/

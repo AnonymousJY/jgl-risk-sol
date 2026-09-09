@@ -67,6 +67,29 @@ def _jump_posterior_1d(x, sg, lam, p, e1, e2, dt):
     return lam * dt * (Nu + Nd) / f, lam * dt * (Iu + Id) / f, f
 
 
+def _jump_mgf_posterior_1d(g, x, sg, lam, p, e1, e2, dt, f):
+    """E[e^(g Y) - 1 | x] at one day, closed form, same mixture as above.
+
+    E[Y|x] and E[e^(gY)-1|x] have to come from ONE posterior. Taking the first
+    from the closed form and the second from the multi-day quadrature left the
+    two disagreeing by 2.4e-5 in E[Y|x] - the quadrature carries the N >= 2
+    branches the O(dt) form drops - which b_diff amplified to 4e-5 in y.
+    The tilted integrals are the untilted ones with eta1 -> eta1 - g and
+    eta2 -> eta2 + g, keeping the density's own eta prefactors. Needs g < eta1.
+    """
+    if g >= e1:
+        raise ValueError("gamma_i = %.4f exceeds eta1 = %.4f; E[e^(gY)] diverges"
+                         % (g, e1))
+    s = sg * np.sqrt(dt)
+    s2 = s * s
+
+    def _A(q1, q2):
+        return (p * e1 * np.exp(0.5 * q1**2 * s2 - q1 * x) * norm.cdf((x - q1 * s2) / s)
+                + (1 - p) * e2 * np.exp(0.5 * q2**2 * s2 + q2 * x) * norm.cdf(-(x + q2 * s2) / s))
+
+    return lam * dt * (_A(e1 - g, e2 + g) - _A(e1, e2)) / f
+
+
 _GRID = None
 _CONV_CACHE = {}
 
@@ -92,7 +115,11 @@ def _conv_stack(sg, lam, p, e1, e2, al, T):
                   (1 - p) * q2 * np.exp(q2 * np.clip(Y, None, 0)))
     fY /= fY.sum() * 2e-4
     lamT = lam * T
-    nmax = min(40, int(max(6, poisson.ppf(1 - 1e-12, lamT) + 3)))
+    # Cap raised from 40: the tail probabilities in systematic_tail run out
+    # to multi-year horizons where lambda*T ~ 26, and truncating the jump
+    # count at 40 there loses ~0.3% of the mass - which is three times the
+    # tail probability being solved for.
+    nmax = min(80, int(max(6, poisson.ppf(1 - 1e-12, lamT) + 3)))
     conv = fY.copy(); dens = {1: conv}
     for n in range(2, nmax + 1):
         conv = fftconvolve(conv, fY, mode="same") * 2e-4
@@ -122,52 +149,287 @@ def _jump_posterior_h(x, sg, lam, p, e1, e2, al, T):
     return num / den, pj / den, den, sD, num2 / den
 
 
+def _posterior_mean(f, x, sg, lam, p, e1, e2, al, T):
+    """E[f(Y) | x] over the same jump-count mixture, for any f with f(0) = 0.
+
+    The n = 0 branch contributes nothing to the numerator because there is no
+    jump there, but it does enter the denominator - a move can always have been
+    pure diffusion, and at small x it usually was.
+    """
+    dens, nmax, lamT, sD = _conv_stack(sg, lam, p, e1, e2, al, T)
+    Y = _GRID
+    ker = norm.pdf((x - Y) / sD) / sD
+    den = poisson.pmf(0, lamT) * norm.pdf(x / sD) / sD
+    num = 0.0
+    for n in range(1, nmax + 1):
+        w = poisson.pmf(n, lamT)
+        if w < 1e-16:
+            continue
+        d = dens[n] * ker
+        den += w * np.sum(d) * 2e-4
+        num += w * np.sum(f(Y) * d) * 2e-4
+    return num / den if den > 0 else 0.0
+
 # ---------------------------------------------------------------------------
-def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0):
-    """Translate a systematic shock x into name i's expected shock."""
+# How long does a shock of size x need to be plausible?
+# ---------------------------------------------------------------------------
+def systematic_tail(x, sys_params, horizon_days):
+    """One-sided tail probability of the systematic factor over h days.
+
+    P(X_h <= x) for x < 0, P(X_h >= x) for x > 0, under the same OU-plus-Kou
+    mixture the posterior uses, so the horizon a shock is quoted at and the
+    channel split applied at that horizon come from one distribution.
+    """
+    sg, lam, p = sys_params["dSIGMA"], sys_params["dLAMB"], sys_params["dPPROB"]
+    e1, e2, al = sys_params["dETA1"], sys_params["dETA2"], sys_params["dALPHA"]
+    T = horizon_days / BASE_DAYS
+    dens, nmax, lamT, sD = _conv_stack(sg, lam, p, e1, e2, al, T)
+    Y = _GRID
+    # P(diffusion <= x - Y) pointwise, then integrated against the jump-sum law
+    cdf = norm.cdf((x - Y) / sD) if x < 0 else norm.sf((x - Y) / sD)
+    tail = poisson.pmf(0, lamT) * (norm.cdf(x / sD) if x < 0 else norm.sf(x / sD))
+    for n in range(1, nmax + 1):
+        w = poisson.pmf(n, lamT)
+        if w < 1e-18:
+            continue
+        tail += w * np.sum(dens[n] * cdf) * 2e-4
+    return float(tail)
+
+
+_ES_CACHE = {}
+
+
+def _density_h(sg, lam, p, e1, e2, al, T):
+    """Unconditional density of the h-day systematic move, on _GRID.
+
+    The jump-sum stack convolved with the OU-integrated diffusion. _GRID is
+    symmetric about zero, so mode="same" keeps the convolution centred.
+    """
+    dens, nmax, lamT, sD = _conv_stack(sg, lam, p, e1, e2, al, T)
+    ker = norm.pdf(_GRID / sD) / sD
+    f = poisson.pmf(0, lamT) * ker
+    for n in range(1, nmax + 1):
+        w = poisson.pmf(n, lamT)
+        if w < 1e-18:
+            continue
+        f = f + w * fftconvolve(dens[n], ker, mode="same") * 2e-4
+    return f
+
+
+def systematic_es(sys_params, horizon_days, alpha=0.025, side="left"):
+    """Expected shortfall of the systematic factor over h days.
+
+    side="left"  : ES at 97.5% confidence, E[X_h | X_h <= VaR_alpha] - the mean
+                   of the worst alpha of outcomes, which is FRTB's measure.
+    side="right" : its mirror, E[X_h | X_h >= VaR_(1-alpha)].
+
+    Returned as a signed return, so the left ES is negative and compares
+    directly against a prescribed down-shock.
+    """
+    key = (tuple(sorted(sys_params.items())), horizon_days, alpha, side)
+    if key in _ES_CACHE:
+        return _ES_CACHE[key]
+    sg, lam, p = sys_params["dSIGMA"], sys_params["dLAMB"], sys_params["dPPROB"]
+    e1, e2, al = sys_params["dETA1"], sys_params["dETA2"], sys_params["dALPHA"]
+    f = _density_h(sg, lam, p, e1, e2, al, horizon_days / BASE_DAYS)
+    w = f * 2e-4
+    w = w / w.sum()                      # renormalise off the grid truncation
+    if side == "left":
+        c = np.cumsum(w)
+        i = int(np.searchsorted(c, alpha))
+        es = float(np.sum(_GRID[:i + 1] * w[:i + 1]) / c[i])
+    else:
+        c = np.cumsum(w[::-1])
+        i = int(np.searchsorted(c, alpha))
+        es = float(np.sum(_GRID[::-1][:i + 1] * w[::-1][:i + 1]) / c[i])
+    _ES_CACHE[key] = es
+    return es
+
+
+def es_ladder_compounded(sys_params, alpha=0.025, ladder=None,
+                        n_paths=1_000_000, chunk=250_000, seed=20240114):
+    """ES ladder with the horizon built by COMPOUNDING daily relative moves.
+
+    systematic_es above aggregates by summing daily increments, which is what
+    the FFT stack gives for free. But the shocks are relative returns, so an
+    h-day move is the product
+
+        1 + X_h = prod_{k=1..h} (1 + r_k)
+
+    not the sum. The two agree to first order and separate fast: compounding is
+    LESS severe down (cross terms are positive when both moves are negative)
+    and MORE severe up, and it is bounded below by -100% by construction, which
+    the sum is not.
+
+    Compounding does not factor through the FFT, so this is Monte Carlo - but
+    one pass to the longest rung snapshots every shorter rung on the way, so
+    the whole ladder costs one simulation rather than eighteen.
+
+    The OU pull is kept: psi_k = phi psi_{k-1} + u_k with phi = 1 - alpha dt,
+    and the daily return is the INCREMENT r_k = psi_k - psi_{k-1}, so a
+    liquidity shock still decays instead of compounding forever.
+    """
+    ladder = tuple(ladder or HORIZON_LADDER)
+    sg, lam, p = sys_params["dSIGMA"], sys_params["dLAMB"], sys_params["dPPROB"]
+    e1, e2, al = sys_params["dETA1"], sys_params["dETA2"], sys_params["dALPHA"]
+    dt = 1.0 / BASE_DAYS
+    sd_d, lam_dt, phi = sg * np.sqrt(dt), lam * dt, 1.0 - al * dt
+    hmax = max(ladder)
+    rng = np.random.default_rng(seed)
+    snaps = {h: [] for h in ladder}
+
+    done = 0
+    while done < n_paths:
+        m = min(chunk, n_paths - done)
+        psi = np.zeros(m)
+        logp = np.zeros(m)
+        for k in range(1, hmax + 1):
+            nj = rng.poisson(lam_dt, m)
+            u = rng.standard_normal(m) * sd_d
+            top = int(nj.max())
+            for c in range(1, top + 1):
+                idx = nj >= c
+                cnt = int(idx.sum())
+                up = rng.random(cnt) < p
+                u[idx] += np.where(up, rng.exponential(1 / e1, cnt),
+                                   -rng.exponential(1 / e2, cnt))
+            psi_new = phi * psi + u
+            # guard only against the ~1e-11 tail where a single jump would take
+            # the daily move through -100%; log1p is undefined there
+            logp += np.log1p(np.maximum(psi_new - psi, -0.999))
+            psi = psi_new
+            if k in snaps:
+                snaps[k].append(np.expm1(logp).copy())
+        done += m
+
+    out = {}
+    for h in ladder:
+        x = np.sort(np.concatenate(snaps[h]))
+        kL = max(1, int(alpha * x.size))
+        out[h] = (float(x[:kL].mean()), float(x[-kL:].mean()))
+    return out
+
+
+# Coarse ladder, not a fine search: each rung costs its own FFT stack, and the
+# answer is only meaningful to the nearest bucket anyway.
+HORIZON_LADDER = (1, 2, 3, 5, 7, 10, 15, 20, 30, 45, 60, 90, 125, 189, 252,
+                  378, 504, 756)
+
+
+def model_horizon_from_ladder(x, es_by_h, ladder=None):
+    """Smallest rung whose ES reaches x, given a precomputed ES ladder."""
+    for h in (ladder or sorted(es_by_h)):
+        esL, esR = es_by_h[h]
+        if (esL <= x) if x < 0 else (esR >= x):
+            return h
+    return None
+
+
+def model_horizon(x, sys_params, alpha=0.025, ladder=HORIZON_LADDER):
+    """Smallest horizon at which the h-day expected shortfall reaches x.
+
+    A down-shock is compared against the 97.5% ES and an up-shock against its
+    2.5% mirror, so the horizon a shock is quoted at is set by the same measure
+    the trading book is capitalised on rather than by a bare quantile.
+
+    Returns None when even the longest rung has an ES short of x - the honest
+    answer for a large shock, because the OU diffusion saturates at
+    sigma/sqrt(2 alpha_OU) and everything past that has to be carried by the
+    jump tail, which does not thicken fast with horizon.
+    """
+    side = "left" if x < 0 else "right"
+    for h in ladder:
+        es = systematic_es(sys_params, h, alpha, side)
+        if (es <= x) if x < 0 else (es >= x):
+            return h
+    return None
+
+
+# ---------------------------------------------------------------------------
+def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
+               aggregate="compound"):
+    """Translate a systematic shock x into name i's expected shock.
+
+    Everything is in RELATIVE returns, because that is what Appendix B is in:
+    dS_i/S_i- is proxied by the relative return, and the Psi increment
+
+        dPsi_i = -alpha Psi_i dt + phi_i dW~ + d(sum (exp(gamma_i Y_j) - 1))
+
+    carries the jump as exp(gamma_i Y) - 1, a relative jump. So the ONE-DAY
+    translation is a sum in relative-return units and nothing is logged:
+
+        y_d = (m_i - alpha Psi_i) dt + b_diff E[D | x_d] + E[exp(gamma_i Y) - 1 | x_d]
+
+    A HORIZON move is not that formula with T in place of dt - Appendix B's
+    increment is one period. An h-day move is h daily moves COMPOUNDED, the
+    same aggregation used for the shock's own plausibility:
+
+        1 + x   = (1 + x_d)^h        going in
+        1 + y   = (1 + y_d)^h        coming out
+
+    which is what keeps the price positive without logging anything: a daily
+    relative move never approaches -100%, so neither does the product. Applying
+    the one-period formula directly at a 90-day horizon is what drove y through
+    -100% on the 2009 vintage, where b_diff reaches 2.54 - that was a misuse of
+    the increment, not a defect in it.
+
+    aggregate="horizon" applies the one-period formula at the full horizon
+    instead, for comparison.
+    """
     sg, lam, p = sys_params["dSIGMA"], sys_params["dLAMB"], sys_params["dPPROB"]
     e1, e2, al = sys_params["dETA1"], sys_params["dETA2"], sys_params["dALPHA"]
     B, K, R = idio_params["dBETAI"], idio_params["dKAPPAI"], idio_params["dRHOIX"]
     G, MU = idio_params["dGAMMAI"], idio_params["dMUI"]
 
-    T = horizon_days / BASE_DAYS
     b_diff = B + K * R / sg
     m_i = MU + 0.5 * (sg * B)**2 - sg * B * K * R
+    h = max(1, int(horizon_days))
 
-    if horizon_days == 1:
+    if aggregate == "compound":
+        # per-day systematic move that compounds to x over h days
+        xs = float(np.expm1(np.log1p(x) / h))
+        T = 1.0 / BASE_DAYS
+    else:
+        xs, T = float(x), h / BASE_DAYS
+
+    if aggregate == "compound" or h == 1:
         dt = 1.0 / BASE_DAYS
-        EY, pj, _ = _jump_posterior_1d(x, sg, lam, p, e1, e2, dt)
+        EY, pj, f1 = _jump_posterior_1d(xs, sg, lam, p, e1, e2, dt)
         sD = sg * np.sqrt(dt)
-        # second moment by the same quadrature the h>1 path uses
         gy = np.arange(-1.0, 1.0, 2e-4)
         fY = np.where(gy >= 0, p * e1 * np.exp(-e1 * np.clip(gy, 0, None)),
                       (1 - p) * e2 * np.exp(e2 * np.clip(gy, None, 0)))
-        kr = norm.pdf((x - gy) / sD) / sD
+        kr = norm.pdf((xs - gy) / sD) / sD
         dj = lam * dt * np.sum(fY * kr) * 2e-4
-        d0 = (1 - lam * dt) * norm.pdf(x / sD) / sD
+        d0 = (1 - lam * dt) * norm.pdf(xs / sD) / sD
         EY2 = lam * dt * np.sum(gy * gy * fY * kr) * 2e-4 / (dj + d0)
+        EJ = _jump_mgf_posterior_1d(G, xs, sg, lam, p, e1, e2, dt, f1)
     else:
-        EY, pj, _, sD, EY2 = _jump_posterior_h(x, sg, lam, p, e1, e2, al, T)
+        EY, pj, _, sD, EY2 = _jump_posterior_h(xs, sg, lam, p, e1, e2, al, T)
+        EJ = _posterior_mean(lambda yy: np.exp(G * yy) - 1.0,
+                             xs, sg, lam, p, e1, e2, al, T)
 
-    ED = x - EY
-    w = EY / x if x else 0.0
-    b_eff = b_diff + (G - b_diff) * w
+    ED = xs - EY
     drift = (m_i - al * psi_i) * T
-    y = drift + b_diff * ED + G * EY
+    y_step = drift + b_diff * ED + EJ                 # one period, relative
+    if aggregate == "compound":
+        y = float(np.expm1(h * np.log1p(max(y_step, -0.999999))))
+    else:
+        y = y_step
 
-    # Dispersion has two parts and BOTH are needed at every horizon:
-    #   orthogonal   kappa_i^2 (1 - rho^2) : idiosyncratic noise, no x dependence
-    #   split        (gamma_i - b_diff)^2 Var(Y|x) : uncertainty about WHICH
-    #                channel produced the move. This is the term that peaks at
-    #                the crossover, where the move could plausibly be either.
-    # An earlier version computed the split term only at h=1, which made the
-    # multi-day sd constant across x - it lost exactly the feature it exists to
-    # show.
-    vfac = (1 - np.exp(-2 * al * T)) / (2 * al) if al > 0 else T
+    w = EY / xs if xs else 0.0
+    b_eff = (b_diff * ED + EJ) / xs if xs else b_diff
+
+    # Dispersion: idiosyncratic noise, plus the uncertainty about WHICH channel
+    # produced the move - the term that peaks at the crossover. Quoted at the
+    # full horizon.
+    Th = h / BASE_DAYS
+    vfac = (1 - np.exp(-2 * al * Th)) / (2 * al) if al > 0 else Th
     var = K**2 * (1 - R**2) * vfac
-    var += (G - b_diff)**2 * max(0.0, EY2 - EY**2)
+    var += (G - b_diff)**2 * max(0.0, EY2 - EY**2) * (h if aggregate == "compound" else 1)
 
-    return dict(y=y, b_diff=b_diff, gamma=G, b_eff=b_eff, EY=EY, ED=ED,
+    return dict(y=y, y_step=y_step, x_step=xs, b_diff=b_diff, gamma=G,
+                b_eff=b_eff, EY=EY, EJ=EJ, ED=ED,
                 p_jump=pj, drift=drift, sd=float(np.sqrt(var)),
                 sigma_h=sD, m_i=m_i, w=w)
 

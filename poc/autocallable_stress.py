@@ -35,76 +35,80 @@ from poc.shock_to_name import (name_shock, model_horizon,           # noqa: E402
 
 C = lambda v: ParametersConstant(np.array(float(v)))
 
-# Fitted P-measure idiosyncratic parameters, --anchor rolling, full-sample
-# means over 245 valuation dates.
+# Fitted P-measure parameters. BOTH blocks are the TIGHT-PRIOR (skew-tight)
+# arm, read from the 10,000-draw drawers on 2026-09-09:
 #
-# WARNING: these are still the WIDE-prior (skew) arm. estimate_idiosyncratic.py
-# reported them as conditioned on the systematic drawer ^SPX__skew_4af58b62,
-# and the idiosyncratic block is filtered on the systematic fit, so it has to
-# be re-run against ^SPX__skewtight_913f43b7 before these numbers belong beside
-# the skew-tight SYS_P below:
+#   ^SPX__skewtight_913f43b7__draws10000              245 monthly dates
+#   {C,BAC,JPM}__rolling__skewtight_913f43b7__draws10000
 #
-#   python poc/estimate_idiosyncratic.py --names C,BAC,JPM \
-#       --priors skew-tight --anchor rolling
+# The name block is --anchor rolling, so each name is conditioned on the
+# systematic fit for the SAME valuation date, out of the systematic drawer
+# named above. gamma_i is a jump scale RELATIVE to that drawer's eta, so the
+# two blocks are only meaningful together; mixing arms silently rescales every
+# jump. They now match.
 #
-# ES(h) and h* do NOT depend on this block - they are functions of SYS_P alone
-# - so those columns are already on the tight arm. The per-name shocks and the
-# note value are not.
+# WHAT THIS REPLACED, and why it matters. The 2009 and covid systematic rows
+# were previously transcribed from a by-year table that turned out to have been
+# generated from ^SPX_prebugfix__draws10000 - a superseded daily run, not the
+# tight-prior arm at all. The differences are not cosmetic:
+#
+#            was (prebugfix)        is (skew-tight)
+#   2009     alpha 0.7210           0.4971
+#            eta1  50.4047          39.8935
+#            pprob 0.3875           0.5529
+#   covid    sigma 0.2436           0.1354
+#            lambda 12.7128         27.8810
+#
+# The covid row is the one that changes the story: under the tight-prior arm
+# 2020 is a JUMP-FREQUENCY regime - lambda near 28 against a full-sample 8.8,
+# with sigma at roughly half its full-sample level - not the high-diffusion
+# year the prebugfix numbers described. Anything concluded from the old covid
+# figures has to be re-derived, not carried across.
+#
+# The full row was never wrong. It was marked a placeholder on the assumption
+# that the tight-prior arm had no full-sample line; it does, and the numbers
+# agreed to four decimals all along.
+#
+# ON ALPHA. It reads 0.4898 / 0.4971 / 0.4875 across three very different
+# regimes, which is not the data speaking. The tight prior is Beta(9.5, 9.5),
+# prior mean 0.5 and prior sd 0.1118, and the fitted posterior sd is 0.1106 -
+# 99% of the prior width retained, so a 252-day window updates alpha almost not
+# at all. The wide arm behaves the same way (Beta(2,2), prior sd 0.2236,
+# posterior 0.2052). Treat alpha as an assumption, and check any result that
+# leans on it against a different value. Contrast sigma, which travels 43
+# posterior sd across the sample: that one the data knows.
 NAMES = ["C", "BAC", "JPM"]
 
-# Two vintages of the same rolling fit, --anchor rolling, 245 valuation dates.
+# Three vintages of the same rolling fit:
 #
-#   full   full-sample means, 2007-01-01 to 2026-08-21
-#   2009   the 2009 yearly means - the GFC vintage
-#   covid  the 2020 yearly means
-#
-# WARNING: the idiosyncratic block is the WIDE-prior (skew) arm in both
-# vintages. estimate_idiosyncratic.py reported it as conditioned on the
-# systematic drawer ^SPX__skew_4af58b62, and it has to be re-run against
-# ^SPX__skewtight_913f43b7 before it belongs beside the skew-tight systematic
-# numbers below:
-#
-#   python poc/estimate_idiosyncratic.py --names C,BAC,JPM \
-#       --priors skew-tight --anchor rolling
+#   full   full-sample means, 2007-01-01 to 2026-08-31   (245 dates)
+#   2009   calendar 2009 means - the GFC vintage          (13 dates)
+#   covid  calendar 2020 means                            (12 dates)
 IDIO_BY_VINTAGE = {
     "full": {
-        "C":   dict(dBETAI=1.3083, dKAPPAI=0.2019, dGAMMAI=2.2925, dRHOIX=0.2944, dMUI=0.0263),
-        "BAC": dict(dBETAI=1.2775, dKAPPAI=0.1942, dGAMMAI=2.2656, dRHOIX=0.2913, dMUI=0.0668),
-        "JPM": dict(dBETAI=1.1107, dKAPPAI=0.1597, dGAMMAI=2.0380, dRHOIX=0.2799, dMUI=0.1326),
+        "C":   dict(dBETAI=1.3090, dKAPPAI=0.2017, dGAMMAI=2.2696, dRHOIX=0.2941, dMUI=0.0182),
+        "BAC": dict(dBETAI=1.2778, dKAPPAI=0.1942, dGAMMAI=2.2303, dRHOIX=0.2907, dMUI=0.0591),
+        "JPM": dict(dBETAI=1.1120, dKAPPAI=0.1597, dGAMMAI=2.0077, dRHOIX=0.2784, dMUI=0.1251),
     },
     "2009": {
-        "C":   dict(dBETAI=1.7916, dKAPPAI=0.6848, dGAMMAI=4.9683, dRHOIX=0.3854, dMUI=-0.6181),
-        "BAC": dict(dBETAI=1.8109, dKAPPAI=0.6672, dGAMMAI=4.2540, dRHOIX=0.3698, dMUI=-0.3852),
-        "JPM": dict(dBETAI=1.4747, dKAPPAI=0.4813, dGAMMAI=3.3975, dRHOIX=0.3233, dMUI=-0.1137),
+        "C":   dict(dBETAI=1.7852, dKAPPAI=0.6795, dGAMMAI=5.6398, dRHOIX=0.3858, dMUI=-0.6474),
+        "BAC": dict(dBETAI=1.8088, dKAPPAI=0.6631, dGAMMAI=4.8120, dRHOIX=0.3667, dMUI=-0.4093),
+        "JPM": dict(dBETAI=1.4657, dKAPPAI=0.4796, dGAMMAI=3.8967, dRHOIX=0.3242, dMUI=-0.1392),
     },
     "covid": {
-        "C":   dict(dBETAI=1.4323, dKAPPAI=0.1966, dGAMMAI=1.9665, dRHOIX=0.2969, dMUI=-0.0933),
-        "BAC": dict(dBETAI=1.3578, dKAPPAI=0.1832, dGAMMAI=1.6716, dRHOIX=0.2933, dMUI=0.1028),
-        "JPM": dict(dBETAI=1.2130, dKAPPAI=0.1573, dGAMMAI=1.6219, dRHOIX=0.2861, dMUI=0.0949),
+        "C":   dict(dBETAI=1.4288, dKAPPAI=0.1970, dGAMMAI=2.0685, dRHOIX=0.2994, dMUI=-0.1395),
+        "BAC": dict(dBETAI=1.3662, dKAPPAI=0.1827, dGAMMAI=1.7361, dRHOIX=0.2944, dMUI=0.0595),
+        "JPM": dict(dBETAI=1.2113, dKAPPAI=0.1577, dGAMMAI=1.7043, dRHOIX=0.2843, dMUI=0.0597),
     },
 }
 
-# Systematic, TIGHT-PRIOR arm, by-year MEANS, transcribed from the by-year
-# table supplied on 2026-09-07.
-#
-# These REPLACE an earlier set that was read off a different arm's by-year
-# table. The differences were not small - 2020 sigma 0.1353 against 0.2436 and
-# lambda 27.90 against 12.71 - and any conclusion drawn from those numbers has
-# to be re-derived rather than carried over.
-#
-# NOTE the eta1 column: 50.40 in every year, with an interval width of about
-# 27.9. That is a parameter sitting on its prior, not one the data has moved.
-# eta2 does move (25.11 in 2009 against 24.46 in 2020), and so do sigma and
-# lambda. Read the four accordingly.
 SYS_BY_VINTAGE = {
-    # PLACEHOLDER: still the previous arm's full-sample means. The by-year
-    # table has no full-sample row, so this one has not been replaced yet.
-    "full": dict(dALPHA=0.4896, dSIGMA=0.1512, dPPROB=0.5652,
-                 dLAMB=8.7637, dETA1=50.2901, dETA2=26.6195),
-    "2009": dict(dALPHA=0.7210, dSIGMA=0.3915, dPPROB=0.3875,
-                 dLAMB=12.8912, dETA1=50.4047, dETA2=25.1108),
-    "covid": dict(dALPHA=0.7143, dSIGMA=0.2436, dPPROB=0.3693,
-                  dLAMB=12.7128, dETA1=50.4359, dETA2=24.4581),
+    "full": dict(dALPHA=0.4898, dSIGMA=0.1512, dPPROB=0.5652,
+                 dLAMB=8.7657, dETA1=50.2986, dETA2=26.6165),
+    "2009": dict(dALPHA=0.4971, dSIGMA=0.3517, dPPROB=0.5529,
+                 dLAMB=13.0124, dETA1=39.8935, dETA2=24.4023),
+    "covid": dict(dALPHA=0.4875, dSIGMA=0.1354, dPPROB=0.5137,
+                  dLAMB=27.8810, dETA1=40.2509, dETA2=26.5051),
 }
 
 VINTAGE = os.environ.get("STRESS_VINTAGE", "full")
@@ -434,14 +438,10 @@ def main():
         print("  both from the P-measure estimates. No option data, so no Q")
         print("  jump block is calibrated and none is used.")
     print()
-    print("  !! MIXED ARMS. SYS_P is skew-tight; the per-name block below is")
-    print("     still skew (wide), because the idiosyncratic fit is conditioned")
-    print("     on the systematic drawer and has not been re-run. ES(h) and h*")
-    print("     are functions of SYS_P alone and ARE on the tight arm. Everything")
-    print("     else - y_i, phi_i, R_ij, the note, the put and both greeks -")
-    print("     reads the idiosyncratic block, so it is not.")
-    print("     Fix: python poc/estimate_idiosyncratic.py --names C,BAC,JPM \\")
-    print("               --priors skew-tight --anchor rolling")
+    print("  Parameters: skew-tight arm on BOTH blocks, 10,000-draw drawers,")
+    print("  the name fits conditioned on the same systematic drawer they are")
+    print("  quoted beside. alpha sits on its prior in every vintage and is an")
+    print("  assumption, not an estimate - see the note in the header.")
 
     # The ES ladder has to carry every prescribed h as well as its own rungs,
     # since ES(h) is reported at the horizon the shock is actually applied over.

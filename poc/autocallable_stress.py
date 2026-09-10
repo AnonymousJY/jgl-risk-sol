@@ -15,9 +15,12 @@ so treat these as delta-space numbers until the option history is in.
 """
 import argparse
 import os
+import glob
+import re
 import sys
 
 import numpy as np
+import pandas as pd
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -156,6 +159,72 @@ def set_vintage(v):
     SYS_Q.update(sigma=SYS_P["dSIGMA"], pprob=SYS_P["dPPROB"],
                  lamb=SYS_P["dLAMB"], eta1=SYS_P["dETA1"],
                  eta2=SYS_P["dETA2"], alpha=SYS_P["dALPHA"])
+
+
+
+# ----------------------------------------------------------------------------
+# Reading a vintage straight out of the drawers.
+#
+# The blocks above are transcribed numbers, and transcription is exactly how
+# the 2009 and covid rows spent days carrying values from a superseded
+# pre-bugfix drawer. --as-of removes the step: it reads the parameters for one
+# valuation date out of the store and prints which drawer and which date they
+# came from, so the provenance is in the output rather than in a comment.
+# ----------------------------------------------------------------------------
+ARM = "skewtight_913f43b7"
+
+
+def _drawer_dates(folder):
+    out = {}
+    for f in glob.glob(os.path.join(folder, "*.csv")):
+        m = re.search(r"_(\d{8})\.csv$", os.path.basename(f))
+        if m:
+            out[m.group(1)] = f
+    return out
+
+
+def _asof_row(drawer, date):
+    """The row for `date`, or the latest date at or before it.
+
+    As-of rather than exact: the grid has gaps wherever a fit failed, and
+    silently pricing off a date the caller did not ask for is only safe if the
+    date actually used is reported. main() prints it.
+    """
+    from Library.DataAccess import PMLE_DIR
+    folder = os.path.join(PMLE_DIR, drawer)
+    if not os.path.isdir(folder):
+        raise SystemExit("no drawer %s in %s" % (drawer, PMLE_DIR))
+    dates = _drawer_dates(folder)
+    if not dates:
+        raise SystemExit("drawer %s holds no dated CSVs" % drawer)
+    usable = sorted(d for d in dates if d <= date)
+    if not usable:
+        raise SystemExit("drawer %s has nothing at or before %s (earliest %s)"
+                         % (drawer, date, min(dates)))
+    got = usable[-1]
+    return got, pd.read_csv(dates[got]).iloc[0]
+
+
+def set_asof(date, arm=ARM):
+    """Point the parameter blocks at one valuation date in the store."""
+    global IDIO, SYS_P, SYS_Q, VINTAGE
+    if date in ("latest", "today"):
+        date = "99999999"
+    sys_date, row = _asof_row("^SPX__%s" % arm, date)
+    SYS_P = {k: float(row[k]) for k in
+             ("dALPHA", "dSIGMA", "dPPROB", "dLAMB", "dETA1", "dETA2")}
+    idio, name_dates = {}, {}
+    for n in NAMES:
+        d, r = _asof_row("%s__rolling__%s" % (n, arm), date)
+        name_dates[n] = d
+        idio[n] = {k: float(r[k]) for k in
+                   ("dBETAI", "dKAPPAI", "dGAMMAI", "dRHOIX", "dMUI")}
+    IDIO = idio
+    VINTAGE = "as-of %s" % sys_date
+    SYS_Q.update(sigma=SYS_P["dSIGMA"], pprob=SYS_P["dPPROB"],
+                 lamb=SYS_P["dLAMB"], eta1=SYS_P["dETA1"],
+                 eta2=SYS_P["dETA2"], alpha=SYS_P["dALPHA"])
+    return sys_date, name_dates
 
 
 # -50% to +20% in 5% steps. The range is deliberately asymmetric: with the
@@ -438,6 +507,14 @@ def main():
                          "instead of routing it through the model's "
                          "systematic -> name translation")
     ap.set_defaults(translate=True)
+    ap.add_argument("--as-of", default=None,
+                    help="read the parameters for ONE valuation date out of "
+                         "the drawers (YYYYMMDD, or 'latest') instead of using "
+                         "a transcribed vintage. As-of: the latest date at or "
+                         "before the one asked for is used, and reported.")
+    ap.add_argument("--arm", default=ARM,
+                    help="drawer suffix to read with --as-of "
+                         "(default %(default)s)")
     ap.add_argument("--vintage", choices=tuple(IDIO_BY_VINTAGE), default="full",
                     help="which vintage of the rolling fit to use: full-sample "
                          "means, or the 2009 yearly means")
@@ -470,7 +547,12 @@ def main():
                     help="expected-shortfall level defining h*: 0.025 is the "
                          "97.5%% ES for down-shocks and its 2.5%% mirror for up")
     a = ap.parse_args()
-    set_vintage(a.vintage)
+    asof_note = None
+    if a.as_of:
+        sd, nd = set_asof(a.as_of, a.arm)
+        asof_note = (sd, nd, a.arm)
+    else:
+        set_vintage(a.vintage)
     if a.iv_strike is None:
         a.iv_strike = 100.0 * a.protection
     if a.iv_expiry is None:
@@ -487,18 +569,28 @@ def main():
           % (a.periods / 4, 100 * a.autocall, 100 * a.coupon,
              100 * a.coupon_barrier, 100 * a.protection))
     print("  %s paths, engine %s, parameter vintage %s"
-          % (f"{a.paths:,}", a.engine, a.vintage))
+          % (f"{a.paths:,}", a.engine, VINTAGE))
     if a.engine == "bsm":
         print("  Priced under Black-Scholes at the model's own diffusion")
         print("  parameters: phi_i is the volatility, R_ij the correlation,")
         print("  both from the P-measure estimates. No option data, so no Q")
         print("  jump block is calibrated and none is used.")
     print()
-    print("  Parameters: skew-tight arm on BOTH blocks, daily store rebuilt")
-    print("  2026-09-09, name fits conditioned on the same systematic drawer.")
-    print("  gfc = dates whose 252d window spans Lehman to the 2009-03-09")
-    print("  trough; covid = dates whose window holds the 2020-02-20/04-07")
-    print("  crash. alpha sits on its prior in every vintage - an assumption.")
+    if asof_note:
+        sd, nd, arm = asof_note
+        print("  ONE valuation date, read from the drawers - not a transcribed")
+        print("  vintage, and not an average over a window.")
+        print("    systematic  ^SPX__%s  %s" % (arm, sd))
+        for n in NAMES:
+            print("    %-11s %s__rolling__%s  %s"
+                  % (n, n, arm, nd[n])
+                  + ("   <- not the requested date" if nd[n] != sd else ""))
+    else:
+        print("  Parameters: skew-tight arm on BOTH blocks, daily store rebuilt")
+        print("  2026-09-09, name fits conditioned on the same systematic drawer.")
+        print("  gfc = dates whose 252d window spans Lehman to the 2009-03-09")
+        print("  trough; covid = dates whose window holds the 2020-02-20/04-07")
+        print("  crash. alpha sits on its prior in every vintage - an assumption.")
 
     # The ES ladder has to carry every prescribed h as well as its own rungs,
     # since ES(h) is reported at the horizon the shock is actually applied over.

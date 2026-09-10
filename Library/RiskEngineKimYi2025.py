@@ -353,6 +353,19 @@ SYSTEMATIC_PRIORS_ALPHA_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
 SYSTEMATIC_PRIORS_ALPHA_FLAT["alpha_rv"] = (
     "Beta", {"alpha": 1.0, "beta": 1.0})                     # mean 0.500 sd 0.289
 
+#   alpha-tiny  Uniform(0, 0.02), mean 0.010 sd 0.0058. The only arm whose
+#               SUPPORT EXCLUDES the full-sample value of 0.036, so it can
+#               fail in a way the others cannot: if the likelihood pulls at
+#               all toward 0.036 the posterior piles against the 0.02
+#               boundary instead of sitting at the prior mean. A posterior at
+#               0.010 means the likelihood is flat even down here, where the
+#               AR coefficient is 1 - 0.01/252 and Psi is a random walk in all
+#               but name.
+SYSTEMATIC_PRIORS_ALPHA_TINY = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_ALPHA_TINY["alpha_rv"] = (
+    "Uniform", {"lower": 0.0, "upper": 0.02})                # mean 0.010 sd 0.0058
+
+
 SYSTEMATIC_PRIORS_ALPHA_LOW = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
 SYSTEMATIC_PRIORS_ALPHA_LOW["alpha_rv"] = (
     "Beta", {"alpha": 6.0, "beta": 14.0})                    # mean 0.300 sd 0.100
@@ -370,13 +383,15 @@ SYSTEMATIC_PRIOR_SETS = {
     "skew-tight": SYSTEMATIC_PRIORS_SKEW_TIGHT,
     "alpha-flat": SYSTEMATIC_PRIORS_ALPHA_FLAT,
     "alpha-low":  SYSTEMATIC_PRIORS_ALPHA_LOW,
+    "alpha-tiny": SYSTEMATIC_PRIORS_ALPHA_TINY,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
 # replication files under Study/Estimated Parameters PMLE/^SPX/ stay addressable.
 STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
                 "skew": "__skew", "skew-tight": "__skewtight",
-                "alpha-flat": "__alphaflat", "alpha-low": "__alphalow"}
+                "alpha-flat": "__alphaflat", "alpha-low": "__alphalow",
+                "alpha-tiny": "__alphatiny"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.

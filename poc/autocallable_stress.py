@@ -97,6 +97,19 @@ C = lambda v: ParametersConstant(np.array(float(v)))
 # sigma, which travels 43 posterior sd across the sample.
 NAMES = ["C", "BAC", "JPM"]
 
+
+def _pairs(names):
+    """Upper-triangle order over names - the order total_diffusion_corr emits."""
+    return ["%s-%s" % (names[i], names[j])
+            for i in range(len(names)) for j in range(i + 1, len(names))]
+
+
+def set_names(names):
+    """Repoint the basket. NAMES and PAIRS are read by name everywhere else."""
+    global NAMES, PAIRS
+    NAMES = list(names)
+    PAIRS = _pairs(NAMES)
+
 IDIO_BY_VINTAGE = {
     "full": {
         "C":   dict(dBETAI=1.3090, dKAPPAI=0.2020, dGAMMAI=2.2737, dRHOIX=0.2951, dMUI=0.0173),
@@ -203,6 +216,45 @@ def _asof_row(drawer, date):
                          % (drawer, date, min(dates)))
     got = usable[-1]
     return got, pd.read_csv(dates[got]).iloc[0]
+
+
+def _window_mean(drawer, beg, end, cols):
+    """Mean of `cols` over every dated CSV in [beg, end]. Returns (n, dict)."""
+    from Library.DataAccess import PMLE_DIR
+    folder = os.path.join(PMLE_DIR, drawer)
+    if not os.path.isdir(folder):
+        raise SystemExit("no drawer %s in %s" % (drawer, PMLE_DIR))
+    files = [f for d, f in sorted(_drawer_dates(folder).items())
+             if beg <= d <= end]
+    if not files:
+        raise SystemExit("drawer %s has no dates in %s..%s" % (drawer, beg, end))
+    df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+    return len(files), {c: float(df[c].mean()) for c in cols}
+
+
+def set_window(beg, end, arm=ARM):
+    """A vintage averaged over a date window, read from the drawers.
+
+    Same idea as --as-of but over a range: it is what the transcribed gfc and
+    covid blocks are, computed rather than copied. That matters for a basket
+    the blocks do not cover - the point of --names - and it removes the
+    transcription step that put a superseded drawer's numbers into the crisis
+    vintages for days.
+    """
+    global IDIO, SYS_P, SYS_Q, VINTAGE
+    sysc = ("dALPHA", "dSIGMA", "dPPROB", "dLAMB", "dETA1", "dETA2")
+    idic = ("dBETAI", "dKAPPAI", "dGAMMAI", "dRHOIX", "dMUI")
+    nsys, SYS_P = _window_mean("^SPX__%s" % arm, beg, end, sysc)
+    counts, idio = {}, {}
+    for n in NAMES:
+        counts[n], idio[n] = _window_mean("%s__rolling__%s" % (n, arm),
+                                          beg, end, idic)
+    IDIO = idio
+    VINTAGE = "window %s-%s" % (beg, end)
+    SYS_Q.update(sigma=SYS_P["dSIGMA"], pprob=SYS_P["dPPROB"],
+                 lamb=SYS_P["dLAMB"], eta1=SYS_P["dETA1"],
+                 eta2=SYS_P["dETA2"], alpha=SYS_P["dALPHA"])
+    return nsys, counts
 
 
 def set_asof(date, arm=ARM):
@@ -392,7 +444,7 @@ def put_value(spots, initial, args, seed=20240114, vol_shift=0.0,
     return protected - actual, actual
 
 
-PAIRS = ["C-BAC", "C-JPM", "BAC-JPM"]      # numpy triu order over NAMES
+PAIRS = _pairs(NAMES)                      # numpy triu order over NAMES
 
 
 def put_greeks(spots, initial, args, phibar=None, seed=20240114):
@@ -554,6 +606,14 @@ def main():
                          "instead of routing it through the model's "
                          "systematic -> name translation")
     ap.set_defaults(translate=True)
+    ap.add_argument("--names", default=None,
+                    help="comma-separated basket, e.g. CCL,RCL,LUV. Needs "
+                         "--as-of or --window, since the transcribed vintages "
+                         "only cover C,BAC,JPM.")
+    ap.add_argument("--window", default=None, metavar="BEG:END",
+                    help="vintage averaged over a date window read from the "
+                         "drawers, e.g. 20090309:20090915. Works for any "
+                         "basket; no transcription.")
     ap.add_argument("--color", choices=("auto", "always", "never"),
                     default="auto",
                     help="conditional colour in the tables: sign on the P&L "
@@ -600,8 +660,20 @@ def main():
                          "97.5%% ES for down-shocks and its 2.5%% mirror for up")
     a = ap.parse_args()
     _use_color(a.color)
+    if a.names:
+        set_names([x.strip() for x in a.names.split(",") if x.strip()])
+        if not a.as_of and not a.window:
+            raise SystemExit(
+                "--names needs --as-of or --window: the transcribed vintages "
+                "cover only %s." % ",".join(sorted(IDIO_BY_VINTAGE["full"])))
     asof_note = None
-    if a.as_of:
+    win_note = None
+    if a.window:
+        beg, _, end = a.window.partition(":")
+        if not end:
+            raise SystemExit("--window wants BEG:END, e.g. 20090309:20090915")
+        win_note = (beg, end, a.arm) + set_window(beg, end, a.arm)
+    elif a.as_of:
         sd, nd = set_asof(a.as_of, a.arm)
         asof_note = (sd, nd, a.arm)
     else:
@@ -611,7 +683,7 @@ def main():
     if a.iv_expiry is None:
         a.iv_expiry = a.periods / 4.0
 
-    spot0 = np.array([100., 100., 100.])
+    spot0 = np.full(len(NAMES), 100.)
     rij, ph = total_diffusion_corr(SYS_Q["sigma"])
 
     print("=" * 74)
@@ -629,7 +701,18 @@ def main():
         print("  both from the P-measure estimates. No option data, so no Q")
         print("  jump block is calibrated and none is used.")
     print()
-    if asof_note:
+    if win_note:
+        beg, end, arm, nsys, counts = win_note
+        print("  Vintage AVERAGED over a window, read from the drawers -")
+        print("  computed, not transcribed.")
+        print("    window      %s .. %s" % (beg, end))
+        print("    systematic  ^SPX__%s  %d dates" % (arm, nsys))
+        for n in NAMES:
+            print("    %-11s %s__rolling__%s  %d dates"
+                  % (n, n, arm, counts[n])
+                  + ("   <- fewer than the systematic fit" if counts[n] < nsys
+                     else ""))
+    elif asof_note:
         sd, nd, arm = asof_note
         print("  ONE valuation date, read from the drawers - not a transcribed")
         print("  vintage, and not an average over a window.")
@@ -715,11 +798,18 @@ def main():
     print("  the other two held; corr_k is +10 bps on THAT pair's R_ij, the")
     print("  other two pairs held. dl_i is the issuer's P&L for a further")
     print("  +1% on THAT name from the shocked spot, the other two held.")
-    print("  %6s %8s %8s %8s %13s %12s %13s %9s %9s %9s %9s %9s %9s %8s %8s %8s"
-          % ("x", "y_C", "y_BAC", "y_JPM", "note", "put", "put P&L",
-             "dl_C", "dl_BAC", "dl_JPM",
-             "vg_C", "vg_BAC", "vg_JPM", "cr_CB", "cr_CJ", "cr_BJ"))
-    print("  " + "-" * 172)
+    def _abbr(pair):
+        i, j = pair.split("-")
+        return (i[:3] + j[:3])[:6]
+
+    cols = ([("x", 6)] + [("y_" + n, 8) for n in NAMES]
+            + [("note", 13), ("put", 12), ("put P&L", 13)]
+            + [("dl_" + n, 9) for n in NAMES]
+            + [("vg_" + n, 9) for n in NAMES]
+            + [("cr_" + _abbr(p), 9) for p in PAIRS])
+    hfmt = "  " + " ".join("%%%ds" % w for _, w in cols)
+    print(hfmt % tuple(h for h, _ in cols))
+    print("  " + "-" * (sum(w for _, w in cols) + len(cols) - 1))
     # Collected before printing, because the heat map needs each column's
     # maximum and the rows are what produce it.
     ladder = []
@@ -779,7 +869,7 @@ def main():
                                  *_heat(v, dmax[i])) for i, v in enumerate(dl)),
                  " ".join(_paint("%9s" % _m(v, kind="vega"),
                                  *_heat(v, vmax[i])) for i, v in enumerate(vega)),
-                 " ".join(_paint("%8s" % _m(v, signed=True, kind="corr"),
+                 " ".join(_paint("%9s" % _m(v, signed=True, kind="corr"),
                                  *_heat(v, cmax[i])) for i, v in enumerate(cega))))
 
     # ---------------------------------------------------------------- ES table
@@ -799,10 +889,12 @@ def main():
     print("  daily moves, 1 + X_h = prod_k (1 + r_k).")
     print("  h sizes the SHOCK ONLY. The translation into y_i stays")
     print("  instantaneous, as above - h is not a holding period here.")
-    print("  %5s %6s %9s %8s %8s %8s %13s %12s %13s"
-          % ("h", "side", "ES(h)", "y_C", "y_BAC", "y_JPM", "note", "put",
-             "put P&L"))
-    print("  " + "-" * 93)
+    ecols = ([("h", 5), ("side", 6), ("ES(h)", 9)]
+             + [("y_" + n, 8) for n in NAMES]
+             + [("note", 13), ("put", 12), ("put P&L", 13)])
+    efmt = "  " + " ".join("%%%ds" % w for _, w in ecols)
+    print(efmt % tuple(h for h, _ in ecols))
+    print("  " + "-" * (sum(w for _, w in ecols) + len(ecols) - 1))
     for h in es_rungs:
         for side, esv in (("97.5%", lad[h][0]), ("2.5%", lad[h][1])):
             ys = np.array([name_shock(esv, SYS_P, IDIO[n], horizon_days=1)["y"]
@@ -813,8 +905,9 @@ def main():
                 continue
             put, pv = put_value(spot0 * (1.0 + ys), spot0, a)
             pnl = put - put0
-            print("  %4dd %6s %+8.2f%% %+7.1f%% %+7.1f%% %+7.1f%% %13s %12s %s"
-                  % (h, side, 100 * esv, 100 * ys[0], 100 * ys[1], 100 * ys[2],
+            print("  %4dd %6s %+8.2f%% %s %13s %12s %s"
+                  % (h, side, 100 * esv,
+                     " ".join("%+7.1f%%" % (100 * r) for r in ys),
                      _m(pv), _m(put),
                      _paint("%13s" % _m(pnl, signed=True), *_sign_color(pnl))))
 

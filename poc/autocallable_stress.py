@@ -474,16 +474,27 @@ def main():
 
     put0, base, vega0, cega0 = put_greeks(spot0, spot0, a)
 
-    # deltas of the ISSUER's position, by central bump on one name at a time
+    # Two delta numbers, because they answer different questions.
+    #
+    #   d_pct   the ISSUER's P&L if ONE name moves +1% and the other two do
+    #           not. One-sided on purpose: this note is convex enough at these
+    #           volatilities that the central difference is not what a 1% move
+    #           actually costs, and the P&L is the number a desk sizes against.
+    #   d_unit  dV/dS, the per-unit-spot delta - what you hedge with, in
+    #           shares, and NOT a per-1% figure.
+    #
+    # Both are the issuer's: short the note, so a name rallying is a loss.
     bump = 0.01
-    deltas = []
+    d_pct, d_unit = [], []
     for i in range(len(NAMES)):
         up, dn = spot0.copy(), spot0.copy()
         up[i] *= 1 + bump
         dn[i] *= 1 - bump
-        dV = (price(up, spot0, a) - price(dn, spot0, a)) / (2 * bump * spot0[i])
-        deltas.append(-dV)                      # issuer is short the note
-    deltas = np.array(deltas)
+        v_up, v_dn = price(up, spot0, a), price(dn, spot0, a)
+        d_pct.append(-(v_up - base))
+        d_unit.append(-(v_up - v_dn) / (2 * bump * spot0[i]))
+    d_pct = np.array(d_pct)
+    d_unit = np.array(d_unit)
     print()
     print("  name   beta   kappa   rho_iX   gamma    phi_i")
     for n, p in zip(NAMES, ph):
@@ -499,8 +510,10 @@ def main():
           % "  ".join("%s %+.4f" % (n, v) for n, v in zip(NAMES, vega0)))
     print("  corr  %s"
           % "  ".join("%s %+.4f" % (p, v) for p, v in zip(PAIRS, cega0)))
-    print("  issuer delta per name: %s"
-          % ", ".join("%+.4f" % d for d in deltas))
+    print("  issuer P&L per +1%% on one name: %s"
+          % ", ".join("%s %+.4f" % (n, d) for n, d in zip(NAMES, d_pct)))
+    print("  issuer delta dV/dS (per unit spot, for hedging): %s"
+          % ", ".join("%s %+.4f" % (n, d) for n, d in zip(NAMES, d_unit)))
     print("  The put is the same note with protection removed, less this one.")
     print("  The issuer is SHORT the note and therefore LONG that put.")
     print()

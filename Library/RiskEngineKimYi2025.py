@@ -461,6 +461,51 @@ def prior_moments(spec):
     raise ValueError("no closed-form moments for %s" % dist)
 
 
+def prior_ci_width(spec, prob=0.95):
+    """Width of the prior's equal-tailed interval at `prob`.
+
+    The denominator of the identification ratio. prior_moments gives the sd,
+    which is the right summary of a prior but the WRONG denominator for a
+    posterior width: dividing a width by an sd smuggles in a shape assumption,
+    and the arms whose priors are flat are exactly the ones the assumption
+    breaks on. Same quantity on both sides, so an unmoved posterior reads 1.00.
+
+    Equal-tailed to match CI_CONVENTION, not highest-density: for a Uniform
+    the HDI is the whole support and would read 1.00 for a prior that a
+    genuinely informative likelihood should still be able to beat.
+    """
+    from scipy import stats
+
+    lo_q, hi_q = 0.5 * (1.0 - prob), 0.5 * (1.0 + prob)
+    dist, kw = spec
+    if dist == "Fixed":
+        return 0.0
+    if dist != "Uniform" and ("lower" in kw or "upper" in kw):
+        # Truncated: invert the CDF on the same grid prior_moments integrates.
+        kw = dict(kw)
+        lo = kw.pop("lower", None) or 1e-9
+        hi = kw.pop("upper", None) or (1.0 - 1e-9)
+        a, b = float(kw["alpha"]), float(kw["beta"])
+        x = np.linspace(lo, hi, 200001)
+        f = (x ** (a - 1) * (1 - x) ** (b - 1) if dist == "Beta"
+             else x ** (a - 1) * np.exp(-b * x))
+        cdf = np.cumsum(f)
+        cdf = cdf / cdf[-1]
+        return float(np.interp(hi_q, cdf, x) - np.interp(lo_q, cdf, x))
+    if dist == "Uniform":
+        return prob * (float(kw["upper"]) - float(kw["lower"]))
+    if dist == "Normal":
+        s = float(kw.get("sigma", kw.get("sd", 1.0)))
+        return float(stats.norm.ppf(hi_q) - stats.norm.ppf(lo_q)) * s
+    a, b = float(kw["alpha"]), float(kw["beta"])
+    if dist == "Gamma":                      # PyMC Gamma is rate-parameterised
+        return float(stats.gamma.ppf(hi_q, a, scale=1.0 / b)
+                     - stats.gamma.ppf(lo_q, a, scale=1.0 / b))
+    if dist == "Beta":
+        return float(stats.beta.ppf(hi_q, a, b) - stats.beta.ppf(lo_q, a, b))
+    raise ValueError("no interval for %s" % dist)
+
+
 def pmle_kimyirisk_systematic(
         sys_returns: NDArray[np.float64],
         delta_t: NDArray[np.float64],

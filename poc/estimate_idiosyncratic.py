@@ -86,10 +86,17 @@ from Scripts.run_pmle_kimyi2025 import (                     # noqa: E402
 # Reused rather than re-declared so the two drivers cannot drift apart on the
 # things that must match: how a drawer is named, and how work is sized.
 from poc.estimate_systematic import (                        # noqa: E402
-    SYSTEMATIC_ID, DATE_FMT, LOOKBACK, BASE_DAYS, SEED, N_MC_PATHS,
-    priors_digest, store_id, valuation_dates, sampler_settings,
+    SYSTEMATIC_ID, DATE_FMT, BASE_LOOKBACK, BASE_DAYS, SEED, N_MC_PATHS,
+    priors_digest, store_id, lookback_suffix, valuation_dates,
+    sampler_settings,
     _init_child, default_workers, _pool_kwargs, POOL_CHUNK, _drain,
 )
+
+# LOOKBACK is imported by VALUE, so rebinding it in estimate_systematic.main()
+# would not reach here. This module carries its own, set from its own
+# --lookback, and the two must agree: a name fitted on 756 returns has to be
+# conditioned on a systematic fit from the same 756 days.
+LOOKBACK = BASE_LOOKBACK
 from Library.RiskEngineKimYi2025 import (                    # noqa: E402
     SYSTEMATIC_PRIOR_SETS as PRIOR_SETS,
 )
@@ -117,7 +124,7 @@ END = "20260831"
 # ---------------------------------------------------------------------------
 # where results go
 # ---------------------------------------------------------------------------
-def name_store_id(name, anchor, tag, priors):
+def name_store_id(name, anchor, tag, priors, lookback=None):
     """Drawer for one name's estimates.
 
     The systematic conditioning is part of the ESTIMATE, not context: the same
@@ -126,11 +133,12 @@ def name_store_id(name, anchor, tag, priors):
     after changing either one cannot be mistaken for a resume of the old one -
     the same trap that cost a systematic run.
     """
+    lb = lookback_suffix(LOOKBACK if lookback is None else lookback)
     if anchor == "full":
-        return "%s__full" % name
+        return "%s__full%s" % (name, lb)
     suffix = "" if tag == "paper" else "%s_%s" % (STORE_SUFFIX[tag],
                                                   priors_digest(priors))
-    return "%s__%s%s" % (name, anchor, suffix)
+    return "%s__%s%s%s" % (name, anchor, suffix, lb)
 
 
 def full_sample_series():
@@ -309,7 +317,7 @@ def write_manifest(drawer, name, anchor, tag, priors):
     folder = os.path.join(PMLE_DIR, drawer)
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, "_conditioning.json"), "w") as fh:
-        json.dump({"name": name, "anchor": anchor,
+        json.dump({"name": name, "anchor": anchor, "lookback": LOOKBACK,
                    "systematic_priors": tag,
                    "systematic_digest": priors_digest(priors),
                    "lookback": LOOKBACK, "seed": int(SEED),
@@ -443,6 +451,13 @@ def main():
                     help="which systematic run to condition on (ignored for "
                          "--anchor full)")
     ap.add_argument("--workers", type=int, default=None)
+    ap.add_argument("--lookback", type=int, default=BASE_LOOKBACK,
+                    help="trailing returns per fit, which must MATCH the "
+                         "systematic run being conditioned on. Default %d; "
+                         "756 is three years. Non-default opens its own "
+                         "drawer (__lb<n>) for the name AND reads the "
+                         "systematic drawer of the same window."
+                         % BASE_LOOKBACK)
     ap.add_argument("--report-only", action="store_true")
     ap.add_argument("--color", dest="color", action="store_true", default=None,
                     help="force heat shading on (default: on for a terminal)")
@@ -453,8 +468,12 @@ def main():
                          "overwriting in place")
     a = ap.parse_args()
 
-    global COLOR
+    global COLOR, LOOKBACK
     COLOR = a.color
+    if a.lookback < 60:
+        raise SystemExit("--lookback %d is too short; the study default is %d."
+                         % (a.lookback, BASE_LOOKBACK))
+    LOOKBACK = a.lookback
 
     if a.names.startswith("@"):
         with open(a.names[1:]) as fh:
@@ -464,7 +483,7 @@ def main():
         names = [n.strip().upper() for n in a.names.split(",") if n.strip()]
 
     priors = PRIOR_SETS[a.priors]
-    sys_store = store_id(a.priors, priors)
+    sys_store = store_id(a.priors, priors, LOOKBACK)
 
     print("=" * 72)
     print("Step 1b :: idiosyncratic parameters, conditional on the systematic fit")

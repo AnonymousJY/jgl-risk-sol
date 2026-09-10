@@ -9,6 +9,13 @@ in an environment without them.
 poc/estimate_systematic.py still declares its own copies. Fold it onto this
 module once no run is in flight - editing it mid-run risks a forkserver child
 re-importing a half-written file.
+
+LOOKBACK here is the STUDY DEFAULT, one regulatory year. The two estimation
+drivers now take --lookback and carry the window in the drawer name (suffix
+__lb<n>, empty at 252), so a 3-year run is a separate store rather than an
+edit to this constant. Change this only to move the study itself; nothing
+that reads a drawer should infer its window from this value - read the
+drawer's _priors.json, which records the lookback the fits were made with.
 """
 import numpy as np
 import pandas as pd

@@ -134,20 +134,39 @@ def priors_digest(priors):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
-def store_id(tag, priors):
-    """Where estimates fitted under (tag, priors) are stored.
+def lookback_suffix(lookback=None):
+    """Empty at the study default, "__lb756" otherwise.
+
+    Window length is not in the prior digest and cannot be: the digest hashes
+    the prior SPEC, and the spec does not mention the window. So a 3-year run
+    under an unchanged spec produces an identical digest and would land in the
+    252-day drawer, where run() skips every date as "already on disk" and the
+    two window lengths interleave inside one series. The suffix is what keeps
+    them apart. It is empty at 252 so every existing drawer keeps its name.
+    """
+    lb = LOOKBACK if lookback is None else lookback
+    return "" if int(lb) == BASE_LOOKBACK else "__lb%d" % int(lb)
+
+
+def store_id(tag, priors, lookback=None):
+    """Where estimates fitted under (tag, priors, lookback) are stored.
 
     "paper" keeps the bare id: those literals are frozen by publication and the
     committed replication files under Study/Estimated Parameters PMLE/^SPX/ are
     addressed by it. Everything else is tag + digest, so the name says which
     arm it is and the digest says which VERSION of that arm.
+
+    The window suffix comes LAST, after the digest, so the existing name stays
+    a readable prefix and the arms sort together.
     """
+    lb = lookback_suffix(lookback)
     if tag == "paper":
-        return SYSTEMATIC_ID
-    return "%s%s_%s" % (SYSTEMATIC_ID, STORE_SUFFIX[tag], priors_digest(priors))
+        return SYSTEMATIC_ID + lb
+    return "%s%s_%s%s" % (SYSTEMATIC_ID, STORE_SUFFIX[tag],
+                          priors_digest(priors), lb)
 
 
-def artifact_suffix(tag, priors):
+def artifact_suffix(tag, priors, lookback=None):
     """Filename suffix for the loose poc/ artefacts, matching the drawer.
 
     systematic_params.csv and full_sample_params.json have to carry the digest
@@ -156,8 +175,9 @@ def artifact_suffix(tag, priors):
     the drawer, on the file you actually read.
     """
     if tag == "paper":
-        return ""
-    return "%s_%s" % (STORE_SUFFIX[tag], priors_digest(priors))
+        return lookback_suffix(lookback)
+    return "%s_%s%s" % (STORE_SUFFIX[tag], priors_digest(priors),
+                        lookback_suffix(lookback))
 
 
 def sampler_settings():
@@ -191,6 +211,7 @@ def write_manifest(drawer_id, tag, priors):
         json.dump({"tag": tag,
                    "digest": priors_digest(priors),
                    "lookback": LOOKBACK,
+                   "base_lookback": BASE_LOOKBACK,
                    "base_days": BASE_DAYS,
                    "seed": int(SEED),
                    "n_mc_paths": N_MC_PATHS,
@@ -201,7 +222,11 @@ DATE_FMT = "%Y%m%d"
 
 BEG = "20070101"
 END = "20260831"
-LOOKBACK = 252
+# BASE_LOOKBACK is the study default and never moves; LOOKBACK is what THIS
+# run uses and main() may set it from --lookback. The two are separate because
+# the drawer name has to say when they differ - see lookback_suffix.
+BASE_LOOKBACK = 252
+LOOKBACK = BASE_LOOKBACK
 BASE_DAYS = 252
 SEED = np.uint64(20240114)
 # Draws per chain. Was 10,000; the benchmark (poc/bench_sampler.py, ^SPX
@@ -273,7 +298,11 @@ def run_full_sample(beg=BEG, end=END):
     # destroyed by a failure in how it gets written down.
     raw = os.path.join(
         _REPO_ROOT, "poc",
-        "full_sample_params%s.json" % artifact_suffix(PRIORS_TAG, PRIORS_IN_FORCE))
+        # BASE_LOOKBACK, not the run's --lookback: a full-sample fit uses the
+        # whole series and has no window, so tagging it with one would split
+        # an identical fit across two filenames.
+        "full_sample_params%s.json"
+        % artifact_suffix(PRIORS_TAG, PRIORS_IN_FORCE, BASE_LOOKBACK))
     with open(raw, "w") as fh:
         json.dump({"beg": beg, "end": end, "n_returns": int(len(rv)),
                    "seconds": round(elapsed, 1),
@@ -641,7 +670,7 @@ def report(df):
     # prior sds, to judge identification date by date
     try:
         from poc.prior_diagnostics import PRIORS as PAPER_PRIORS
-        from Library.RiskEngineKimYi2025 import prior_moments
+        from Library.RiskEngineKimYi2025 import prior_moments, prior_ci_width
 
         # Measure against the priors ACTUALLY IN FORCE. Reporting a recentred
         # fit against the paper priors made dLAMB, dETA1 and dETA2 look "never
@@ -656,25 +685,45 @@ def report(df):
                           *prior_moments(PRIORS_IN_FORCE[v]))
                       for k, v in _MAP.items()}
         prior_sd = {k: v[2] for k, v in PRIORS.items()}
+        # The denominator is the prior's own 95% WIDTH, not its sd. See
+        # prior_ci_width: dividing a width by an sd assumes the prior is
+        # normal, and under Uniform(0, L) an untouched posterior then reads
+        # 0.84 instead of 1.00 - a 16% narrowing that never happened. Where
+        # the spec is not available (the paper-prior fallback carries moments
+        # only) fall back to the normal-equivalent width, which is what the
+        # old ratio assumed throughout.
+        if PRIORS_IN_FORCE is None:
+            prior_w = {k: v / CI_WIDTH_TO_SD for k, v in prior_sd.items()}
+        else:
+            prior_w = {k: prior_ci_width(PRIORS_IN_FORCE[v], CI_PROB)
+                       for k, v in _MAP.items()}
     except Exception as exc:                                     # noqa: BLE001
         # Say so. A silent {} here drops the entire identification table, which
         # is the one part of this report the conclusions rest on - a bug in this
         # block once removed it from every run without a word.
         print("\n  WARNING identification table skipped: %s: %s"
               % (type(exc).__name__, exc))
-        prior_sd = {}
+        prior_sd, prior_w = {}, {}
 
-    if prior_sd:
+    if prior_w:
         print("\nIdentification over time - share of valuation dates where the")
         print("posterior is narrower than the prior (ratio < 0.70):")
+        print("  ratio = posterior %.0f%% width / PRIOR %.0f%% width, both "
+              "equal-tailed." % (100 * CI_PROB, 100 * CI_PROB))
         for k in SYSTEMATIC_PARAMS:
             w = k + "_W"
             if k not in prior_sd or w not in df:
                 continue
-            ratio = (df[w] * CI_WIDTH_TO_SD) / prior_sd[k]
+            if not prior_w.get(k):
+                continue
+            ratio = df[w] / prior_w[k]
             share = 100.0 * float((ratio < 0.70).mean())
             print("   %-8s %5.1f%%   median ratio %.2f   (min %.2f, max %.2f)"
                   % (k, share, ratio.median(), ratio.min(), ratio.max()))
+        print("\n   Width against width on purpose: the earlier form divided the")
+        print("   posterior width by the prior SD, which assumes a normal prior and")
+        print("   put the no-information floor at 0.84 under a flat one. Here an")
+        print("   unmoved posterior reads exactly 1.00 whatever the prior's shape.")
         print("\n   0% means the parameter is never identified at any date in the")
         print("   sample - that rolling series is a series of priors, not estimates.")
         print("   A ratio at or above 1.00 means the posterior is no narrower than")
@@ -773,15 +822,29 @@ def main():
                          "eta columns without adding evidence - run it to see "
                          "the width fall while the prior/posterior ratio gets "
                          "WORSE.")
+    ap.add_argument("--lookback", type=int, default=BASE_LOOKBACK,
+                    help="trailing returns per fit. Default %d (one regulatory "
+                         "year). 756 is three years. Anything other than the "
+                         "default opens its OWN drawer (suffix __lb<n>), so a "
+                         "long-window run cannot interleave with the one-year "
+                         "series." % BASE_LOOKBACK)
     ap.add_argument("--full-sample", action="store_true",
                     help="ONE fit on the whole sample. Run this first - it is "
                          "the cheap test of whether more jumps fixes eta1/eta2.")
     a = ap.parse_args()
 
-    global COLOR, PRIORS_IN_FORCE, STORE_ID, PRIORS_TAG
+    global COLOR, PRIORS_IN_FORCE, STORE_ID, PRIORS_TAG, LOOKBACK
     COLOR = a.color
     PRIORS_TAG = a.priors
     PRIORS_IN_FORCE = SYSTEMATIC_PRIOR_SETS[a.priors]
+    if a.lookback < 60:
+        raise SystemExit("--lookback %d is too short to fit six systematic "
+                         "parameters; the study default is %d."
+                         % (a.lookback, BASE_LOOKBACK))
+    if a.lookback != BASE_LOOKBACK and a.full_sample:
+        raise SystemExit("--lookback has no meaning with --full-sample: that "
+                         "fit uses the whole series, not a trailing window.")
+    LOOKBACK = a.lookback
     STORE_ID = store_id(a.priors, PRIORS_IN_FORCE)
 
     print("=" * 72)
@@ -792,6 +855,13 @@ def main():
     print("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
     print("  priors: %s" % a.priors)
     print("  estimates stored under: %s" % STORE_ID)
+    if LOOKBACK != BASE_LOOKBACK:
+        print("    NON-DEFAULT WINDOW: %d returns, not %d. The __lb%d suffix"
+              % (LOOKBACK, BASE_LOOKBACK, LOOKBACK))
+        print("    keeps this out of the one-year drawer; nothing here is")
+        print("    comparable to a %d-day estimate at the same date except by"
+              % BASE_LOOKBACK)
+        print("    reading both drawers side by side.")
     print("    the trailing digest fingerprints the prior VALUES, so editing"
           "\n    any prior opens a new drawer instead of silently reusing the"
           "\n    old one. _priors.json in the drawer records the full spec.")

@@ -65,8 +65,11 @@ def export_prices(extra=None, only=None):
         symbols = [SYSTEMATIC_ID] + list(only)
     else:
         symbols = [SYSTEMATIC_ID] + list(IDIOSYNCRATIC_IDS) + list(extra or [])
-    seen, symbols = set(), [x for x in symbols
-                            if not (x in seen or seen.add(x))]
+    # Two statements, not one tuple assignment: the right-hand side of
+    # "seen, symbols = set(), [... seen ...]" is evaluated in full before
+    # either name is bound, so the comprehension cannot see `seen`.
+    seen = set()
+    symbols = [x for x in symbols if not (x in seen or seen.add(x))]
     print(f"Exporting price snapshots for: {symbols}")
 
     for symbol in symbols:

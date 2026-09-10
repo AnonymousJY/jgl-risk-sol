@@ -72,14 +72,45 @@ def export_prices(extra=None, only=None):
     symbols = [x for x in symbols if not (x in seen or seen.add(x))]
     print(f"Exporting price snapshots for: {symbols}")
 
+    ends = {}
     for symbol in symbols:
         series = fdr.DataReader(symbol)["Adj Close"]
         series.index.name = "sVALUATION_DATE"
         series.name = symbol
         out_name = f"prices_{_safe_symbol(symbol)}.csv"
         path = write_snapshot(series.to_frame(), out_name)
+        ends[symbol] = series.index.max()
         print(f"  wrote {path}  ({len(series)} rows, "
               f"{series.index.min().date()} -> {series.index.max().date()})")
+    _warn_stale(ends)
+
+
+def _warn_stale(ends):
+    """Flag any snapshot that now ends earlier than the freshest one.
+
+    A PARTIAL refresh is the trap. Exporting ^SPX plus a new basket moves the
+    reference calendar forward while every symbol not named stays where it
+    was, and get_aligned_price_panel then reports the difference as a gap in
+    those symbols - forward-filled up to ffill_limit and NaN past it. It looks
+    like a data defect in the untouched names and is nothing of the kind.
+
+    Only the symbols exported in THIS run are checked, which is the point:
+    the ones not exported are exactly the ones that will fall behind, and this
+    cannot see them. So the message names the fix rather than the symptom.
+    """
+    if len(ends) < 2:
+        return
+    newest = max(ends.values())
+    stale = {k: v for k, v in ends.items() if (newest - v).days > 3}
+    if not stale:
+        return
+    print()
+    print("  NOTE these are behind the freshest symbol (%s):" % newest.date())
+    for k, v in sorted(stale.items(), key=lambda kv: kv[1]):
+        print("    %-8s %s  (%d days)" % (k, v.date(), (newest - v).days))
+    print("  A snapshot that lags the reference calendar shows up as a gap in")
+    print("  the panel report, not as staleness. Export every symbol the study")
+    print("  uses in one run rather than adding a basket on its own.")
 
 
 def main():

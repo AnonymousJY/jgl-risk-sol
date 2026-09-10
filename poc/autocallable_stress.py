@@ -769,10 +769,10 @@ def main():
     _set_precision(base, vega0, cega0, list(d_pct) + list(d_unit))
     print()
     print("  note %s   embedded put %s" % (_m(base), _m(put0)))
-    print("  vega  %s"
+    print("  vega  $ per +1 vol point:  %s"
           % "  ".join("%s %s" % (n, _m(v, signed=True, kind="vega"))
                        for n, v in zip(NAMES, vega0)))
-    print("  corr  %s"
+    print("  corr  $ per +10 bps:      %s"
           % "  ".join("%s %s" % (p, _m(v, signed=True, kind="corr"))
                        for p, v in zip(PAIRS, cega0)))
     print("  issuer P&L per +1%% on one name: %s"
@@ -788,11 +788,15 @@ def main():
         print("  x is the SYSTEMATIC shock, relative. Each name feels it through the")
         print("  model's two-channel translation, so y_i differs by name.")
     else:
-        print("  Shocks are RELATIVE and applied UNCHANGED to all three names:")
-        print("  -60% means C, BAC and JPM each fall 60%.")
+        print("  Shocks are RELATIVE and applied UNCHANGED to all %d names:"
+              % len(NAMES))
+        print("  %+.0f%% means %s each fall %.0f%%."
+              % (100 * SHOCKS[0], ", ".join(NAMES), -100 * SHOCKS[0]))
     print("  Shocks are INSTANTANEOUS - one Appendix B increment at the full")
     print("  shock size, no holding period. y_i is what each name feels after")
     print("  the model's systematic -> name translation.")
+    print("  EVERY greek column below is a DOLLAR amount at this notional,")
+    print("  not a parameter: cr_* is P&L per +10 bps of R_ij, NOT R_ij.")
     print("  vega_i is the put's change for +%.0f vol point on THAT name's phi_i,"
           % (100 * a.vol_bump))
     print("  the other two held; corr_k is +10 bps on THAT pair's R_ij, the")

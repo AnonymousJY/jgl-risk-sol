@@ -317,6 +317,47 @@ SYSTEMATIC_PRIORS_SKEW_TIGHT = {
     "eta2":     ("Gamma", {"alpha": 16.0,   "beta":  0.64}), # mean 25.000 sd  6.250
 }
 
+# ---------------------------------------------------------------------------
+# Identification arms for alpha. Both are SKEW_TIGHT with one prior changed.
+# ---------------------------------------------------------------------------
+# The question these answer: is alpha estimated, or asserted? Every arm above
+# except "paper" centres alpha_rv at 0.500, so they cannot separate "the data
+# says 0.5" from "the prior says 0.5". Displacing the prior mean can.
+#
+# The evidence so far, reading the drawers on 2026-09-10:
+#
+#   arm          prior            prior mean   posterior mean
+#   paper        Beta(5, 2)            0.714           0.6892
+#   gaps/asym/   Beta(2, 2)            0.500           0.4592-0.4620
+#     skew
+#   skew-tight   Beta(9.5, 9.5)        0.500           0.4898
+#
+# Move the prior mean 0.214 and the posterior mean moves 0.228 - a ratio of
+# 1.06. Across all three the posterior sits at roughly
+#
+#       prior mean  -  0.15 x prior sd
+#
+# so the likelihood's whole contribution is a small downward nudge scaled by
+# whatever room the prior leaves it. These two arms test that relationship
+# where it should break if alpha carries any information:
+#
+#   alpha-flat  Beta(1,1) = Uniform(0,1). Widest prior, same centre. The rule
+#               predicts 0.500 - 0.15*0.2887 = 0.457, NOT 0.500. A posterior at
+#               0.500 would mean the nudge is an artifact of the Beta shape; a
+#               posterior at 0.457 confirms it is the likelihood.
+#   alpha-low   Beta(6,14), mean 0.300 sd 0.100 - as tight as skew-tight but
+#               displaced. Predicts 0.285. If a tight prior at 0.30 returns
+#               0.29 while a tight prior at 0.50 returns 0.49, alpha is set by
+#               assumption at this horizon and nothing else.
+SYSTEMATIC_PRIORS_ALPHA_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_ALPHA_FLAT["alpha_rv"] = (
+    "Beta", {"alpha": 1.0, "beta": 1.0})                     # mean 0.500 sd 0.289
+
+SYSTEMATIC_PRIORS_ALPHA_LOW = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_ALPHA_LOW["alpha_rv"] = (
+    "Beta", {"alpha": 6.0, "beta": 14.0})                    # mean 0.300 sd 0.100
+
+
 # The registry the drivers select from. One source of truth: poc/ scripts used
 # to keep their own copies of this mapping and of the drawer suffixes, which is
 # how estimate_systematic and estimate_idiosyncratic came to offer different
@@ -327,12 +368,15 @@ SYSTEMATIC_PRIOR_SETS = {
     "asym":       SYSTEMATIC_PRIORS_ASYM,
     "skew":       SYSTEMATIC_PRIORS_SKEW,
     "skew-tight": SYSTEMATIC_PRIORS_SKEW_TIGHT,
+    "alpha-flat": SYSTEMATIC_PRIORS_ALPHA_FLAT,
+    "alpha-low":  SYSTEMATIC_PRIORS_ALPHA_LOW,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
 # replication files under Study/Estimated Parameters PMLE/^SPX/ stay addressable.
 STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
-                "skew": "__skew", "skew-tight": "__skewtight"}
+                "skew": "__skew", "skew-tight": "__skewtight",
+                "alpha-flat": "__alphaflat", "alpha-low": "__alphalow"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.

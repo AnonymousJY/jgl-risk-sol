@@ -33,7 +33,7 @@ from poc.shock_to_name import (name_shock, model_horizon,           # noqa: E402
                                systematic_es, es_ladder_compounded,
                                model_horizon_from_ladder, HORIZON_LADDER)
 
-_DP = {"money": 4, "vega": 4, "corr": 4}
+_DP = {"money": 4, "vega": 4, "corr": 4, "delta": 4}
 
 C = lambda v: ParametersConstant(np.array(float(v)))
 
@@ -409,10 +409,11 @@ def _m(v, signed=False, kind="money"):
     return sign + format(v, ",.%df" % _DP[kind])
 
 
-def _set_precision(base, vega0, cega0):
+def _set_precision(base, vega0, cega0, deltas):
     _DP["money"] = _dp(base)
     _DP["vega"] = _dp(max(abs(v) for v in vega0))
     _DP["corr"] = _dp(max(abs(v) for v in cega0))
+    _DP["delta"] = _dp(max(abs(v) for v in deltas))
 
 
 
@@ -537,7 +538,7 @@ def main():
     print("  R_ij: %s" % ", ".join("%.4f" % v for v in rij))
     print("  sigma %.4f  lambda %.2f  eta %.2f/%.2f"
           % (SYS_P["dSIGMA"], SYS_P["dLAMB"], SYS_P["dETA1"], SYS_P["dETA2"]))
-    _set_precision(base, vega0, cega0)
+    _set_precision(base, vega0, cega0, list(d_pct) + list(d_unit))
     print()
     print("  note %s   embedded put %s" % (_m(base), _m(put0)))
     print("  vega  %s"
@@ -547,9 +548,11 @@ def main():
           % "  ".join("%s %s" % (p, _m(v, signed=True, kind="corr"))
                        for p, v in zip(PAIRS, cega0)))
     print("  issuer P&L per +1%% on one name: %s"
-          % ", ".join("%s %s" % (n, _m(d, signed=True)) for n, d in zip(NAMES, d_pct)))
+          % ", ".join("%s %s" % (n, _m(d, signed=True, kind="delta"))
+                       for n, d in zip(NAMES, d_pct)))
     print("  issuer delta dV/dS (per unit spot, for hedging): %s"
-          % ", ".join("%s %s" % (n, _m(d, signed=True)) for n, d in zip(NAMES, d_unit)))
+          % ", ".join("%s %s" % (n, _m(d, signed=True, kind="delta"))
+                       for n, d in zip(NAMES, d_unit)))
     print("  The put is the same note with protection removed, less this one.")
     print("  The issuer is SHORT the note and therefore LONG that put.")
     print()

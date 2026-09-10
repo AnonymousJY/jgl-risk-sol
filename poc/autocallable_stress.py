@@ -454,6 +454,53 @@ def _cached_es_ladder(rungs, args):
     return lad
 
 
+
+# ----------------------------------------------------------------------------
+# Conditional colour. Off unless stdout is a terminal, so a redirect to a file
+# or a pipe into grep stays plain text - ANSI escapes in a log are worse than
+# no colour at all. --color always forces it on, --color never off.
+# ----------------------------------------------------------------------------
+_ANSI = {"reset": "\033[0m", "bold": "\033[1m", "dim": "\033[2m",
+         "red": "\033[31m", "green": "\033[32m", "yellow": "\033[33m",
+         "cyan": "\033[36m", "bred": "\033[91m", "bgreen": "\033[92m"}
+_COLOR = [False]
+
+
+def _use_color(mode):
+    _COLOR[0] = (mode == "always" or
+                 (mode == "auto" and sys.stdout.isatty()))
+
+
+def _paint(text, *codes):
+    if not _COLOR[0] or not codes:
+        return text
+    return "".join(_ANSI[c] for c in codes) + text + _ANSI["reset"]
+
+
+def _sign_color(v):
+    """Green for a gain to the issuer, red for a loss, dim at the flat point."""
+    if abs(v) < 1e-9:
+        return ("dim",)
+    return ("green",) if v > 0 else ("red",)
+
+
+def _heat(v, vmax):
+    """Bold near a column's maximum, dim near nothing - a one-column heat map.
+
+    The point is to make a peak findable by eye. Where vega peaks was a live
+    question about this table and reading it off fifteen rows of digits is
+    exactly the kind of thing colour is for.
+    """
+    if vmax <= 0:
+        return ()
+    f = abs(v) / vmax
+    if f >= 0.85:
+        return ("bold",)
+    if f <= 0.15:
+        return ("dim",)
+    return ()
+
+
 def _dp(ref):
     """Decimals worth showing for a column whose values are the size of ref."""
     a = abs(ref)
@@ -507,6 +554,11 @@ def main():
                          "instead of routing it through the model's "
                          "systematic -> name translation")
     ap.set_defaults(translate=True)
+    ap.add_argument("--color", choices=("auto", "always", "never"),
+                    default="auto",
+                    help="conditional colour in the tables: sign on the P&L "
+                         "columns, bold at each greek column's peak and dim "
+                         "near its floor. auto = only when stdout is a tty")
     ap.add_argument("--as-of", default=None,
                     help="read the parameters for ONE valuation date out of "
                          "the drawers (YYYYMMDD, or 'latest') instead of using "
@@ -547,6 +599,7 @@ def main():
                     help="expected-shortfall level defining h*: 0.025 is the "
                          "97.5%% ES for down-shocks and its 2.5%% mirror for up")
     a = ap.parse_args()
+    _use_color(a.color)
     asof_note = None
     if a.as_of:
         sd, nd = set_asof(a.as_of, a.arm)
@@ -667,6 +720,9 @@ def main():
              "dl_C", "dl_BAC", "dl_JPM",
              "vg_C", "vg_BAC", "vg_JPM", "cr_CB", "cr_CJ", "cr_BJ"))
     print("  " + "-" * 172)
+    # Collected before printing, because the heat map needs each column's
+    # maximum and the rows are what produce it.
+    ladder = []
     for x in SHOCKS:
         h = max(1, a.horizon)
         # x and y are both SIMPLE returns. Appendix B's Psi increment is
@@ -686,8 +742,7 @@ def main():
             # systematic shock over a long horizon drives y_i through -1 and the
             # shocked price negative. Those rows are outside the translation's
             # range, not a scenario - refusing them beats pricing log(negative).
-            print("  %+5.0f%% %s   -- y_i through -100%%, outside range"
-                  % (100 * x, " ".join("%+7.1f%%" % (100 * r) for r in ys)))
+            ladder.append((x, ys, None, None, None, None, None))
             continue
         shocked = spot0 * (1.0 + ys)
         put, pv, vega, cega = put_greeks(shocked, spot0, a)
@@ -699,12 +754,33 @@ def main():
             up = shocked.copy()
             up[i] *= 1.0 + 0.01
             dl.append(-(price(up, spot0, a) - pv))
-        print("  %+5.0f%% %s %13s %12s %13s %s %s %s"
-              % (100 * x, " ".join("%+7.1f%%" % (100 * r) for r in ys),
-                 _m(pv), _m(put), _m(put - put0, signed=True),
-                 " ".join("%9s" % _m(v, signed=True, kind="delta") for v in dl),
-                 " ".join("%9s" % _m(v, kind="vega") for v in vega),
-                 " ".join("%8s" % _m(v, signed=True, kind="corr") for v in cega)))
+        ladder.append((x, ys, pv, put, put - put0, np.array(dl), (vega, cega)))
+
+    live = [r for r in ladder if r[2] is not None]
+    n = len(NAMES)
+    dmax = [max(abs(r[5][i]) for r in live) for i in range(n)] if live else [0] * n
+    vmax = [max(r[6][0][i] for r in live) for i in range(n)] if live else [0] * n
+    cmax = [max(abs(r[6][1][i]) for r in live) for i in range(len(PAIRS))] \
+        if live else [0] * len(PAIRS)
+
+    for x, ys, pv, put, pnl, dl, greeks in ladder:
+        xs = _paint("%+5.0f%%" % (100 * x), *(("red",) if x < 0 else
+                                              ("green",) if x > 0 else ("dim",)))
+        yss = " ".join("%+7.1f%%" % (100 * r) for r in ys)
+        if pv is None:
+            print("  %s %s   %s" % (xs, yss,
+                  _paint("-- y_i through -100%, outside range", "yellow")))
+            continue
+        vega, cega = greeks
+        print("  %s %s %13s %12s %s %s %s %s"
+              % (xs, yss, _m(pv), _m(put),
+                 _paint("%13s" % _m(pnl, signed=True), *_sign_color(pnl)),
+                 " ".join(_paint("%9s" % _m(v, signed=True, kind="delta"),
+                                 *_heat(v, dmax[i])) for i, v in enumerate(dl)),
+                 " ".join(_paint("%9s" % _m(v, kind="vega"),
+                                 *_heat(v, vmax[i])) for i, v in enumerate(vega)),
+                 " ".join(_paint("%8s" % _m(v, signed=True, kind="corr"),
+                                 *_heat(v, cmax[i])) for i, v in enumerate(cega))))
 
     # ---------------------------------------------------------------- ES table
     # A second pass where the shock is not prescribed but taken from the
@@ -736,9 +812,11 @@ def main():
                       % (h, side, 100 * esv))
                 continue
             put, pv = put_value(spot0 * (1.0 + ys), spot0, a)
-            print("  %4dd %6s %+8.2f%% %+7.1f%% %+7.1f%% %+7.1f%% %13s %12s %13s"
+            pnl = put - put0
+            print("  %4dd %6s %+8.2f%% %+7.1f%% %+7.1f%% %+7.1f%% %13s %12s %s"
                   % (h, side, 100 * esv, 100 * ys[0], 100 * ys[1], 100 * ys[2],
-                     _m(pv), _m(put), _m(put - put0, signed=True)))
+                     _m(pv), _m(put),
+                     _paint("%13s" % _m(pnl, signed=True), *_sign_color(pnl))))
 
     print("\n  put P&L is the ISSUER's, who is long the put: positive in a selloff.")
     print("  It is not the issuer's whole P&L - the note also carries the bond")

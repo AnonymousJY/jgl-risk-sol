@@ -33,6 +33,8 @@ from poc.shock_to_name import (name_shock, model_horizon,           # noqa: E402
                                systematic_es, es_ladder_compounded,
                                model_horizon_from_ladder, HORIZON_LADDER)
 
+_DP = {"money": 4, "vega": 4, "corr": 4}
+
 C = lambda v: ParametersConstant(np.array(float(v)))
 
 # Fitted P-measure parameters. BOTH blocks are the TIGHT-PRIOR (skew-tight)
@@ -383,6 +385,37 @@ def _cached_es_ladder(rungs, args):
     return lad
 
 
+def _dp(ref):
+    """Decimals worth showing for a column whose values are the size of ref."""
+    a = abs(ref)
+    return 0 if a >= 1000 else (2 if a >= 10 else 4)
+
+
+def _m(v, signed=False, kind="money"):
+    """Money, with thousands separators, at a precision fixed for the run.
+
+    At --notional 100 every field is two digits and four decimals are the
+    signal; at $1mm the note runs to seven digits and four decimals are noise
+    that pushes the columns apart. So precision follows size - but it is
+    decided ONCE per column, not per value. Per value puts 2,927.15 in a
+    column of whole thousands, which is harder to read than the ragged
+    decimals it was meant to fix.
+
+    Three scales, because they differ by orders of magnitude: the note and the
+    put, a vega, and a correlation bump worth a few tens of dollars against a
+    note worth a million.
+    """
+    sign = "+" if signed and v >= 0 else ""
+    return sign + format(v, ",.%df" % _DP[kind])
+
+
+def _set_precision(base, vega0, cega0):
+    _DP["money"] = _dp(base)
+    _DP["vega"] = _dp(max(abs(v) for v in vega0))
+    _DP["corr"] = _dp(max(abs(v) for v in cega0))
+
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -504,16 +537,19 @@ def main():
     print("  R_ij: %s" % ", ".join("%.4f" % v for v in rij))
     print("  sigma %.4f  lambda %.2f  eta %.2f/%.2f"
           % (SYS_P["dSIGMA"], SYS_P["dLAMB"], SYS_P["dETA1"], SYS_P["dETA2"]))
+    _set_precision(base, vega0, cega0)
     print()
-    print("  note %.4f   embedded put %.4f" % (base, put0))
+    print("  note %s   embedded put %s" % (_m(base), _m(put0)))
     print("  vega  %s"
-          % "  ".join("%s %+.4f" % (n, v) for n, v in zip(NAMES, vega0)))
+          % "  ".join("%s %s" % (n, _m(v, signed=True, kind="vega"))
+                       for n, v in zip(NAMES, vega0)))
     print("  corr  %s"
-          % "  ".join("%s %+.4f" % (p, v) for p, v in zip(PAIRS, cega0)))
+          % "  ".join("%s %s" % (p, _m(v, signed=True, kind="corr"))
+                       for p, v in zip(PAIRS, cega0)))
     print("  issuer P&L per +1%% on one name: %s"
-          % ", ".join("%s %+.4f" % (n, d) for n, d in zip(NAMES, d_pct)))
+          % ", ".join("%s %s" % (n, _m(d, signed=True)) for n, d in zip(NAMES, d_pct)))
     print("  issuer delta dV/dS (per unit spot, for hedging): %s"
-          % ", ".join("%s %+.4f" % (n, d) for n, d in zip(NAMES, d_unit)))
+          % ", ".join("%s %s" % (n, _m(d, signed=True)) for n, d in zip(NAMES, d_unit)))
     print("  The put is the same note with protection removed, less this one.")
     print("  The issuer is SHORT the note and therefore LONG that put.")
     print()
@@ -530,10 +566,10 @@ def main():
           % (100 * a.vol_bump))
     print("  the other two held; corr_k is +10 bps on THAT pair's R_ij, the")
     print("  other two pairs held.")
-    print("  %6s %8s %8s %8s %9s %8s %9s %7s %7s %7s %8s %8s %8s"
+    print("  %6s %8s %8s %8s %13s %12s %13s %10s %10s %10s %9s %9s %9s"
           % ("x", "y_C", "y_BAC", "y_JPM", "note", "put", "put P&L",
              "vg_C", "vg_BAC", "vg_JPM", "cr_CB", "cr_CJ", "cr_BJ"))
-    print("  " + "-" * 121)
+    print("  " + "-" * 145)
     for x in SHOCKS:
         h = max(1, a.horizon)
         # x and y are both SIMPLE returns. Appendix B's Psi increment is
@@ -558,11 +594,11 @@ def main():
             continue
         shocked = spot0 * (1.0 + ys)
         put, pv, vega, cega = put_greeks(shocked, spot0, a)
-        print("  %+5.0f%% %s %9.4f %8.4f %+9.4f %s %s"
+        print("  %+5.0f%% %s %13s %12s %13s %s %s"
               % (100 * x, " ".join("%+7.1f%%" % (100 * r) for r in ys),
-                 pv, put, put - put0,
-                 " ".join("%7.4f" % v for v in vega),
-                 " ".join("%+8.4f" % v for v in cega)))
+                 _m(pv), _m(put), _m(put - put0, signed=True),
+                 " ".join("%10s" % _m(v, kind="vega") for v in vega),
+                 " ".join("%9s" % _m(v, signed=True, kind="corr") for v in cega)))
 
     # ---------------------------------------------------------------- ES table
     # A second pass where the shock is not prescribed but taken from the
@@ -581,10 +617,10 @@ def main():
     print("  daily moves, 1 + X_h = prod_k (1 + r_k).")
     print("  h sizes the SHOCK ONLY. The translation into y_i stays")
     print("  instantaneous, as above - h is not a holding period here.")
-    print("  %5s %6s %9s %8s %8s %8s %9s %8s %9s"
+    print("  %5s %6s %9s %8s %8s %8s %13s %12s %13s"
           % ("h", "side", "ES(h)", "y_C", "y_BAC", "y_JPM", "note", "put",
              "put P&L"))
-    print("  " + "-" * 79)
+    print("  " + "-" * 93)
     for h in es_rungs:
         for side, esv in (("97.5%", lad[h][0]), ("2.5%", lad[h][1])):
             ys = np.array([name_shock(esv, SYS_P, IDIO[n], horizon_days=1)["y"]
@@ -594,9 +630,9 @@ def main():
                       % (h, side, 100 * esv))
                 continue
             put, pv = put_value(spot0 * (1.0 + ys), spot0, a)
-            print("  %4dd %6s %+8.2f%% %+7.1f%% %+7.1f%% %+7.1f%% %9.4f %8.4f %+9.4f"
+            print("  %4dd %6s %+8.2f%% %+7.1f%% %+7.1f%% %+7.1f%% %13s %12s %13s"
                   % (h, side, 100 * esv, 100 * ys[0], 100 * ys[1], 100 * ys[2],
-                     pv, put, put - put0))
+                     _m(pv), _m(put), _m(put - put0, signed=True)))
 
     print("\n  put P&L is the ISSUER's, who is long the put: positive in a selloff.")
     print("  It is not the issuer's whole P&L - the note also carries the bond")

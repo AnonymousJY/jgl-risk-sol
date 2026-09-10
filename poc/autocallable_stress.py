@@ -36,79 +36,101 @@ from poc.shock_to_name import (name_shock, model_horizon,           # noqa: E402
 C = lambda v: ParametersConstant(np.array(float(v)))
 
 # Fitted P-measure parameters. BOTH blocks are the TIGHT-PRIOR (skew-tight)
-# arm, read from the 10,000-draw drawers on 2026-09-09:
+# arm at DAILY resolution, read on 2026-09-10 from the rebuilt store:
 #
-#   ^SPX__skewtight_913f43b7__draws10000              245 monthly dates
-#   {C,BAC,JPM}__rolling__skewtight_913f43b7__draws10000
+#   ^SPX__skewtight_913f43b7                     5,131 daily dates
+#   {C,BAC,JPM}__rolling__skewtight_913f43b7     same grid, --anchor rolling
 #
-# The name block is --anchor rolling, so each name is conditioned on the
-# systematic fit for the SAME valuation date, out of the systematic drawer
-# named above. gamma_i is a jump scale RELATIVE to that drawer's eta, so the
-# two blocks are only meaningful together; mixing arms silently rescales every
-# jump. They now match.
+# The store was rebuilt from empty on 2026-09-09 (11h29m) so that exactly one
+# drawer per series exists, every one carrying a manifest. The previous store
+# held thirteen SPX drawers, five of them untagged, and one of those - a
+# superseded pre-bugfix run - had silently supplied the 2009 and covid rows.
 #
-# WHAT THIS REPLACED, and why it matters. The 2009 and covid systematic rows
-# were previously transcribed from a by-year table that turned out to have been
-# generated from ^SPX_prebugfix__draws10000 - a superseded daily run, not the
-# tight-prior arm at all. The differences are not cosmetic:
+# THE DAILY RUN VALIDATED THE MONTHLY GRID. Full-sample means over 5,131 daily
+# dates against 245 monthly ones from the 10,000-draw archive:
 #
-#            was (prebugfix)        is (skew-tight)
-#   2009     alpha 0.7210           0.4971
-#            eta1  50.4047          39.8935
-#            pprob 0.3875           0.5529
-#   covid    sigma 0.2436           0.1354
-#            lambda 12.7128         27.8810
+#            daily(5131)   monthly(245)
+#   alpha       0.4898       0.4898
+#   sigma       0.1513       0.1512
+#   pprob       0.5652       0.5652
+#   lambda      8.8065       8.7657
+#   eta1       50.2951      50.2986
+#   eta2       26.6333      26.6165
 #
-# The covid row is the one that changes the story: under the tight-prior arm
-# 2020 is a JUMP-FREQUENCY regime - lambda near 28 against a full-sample 8.8,
-# with sigma at roughly half its full-sample level - not the high-diffusion
-# year the prebugfix numbers described. Anything concluded from the old covid
-# figures has to be re-derived, not carried across.
+# Twenty times the compute moved nothing. Daily resolution is for the
+# backfilled SERIES, which needs a value on every date; for a vintage MEAN the
+# monthly grid was already right.
 #
-# The full row was never wrong. It was marked a placeholder on the assumption
-# that the tight-prior arm had no full-sample line; it does, and the numbers
-# agreed to four decimals all along.
+# VINTAGE WINDOWS. A fit dated t describes the 252 trading days BEHIND t, so a
+# crisis vintage is not the crisis dates - it is the valuation dates whose
+# window is loaded with the crisis, which sits later than the event.
 #
-# ON ALPHA. It reads 0.4898 / 0.4971 / 0.4875 across three very different
-# regimes, which is not the data speaking. The tight prior is Beta(9.5, 9.5),
-# prior mean 0.5 and prior sd 0.1118, and the fitted posterior sd is 0.1106 -
-# 99% of the prior width retained, so a 252-day window updates alpha almost not
-# at all. The wide arm behaves the same way (Beta(2,2), prior sd 0.2236,
-# posterior 0.2052). Treat alpha as an assumption, and check any result that
-# leans on it against a different value. Contrast sigma, which travels 43
-# posterior sd across the sample: that one the data knows.
+#   gfc        20090309-20090915   Wikipedia dates the bear market 2007-10-09
+#              (137 dates)         to 2009-03-09, S&P 1565.15 -> 676.53,
+#                                  -56.78%. That is 17 months - LONGER than the
+#                                  252-day window - so no window holds all of
+#                                  it and the acute phase has to be chosen.
+#                                  These are the dates whose window spans
+#                                  Lehman (2008-09-15) through the trough.
+#
+#   covid      20200407-20210219   Wikipedia dates the crash 2020-02-20 to
+#              (229 dates)         2020-04-07. Seven weeks fits inside a
+#                                  window, so this is every date whose window
+#                                  contains all of it.
+#
+#   gfc_cal, covid_cal are the calendar-year means, kept because they are what
+#   was reported before and the dilution is worth seeing: calendar 2020 opens
+#   with three months whose windows are entirely pre-crash, and it reads sigma
+#   0.1378 / lambda 27.87 against the loaded 0.1573 / 31.77.
+#
+# ON ALPHA. It reads 0.487-0.497 across every vintage, which is not the data
+# speaking. The tight prior is Beta(9.5, 9.5): prior mean 0.5, prior sd 0.1118,
+# against a fitted posterior sd of 0.1106 - 99% of the prior width retained, so
+# a 252-day window updates alpha almost not at all. The wide arm behaves the
+# same (Beta(2,2), prior sd 0.2236, posterior 0.2052). Treat alpha as an
+# assumption and check anything leaning on it against another value. Contrast
+# sigma, which travels 43 posterior sd across the sample.
 NAMES = ["C", "BAC", "JPM"]
 
-# Three vintages of the same rolling fit:
-#
-#   full   full-sample means, 2007-01-01 to 2026-08-31   (245 dates)
-#   2009   calendar 2009 means - the GFC vintage          (13 dates)
-#   covid  calendar 2020 means                            (12 dates)
 IDIO_BY_VINTAGE = {
     "full": {
-        "C":   dict(dBETAI=1.3090, dKAPPAI=0.2017, dGAMMAI=2.2696, dRHOIX=0.2941, dMUI=0.0182),
-        "BAC": dict(dBETAI=1.2778, dKAPPAI=0.1942, dGAMMAI=2.2303, dRHOIX=0.2907, dMUI=0.0591),
-        "JPM": dict(dBETAI=1.1120, dKAPPAI=0.1597, dGAMMAI=2.0077, dRHOIX=0.2784, dMUI=0.1251),
+        "C":   dict(dBETAI=1.3090, dKAPPAI=0.2020, dGAMMAI=2.2737, dRHOIX=0.2951, dMUI=0.0173),
+        "BAC": dict(dBETAI=1.2784, dKAPPAI=0.1946, dGAMMAI=2.2367, dRHOIX=0.2916, dMUI=0.0563),
+        "JPM": dict(dBETAI=1.1109, dKAPPAI=0.1599, dGAMMAI=2.0100, dRHOIX=0.2795, dMUI=0.1223),
     },
-    "2009": {
-        "C":   dict(dBETAI=1.7852, dKAPPAI=0.6795, dGAMMAI=5.6398, dRHOIX=0.3858, dMUI=-0.6474),
-        "BAC": dict(dBETAI=1.8088, dKAPPAI=0.6631, dGAMMAI=4.8120, dRHOIX=0.3667, dMUI=-0.4093),
-        "JPM": dict(dBETAI=1.4657, dKAPPAI=0.4796, dGAMMAI=3.8967, dRHOIX=0.3242, dMUI=-0.1392),
+    "gfc": {
+        "C":   dict(dBETAI=1.7989, dKAPPAI=0.7753, dGAMMAI=5.8761, dRHOIX=0.4055, dMUI=-0.7154),
+        "BAC": dict(dBETAI=1.9253, dKAPPAI=0.7899, dGAMMAI=4.4615, dRHOIX=0.3842, dMUI=-0.3060),
+        "JPM": dict(dBETAI=1.4839, dKAPPAI=0.5411, dGAMMAI=3.9006, dRHOIX=0.3346, dMUI=-0.1711),
+    },
+    "gfc_cal": {
+        "C":   dict(dBETAI=1.7880, dKAPPAI=0.6870, dGAMMAI=5.7347, dRHOIX=0.3879, dMUI=-0.6437),
+        "BAC": dict(dBETAI=1.8225, dKAPPAI=0.6742, dGAMMAI=4.8565, dRHOIX=0.3706, dMUI=-0.3938),
+        "JPM": dict(dBETAI=1.4650, dKAPPAI=0.4848, dGAMMAI=3.9496, dRHOIX=0.3276, dMUI=-0.1450),
     },
     "covid": {
-        "C":   dict(dBETAI=1.4288, dKAPPAI=0.1970, dGAMMAI=2.0685, dRHOIX=0.2994, dMUI=-0.1395),
-        "BAC": dict(dBETAI=1.3662, dKAPPAI=0.1827, dGAMMAI=1.7361, dRHOIX=0.2944, dMUI=0.0595),
-        "JPM": dict(dBETAI=1.2113, dKAPPAI=0.1577, dGAMMAI=1.7043, dRHOIX=0.2843, dMUI=0.0597),
+        "C":   dict(dBETAI=1.4775, dKAPPAI=0.2346, dGAMMAI=2.2481, dRHOIX=0.3072, dMUI=-0.2713),
+        "BAC": dict(dBETAI=1.4022, dKAPPAI=0.2167, dGAMMAI=1.8896, dRHOIX=0.3006, dMUI=-0.0413),
+        "JPM": dict(dBETAI=1.2455, dKAPPAI=0.1858, dGAMMAI=1.8268, dRHOIX=0.2893, dMUI=-0.0448),
+    },
+    "covid_cal": {
+        "C":   dict(dBETAI=1.4310, dKAPPAI=0.1999, dGAMMAI=2.0662, dRHOIX=0.3023, dMUI=-0.1468),
+        "BAC": dict(dBETAI=1.3588, dKAPPAI=0.1859, dGAMMAI=1.7535, dRHOIX=0.2962, dMUI=0.0442),
+        "JPM": dict(dBETAI=1.2072, dKAPPAI=0.1595, dGAMMAI=1.7006, dRHOIX=0.2856, dMUI=0.0461),
     },
 }
 
 SYS_BY_VINTAGE = {
-    "full": dict(dALPHA=0.4898, dSIGMA=0.1512, dPPROB=0.5652,
-                 dLAMB=8.7657, dETA1=50.2986, dETA2=26.6165),
-    "2009": dict(dALPHA=0.4971, dSIGMA=0.3517, dPPROB=0.5529,
-                 dLAMB=13.0124, dETA1=39.8935, dETA2=24.4023),
-    "covid": dict(dALPHA=0.4875, dSIGMA=0.1354, dPPROB=0.5137,
-                  dLAMB=27.8810, dETA1=40.2509, dETA2=26.5051),
+    "full": dict(dALPHA=0.4898, dSIGMA=0.1513, dPPROB=0.5652,
+                 dLAMB=8.8065, dETA1=50.2951, dETA2=26.6333),
+    "gfc": dict(dALPHA=0.4961, dSIGMA=0.3942, dPPROB=0.5524,
+                dLAMB=12.0943, dETA1=39.5485, dETA2=24.3207),
+    "gfc_cal": dict(dALPHA=0.4973, dSIGMA=0.3555, dPPROB=0.5541,
+                    dLAMB=12.7647, dETA1=40.1140, dETA2=24.4524),
+    "covid": dict(dALPHA=0.4938, dSIGMA=0.1573, dPPROB=0.5218,
+                  dLAMB=31.7683, dETA1=36.7096, dETA2=25.6968),
+    "covid_cal": dict(dALPHA=0.4878, dSIGMA=0.1378, dPPROB=0.5138,
+                      dLAMB=27.8695, dETA1=40.3223, dETA2=26.4494),
 }
 
 VINTAGE = os.environ.get("STRESS_VINTAGE", "full")
@@ -438,10 +460,11 @@ def main():
         print("  both from the P-measure estimates. No option data, so no Q")
         print("  jump block is calibrated and none is used.")
     print()
-    print("  Parameters: skew-tight arm on BOTH blocks, 10,000-draw drawers,")
-    print("  the name fits conditioned on the same systematic drawer they are")
-    print("  quoted beside. alpha sits on its prior in every vintage and is an")
-    print("  assumption, not an estimate - see the note in the header.")
+    print("  Parameters: skew-tight arm on BOTH blocks, daily store rebuilt")
+    print("  2026-09-09, name fits conditioned on the same systematic drawer.")
+    print("  gfc = dates whose 252d window spans Lehman to the 2009-03-09")
+    print("  trough; covid = dates whose window holds the 2020-02-20/04-07")
+    print("  crash. alpha sits on its prior in every vintage - an assumption.")
 
     # The ES ladder has to carry every prescribed h as well as its own rungs,
     # since ES(h) is reported at the horizon the shock is actually applied over.

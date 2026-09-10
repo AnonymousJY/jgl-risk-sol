@@ -50,11 +50,23 @@ SYSTEMATIC_ID = "^SPX"
 IDIOSYNCRATIC_IDS = get_idiosyncratic_ids()  # e.g. ["COIN"]
 
 
-def export_prices():
-    """Pull adjusted-close history for every symbol and write one CSV each."""
+def export_prices(extra=None, only=None):
+    """Pull adjusted-close history for every symbol and write one CSV each.
+
+    `only` replaces the portfolio list outright, `extra` appends to it. Both
+    exist because a study basket is not always the portfolio: comparing the
+    banks against a cruise/airline basket needs CCL, RCL and LUV frozen, and
+    editing the portfolio definition to get them would change what the
+    replication package claims to be about.
+    """
     import FinanceDataReader as fdr
 
-    symbols = [SYSTEMATIC_ID] + list(IDIOSYNCRATIC_IDS)
+    if only:
+        symbols = [SYSTEMATIC_ID] + list(only)
+    else:
+        symbols = [SYSTEMATIC_ID] + list(IDIOSYNCRATIC_IDS) + list(extra or [])
+    seen, symbols = set(), [x for x in symbols
+                            if not (x in seen or seen.add(x))]
     print(f"Exporting price snapshots for: {symbols}")
 
     for symbol in symbols:
@@ -68,10 +80,23 @@ def export_prices():
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="Freeze live price history into committed snapshots.")
+    ap.add_argument("--symbols", default=None,
+                    help="comma-separated tickers to export INSTEAD of the "
+                         "portfolio, e.g. CCL,RCL,LUV. ^SPX is always "
+                         "included.")
+    ap.add_argument("--add", default=None,
+                    help="comma-separated tickers to export IN ADDITION to "
+                         "the portfolio.")
+    a = ap.parse_args()
+    split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None
+
     print("=" * 70)
     print("mkt-depth-n-resiliency :: snapshot export")
     print("=" * 70)
-    export_prices()
+    export_prices(extra=split(a.add), only=split(a.symbols))
     print("Done. Commit the files under data/snapshots/ to make the "
           "repository a self-contained replication package.")
 

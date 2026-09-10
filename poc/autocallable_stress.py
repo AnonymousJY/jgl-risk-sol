@@ -524,9 +524,12 @@ def _use_color(mode):
 
 
 def _paint(text, *codes):
+    """Wrap in ANSI. A code is either a name in _ANSI or "fgN" for 256-colour N."""
     if not _COLOR[0] or not codes:
         return text
-    return "".join(_ANSI[c] for c in codes) + text + _ANSI["reset"]
+    lead = "".join("\033[38;5;%sm" % c[2:] if c.startswith("fg") else _ANSI[c]
+                   for c in codes)
+    return lead + text + _ANSI["reset"]
 
 
 def _sign_color(v):
@@ -536,21 +539,28 @@ def _sign_color(v):
     return ("green",) if v > 0 else ("red",)
 
 
-def _heat(v, vmax):
-    """Bold near a column's maximum, dim near nothing - a one-column heat map.
+# Grey through deep blue to cyan. A heat map wants intensity to read at a
+# glance; bold-versus-normal does not, in most terminal themes, which is what
+# the first version used and why the peak was no easier to find than before.
+_RAMP = (244, 25, 32, 39, 51)
 
-    The point is to make a peak findable by eye. Where vega peaks was a live
-    question about this table and reading it off fifteen rows of digits is
-    exactly the kind of thing colour is for.
+
+def _heat(v, vmax):
+    """Colour a cell by its size relative to the column's maximum.
+
+    Where vega peaks was a live question about this table, and the point of
+    the ramp is that the answer should be visible without reading fifteen rows
+    of digits. Bold is kept for the top band on top of the colour, so the peak
+    itself still stands out on a monochrome terminal.
     """
     if vmax <= 0:
         return ()
-    f = abs(v) / vmax
+    f = min(1.0, abs(v) / vmax)
+    idx = min(len(_RAMP) - 1, int(f * len(_RAMP)))
+    codes = ("fg%d" % _RAMP[idx],)
     if f >= 0.85:
-        return ("bold",)
-    if f <= 0.15:
-        return ("dim",)
-    return ()
+        codes += ("bold",)
+    return codes
 
 
 def _dp(ref):

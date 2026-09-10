@@ -568,11 +568,13 @@ def main():
     print("  vega_i is the put's change for +%.0f vol point on THAT name's phi_i,"
           % (100 * a.vol_bump))
     print("  the other two held; corr_k is +10 bps on THAT pair's R_ij, the")
-    print("  other two pairs held.")
-    print("  %6s %8s %8s %8s %13s %12s %13s %10s %10s %10s %9s %9s %9s"
+    print("  other two pairs held. dl_i is the issuer's P&L for a further")
+    print("  +1% on THAT name from the shocked spot, the other two held.")
+    print("  %6s %8s %8s %8s %13s %12s %13s %9s %9s %9s %9s %9s %9s %8s %8s %8s"
           % ("x", "y_C", "y_BAC", "y_JPM", "note", "put", "put P&L",
+             "dl_C", "dl_BAC", "dl_JPM",
              "vg_C", "vg_BAC", "vg_JPM", "cr_CB", "cr_CJ", "cr_BJ"))
-    print("  " + "-" * 145)
+    print("  " + "-" * 172)
     for x in SHOCKS:
         h = max(1, a.horizon)
         # x and y are both SIMPLE returns. Appendix B's Psi increment is
@@ -597,11 +599,20 @@ def main():
             continue
         shocked = spot0 * (1.0 + ys)
         put, pv, vega, cega = put_greeks(shocked, spot0, a)
-        print("  %+5.0f%% %s %13s %12s %13s %s %s"
+        # Issuer P&L for a further +1% on ONE name FROM THE SHOCKED spot,
+        # the other two held. One-sided, matching the summary block: it is
+        # what the next 1% costs from here, not a derivative at the origin.
+        dl = []
+        for i in range(len(NAMES)):
+            up = shocked.copy()
+            up[i] *= 1.0 + 0.01
+            dl.append(-(price(up, spot0, a) - pv))
+        print("  %+5.0f%% %s %13s %12s %13s %s %s %s"
               % (100 * x, " ".join("%+7.1f%%" % (100 * r) for r in ys),
                  _m(pv), _m(put), _m(put - put0, signed=True),
-                 " ".join("%10s" % _m(v, kind="vega") for v in vega),
-                 " ".join("%9s" % _m(v, signed=True, kind="corr") for v in cega)))
+                 " ".join("%9s" % _m(v, signed=True, kind="delta") for v in dl),
+                 " ".join("%9s" % _m(v, kind="vega") for v in vega),
+                 " ".join("%8s" % _m(v, signed=True, kind="corr") for v in cega)))
 
     # ---------------------------------------------------------------- ES table
     # A second pass where the shock is not prescribed but taken from the

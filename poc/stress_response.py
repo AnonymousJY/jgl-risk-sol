@@ -235,15 +235,226 @@ def responds(cells, stress=None, calm=None):
     return out
 
 
+def rotation_test(cells, n_rot=2000, seed=20240114, stress=None, calm=None):
+    """Is the stress-minus-calm gap bigger than a persistent series gives anyway?
+
+    The problem the percentile table cannot solve: 245 overlapping windows are
+    nothing like 245 independent draws - consecutive 252-day fits share 251 of
+    252 observations - so any standard error computed as if they were is far
+    too small, and a t-statistic built on one would make every row significant.
+
+    A CIRCULAR ROTATION test sidesteps the whole question. Rotate the series by
+    a random offset and recompute the same gap. The rotated series is the SAME
+    series - identical autocorrelation, identical marginal distribution, the
+    persistence preserved exactly rather than modelled - but its alignment with
+    the episode calendar is destroyed. So the rotations give the distribution
+    of gaps a series this persistent produces against dates chosen at random,
+    and the observed gap is read against that. No block length to choose and
+    no distributional assumption; the one artefact is the single junction where
+    the rotation wraps, one date in 245.
+
+    Both statistics are reported, because they answer different questions:
+
+      raw       the gap on the parameter itself. "Is this parameter unusual
+                during stress episodes."
+      residual  the gap after regressing the parameter on sigma and lambda.
+                "Is it unusual for a reason sigma and lambda do not already
+                account for." This is the one that matters for everything
+                except sigma and lambda themselves, and it is the formal
+                version of the `drag` column.
+
+    A p-value here is a statement about THESE six episodes and this sample.
+    With five or six stress episodes in nineteen years it cannot be much
+    smaller than about 0.005 however strong the effect, so read 0.005 as
+    "as strong as this design can show", not as a strength ranking.
+    """
+    stress = STRESS if stress is None else stress
+    calm = CALM if calm is None else calm
+    rng = np.random.default_rng(seed)
+
+    def gap_of(series):
+        st = np.nanmedian([pctile(series, w)[0] for w in stress.values()])
+        cm = np.nanmedian([pctile(series, w)[0] for w in calm.values()])
+        return st - cm
+
+    print()
+    print("  ROTATION TEST - %d circular rotations per parameter." % n_rot)
+    print("  p is the share of rotations whose |gap| matches or beats the")
+    print("  observed one. The residual column is the test that counts.")
+    out = {}
+    for c, df in cells.items():
+        print()
+        print("  %s" % c)
+        print("  %-8s %8s %8s %10s %8s %8s   %s"
+              % ("param", "gap", "p(raw)", "resid gap", "p(res)", "null sd",
+                 "verdict"))
+        print("  " + "-" * 76)
+        X = np.column_stack([np.ones(len(df))]
+                            + [df[r].astype(float).to_numpy()
+                               for r in ("dSIGMA", "dLAMB") if r in df])
+        for k in SYS_PARAMS:
+            if k not in df:
+                continue
+            y = df[k].astype(float)
+            obs = gap_of(y)
+            if k in ("dSIGMA", "dLAMB"):
+                res = y                       # the regressors test themselves
+            else:
+                beta, *_ = np.linalg.lstsq(X, y.to_numpy(), rcond=None)
+                res = pd.Series(y.to_numpy() - X @ beta, index=df.index)
+            obs_r = gap_of(res)
+            nr = np.empty(n_rot)
+            nn = np.empty(n_rot)
+            m = len(df)
+            for i in range(n_rot):
+                o = int(rng.integers(1, m))
+                nr[i] = gap_of(pd.Series(np.roll(y.to_numpy(), o),
+                                         index=df.index))
+                nn[i] = gap_of(pd.Series(np.roll(res.to_numpy(), o),
+                                         index=df.index))
+            p_raw = float((np.abs(nr) >= abs(obs)).mean())
+            p_res = float((np.abs(nn) >= abs(obs_r)).mean())
+            out[(k, c)] = (obs, p_raw, obs_r, p_res)
+            v = ("REAL beyond sigma/lambda" if p_res < 0.05 else
+                 "not distinguishable from a persistent series"
+                 if p_raw >= 0.05 else "raw only - it is the ridge")
+            print("  %-8s %+8.0f %8.3f %+10.0f %8.3f %8.1f   %s"
+                  % (k, obs, p_raw, obs_r, p_res, nn.std(ddof=1), v))
+    print()
+    print("  null sd is the spread of the residual gap across rotations - how")
+    print("  big a gap this series produces against dates picked at random.")
+    print("  Compare it to the alpha row, which is the study's own control for")
+    print("  a parameter that knows nothing.")
+    return out
+
+
+def continuous_test(cells, rets, lookback_of, n_rot=2000, seed=20240114):
+    """The same rotation test against a CONTINUOUS stress measure.
+
+    Six episodes in nineteen years is about six effective observations, and no
+    test can rescue that: the episode rotation null has a spread of roughly 25
+    percentile points, so a gap has to clear about 50 to register at all. That
+    is a limit of the DESIGN, not of the test - and it is fixed by not
+    throwing the other 239 dates away.
+
+    Each parameter is tested against the model-free feature of the trailing
+    window that it MEANS, not against one covariate for all six. Testing pprob
+    - the up/down split of jumps - against realised volatility asks whether the
+    jump sign tracks the size of moves, which it has no reason to do; on
+    synthetic data built with a genuine sign response that test returns rho
+    -0.10, p 0.52, and would have been reported here as "no response".
+
+        dSIGMA   realised volatility of the window
+        dLAMB    count of |r| > 3% days - a model-free jump-frequency proxy
+        dPPROB   share of those days that were DOWN
+        dETA1    mean size of the up days among them  (1/eta1 is that size)
+        dETA2    mean size of the down days among them
+        dALPHA   realised volatility, as the control - alpha has no window
+                 feature it should track, and a significant result here means
+                 the test is too generous rather than that alpha responds
+
+    The statistic is Spearman rho, and the null comes from the same circular
+    rotation, so the persistence of both series is preserved exactly. The
+    partial version removes sigma and lambda first and is again the one that
+    counts for everything except those two. Spearman rather than Pearson
+    because lambda's distribution has a long right tail and one crisis window
+    should not decide the number.
+    """
+    from scipy import stats as sps
+
+    rng = np.random.default_rng(seed)
+    print()
+    print("  CONTINUOUS STRESS - Spearman rho against the model-free feature")
+    print("  of the trailing window that each parameter MEANS, same rotation")
+    print("  null, %d rotations. Every date counts here, not six episodes," % n_rot)
+    print("  so this is the better-powered version of the table above.")
+    out = {}
+    for c, df in cells.items():
+        lb = lookback_of[c]
+        feat = {k: [] for k in ("vol", "cnt", "dshare", "upsz", "dnsz")}
+        for dt in df.index:
+            w = rets.loc[rets.index <= dt]
+            if len(w) < lb:
+                for v in feat.values():
+                    v.append(np.nan)
+                continue
+            x = w.iloc[-lb:].to_numpy()
+            b = x[np.abs(x) > 0.03]                 # the window's "jump" days
+            up, dn = b[b > 0], b[b < 0]
+            feat["vol"].append(float(x.std(ddof=1)))
+            feat["cnt"].append(float(len(b)))
+            feat["dshare"].append(float(len(dn) / len(b)) if len(b) else np.nan)
+            feat["upsz"].append(float(up.mean()) if len(up) else np.nan)
+            feat["dnsz"].append(float(-dn.mean()) if len(dn) else np.nan)
+        feat = {k: np.asarray(v) for k, v in feat.items()}
+        COVAR = {"dSIGMA": "vol", "dLAMB": "cnt", "dPPROB": "dshare",
+                 "dETA1": "upsz", "dETA2": "dnsz", "dALPHA": "vol"}
+        ok = np.isfinite(feat["vol"])
+        if ok.sum() < 30:
+            print("  %s: only %d dates with a full window" % (c, ok.sum()))
+            continue
+        d = df.loc[ok]
+        feat = {k: v[ok] for k, v in feat.items()}
+        X = np.column_stack([np.ones(len(d))]
+                            + [d[r].astype(float).to_numpy()
+                               for r in ("dSIGMA", "dLAMB") if r in d])
+        print()
+        print("  %s   (%d dates, %d-day trailing window)" % (c, len(d), lb))
+        print("  %-8s %-8s %9s %8s %10s %8s   %s"
+              % ("param", "covar", "rho", "p", "partial", "p", "verdict"))
+        print("  " + "-" * 79)
+        for k in SYS_PARAMS:
+            if k not in d:
+                continue
+            rv = feat[COVAR[k]]
+            good = np.isfinite(rv)
+            if good.sum() < 30:
+                print("  %-8s %-8s  covariate undefined at %d dates"
+                      % (k, COVAR[k], (~good).sum()))
+                continue
+            y = d[k].astype(float).to_numpy()
+            if k in ("dSIGMA", "dLAMB"):
+                res = y
+            else:
+                beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+                res = y - X @ beta
+            yg, rg, sg_ = y[good], rv[good], res[good]
+            r0 = sps.spearmanr(yg, rg).statistic
+            r1 = sps.spearmanr(sg_, rg).statistic
+            n0 = n1 = 0
+            m = len(yg)
+            for _ in range(n_rot):
+                o = int(rng.integers(1, m))
+                n0 += abs(sps.spearmanr(np.roll(yg, o), rg).statistic) >= abs(r0)
+                n1 += abs(sps.spearmanr(np.roll(sg_, o), rg).statistic) >= abs(r1)
+            p0, p1 = n0 / n_rot, n1 / n_rot
+            out[(k, c)] = (r0, p0, r1, p1)
+            v = ("REAL beyond sigma/lambda" if p1 < 0.05 else
+                 "the ridge" if p0 < 0.05 else "not distinguishable")
+            print("  %-8s %-8s %+9.3f %8.3f %+10.3f %8.3f   %s"
+                  % (k, COVAR[k], r0, p0, r1, p1, v))
+    print()
+    print("  Every covariate is model-free - counted off the returns, with no")
+    print("  parameter in it - so a sigma that tracks realised vol is the model")
+    print("  working rather than a finding. The rows worth reading are the")
+    print("  PARTIAL ones for lambda and pprob: stress information the")
+    print("  diffusion does not already carry. dALPHA is the control and")
+    print("  should fail; if it does not, the test is too generous.")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cells", default=DEFAULT_CELLS)
+    ap.add_argument("--rotations", type=int, default=2000,
+                    help="circular rotations for the significance test; "
+                         "0 skips it")
     a = ap.parse_args()
 
     from Library.RiskEngineKimYi2025 import SYSTEMATIC_PRIOR_SETS
-    from poc.estimate_systematic import store_id
+    from poc.estimate_systematic import store_id, SYSTEMATIC_ID
 
     cells, lbs = {}, {}
     for cell in [c.strip() for c in a.cells.split(",") if c.strip()]:
@@ -312,6 +523,16 @@ def main():
           cells, STRESS, "dETA2", "  Mean down jump is 1/eta2.")
 
     responds(cells)
+    if a.rotations:
+        rotation_test(cells, n_rot=a.rotations)
+        try:
+            from Library.DataAccess import get_price_panel
+            px = get_price_panel([SYSTEMATIC_ID])
+            continuous_test(cells, px.pct_change().dropna()[SYSTEMATIC_ID],
+                            lbs, n_rot=a.rotations)
+        except Exception as exc:                              # noqa: BLE001
+            print("\n  continuous test skipped: %s: %s"
+                  % (type(exc).__name__, exc))
 
     # --- is lambda redundant given sigma? -----------------------------------
     print()

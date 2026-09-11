@@ -525,6 +525,41 @@ SYSTEMATIC_PRIORS_PPROB_FLAT["pprob_rv"] = (
     "Beta", {"alpha": 1.0, "beta": 1.0})                # mean 0.500 sd 0.2887
 
 
+# ---------------------------------------------------------------------------
+# Flat on BOTH alpha and pprob: assert neither the liquidity decay nor the
+# jump sign, and let the window say what it can about each.
+# ---------------------------------------------------------------------------
+# The two parameters this study keeps discovering it does not want to assert.
+# pprob is P(up jump), so Beta(1,1) says nothing about equity skew and lets a
+# P(down) above one half, if it appears, be the data's doing. alpha is the
+# liquidity decay; Beta(1,1) says nothing about its speed.
+#
+# WHAT TO EXPECT FROM EACH, BECAUSE THEY ARE NOT ALIKE.
+#
+# pprob is a real measurement at the longer windows - width ratio 0.895 at 252
+# days but 0.462 at 756, better than the sqrt(3) = 0.577 that pure sample-size
+# scaling would give. A flat prior there buys an estimate.
+#
+# alpha is not, at any window length. Under a flat prior it came back at 0.4396
+# from a prior mean of 0.500 with a width ratio of essentially 1.00 - a mild
+# tilt and no narrowing. It is identified only on the FULL sample, where it is
+# 0.036, a half-life of 19.3 years against a one-year window that cannot see
+# past its own end. So a flat prior on alpha is the honest choice precisely
+# because it will report "we do not know" instead of reporting the prior's
+# centre as an estimate - but the paper then has to take alpha from the
+# full-sample fit wherever alpha actually ENTERS a calculation (the OU decay in
+# the shock translation, the ES ladder), not from the rolling series.
+#
+# That costs nothing elsewhere. alpha is inert for the other five: pinning it
+# at 0.037 against 0.46 - a factor of 12.7 - moves every other parameter by
+# less than 0.7%, and 0.01 against 0.49, a factor of 49, moves sigma by 0.2%.
+SYSTEMATIC_PRIORS_ALPHA_PPROB_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_ALPHA_PPROB_FLAT["alpha_rv"] = (
+    "Beta", {"alpha": 1.0, "beta": 1.0})                # mean 0.500 sd 0.2887
+SYSTEMATIC_PRIORS_ALPHA_PPROB_FLAT["pprob_rv"] = (
+    "Beta", {"alpha": 1.0, "beta": 1.0})                # mean 0.500 sd 0.2887
+
+
 SYSTEMATIC_PRIOR_SETS = {
     "paper":      None,                      # priors=None -> SYSTEMATIC_PRIORS
     "gaps":       SYSTEMATIC_PRIORS_GAPS,
@@ -538,6 +573,7 @@ SYSTEMATIC_PRIOR_SETS = {
     "pdown-tight": SYSTEMATIC_PRIORS_PDOWN_TIGHT,
     "pdown-flat":  SYSTEMATIC_PRIORS_PDOWN_FLAT,
     "pprob-flat":  SYSTEMATIC_PRIORS_PPROB_FLAT,
+    "alpha-pprob-flat": SYSTEMATIC_PRIORS_ALPHA_PPROB_FLAT,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
@@ -549,7 +585,8 @@ STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
                 "skewtight-lamflat": "__skewtightlamflat",
                 "pdown-tight": "__pdowntight",
                 "pdown-flat": "__pdownflat",
-                "pprob-flat": "__pprobflat"}
+                "pprob-flat": "__pprobflat",
+                "alpha-pprob-flat": "__alphapprobflat"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.

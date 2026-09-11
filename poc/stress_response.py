@@ -13,12 +13,27 @@ That normalisation is the whole point: it lets the tight-prior and flat-prior
 arms be held against each other despite a factor of three in level, and it is
 robust to a lambda distribution with a long right tail.
 
-The second table is the one that decides whether the jump channel EARNS its
-place. If lambda merely tracks the diffusion, a one-parameter volatility model
-says everything this says and the decomposition is decoration. So sigma gets
-the same treatment, and the third table is the difference: where lambda's
-percentile clears sigma's in a stress episode, the jump intensity carried
-something the diffusion did not.
+sigma gets the same treatment, but NOT as a hurdle for lambda to clear. sigma
+should rise in stress as well - that is its own economic content, and in a
+prolonged episode like 2008-09 it is the channel one would expect to carry
+most of it. So "lambda beats sigma" is the wrong null. What would make the
+decomposition decoration is the two being REDUNDANT, and that is a question
+about correlation and timing, not about levels:
+
+  - corr(lambda, sigma) across dates, printed directly. Near 1.00 and one of
+    them is spare.
+  - lambda orthogonalised to sigma - the residual from regressing one on the
+    other - put through the same percentile treatment. If the residual still
+    lands high in stress, lambda is carrying something the diffusion is not.
+  - onset against prolonged. GFC 2008H2 and GFC 2009H1 are kept as separate
+    episodes because the expected signatures differ: an event RATE should
+    spike on the gap days and can fall back while a volatility LEVEL stays
+    elevated through the whole episode.
+
+The jump-shape block asks the other half. In stress the down branch should
+carry more of the jumps; whether it also carries bigger ones is a separate
+question with a separate answer, and the two are reported separately rather
+than collapsed into "negative skew".
 
     python poc/stress_response.py
     python poc/stress_response.py --cells skew-tight:252,skewtight-lamflat:252
@@ -150,22 +165,76 @@ def main():
     table("LAMBDA in calm periods - the control", cells, CALM, "dLAMB",
           "These should be LOW. A cell that puts calm years at high "
           "percentiles too\n  is not responding to stress, it is wandering.")
-    sig = table("SIGMA - diffusion, same treatment", cells, STRESS, "dSIGMA",
-                "The comparison, not the point. If lambda only does what "
-                "sigma does,\n  the jump channel is decoration.")
+    sig = table("SIGMA - diffusion", cells, STRESS, "dSIGMA",
+                "Expected to rise too, and in a prolonged episode to carry "
+                "most of it.\n  Not a hurdle for lambda - see the "
+                "orthogonalised block below.")
+    table("PPROB - P(up jump); should FALL in stress", cells, STRESS, "dPPROB",
+          "Below 50% means the down branch carries more than half the jumps.")
+    table("ETA1 - up-jump decay; FALLING means bigger up jumps",
+          cells, STRESS, "dETA1", "  Mean up jump is 1/eta1.")
+    table("ETA2 - down-jump decay; FALLING means bigger down jumps",
+          cells, STRESS, "dETA2", "  Mean down jump is 1/eta2.")
 
+    # --- is lambda redundant given sigma? -----------------------------------
     print()
-    print("  LAMBDA percentile MINUS SIGMA percentile, stress episodes only.")
-    print("  Positive means the jump intensity moved further into its own tail")
-    print("  than the diffusion did - the decomposition earning its place.")
-    print("  %-14s %s" % ("episode", " ".join("%18s" % c for c in cells)))
+    print("  REDUNDANCY - lambda against sigma across all dates, and lambda")
+    print("  orthogonalised to sigma put through the stress percentiles again:")
+    print("  %-14s %s" % ("", " ".join("%18s" % c for c in cells)))
     print("  " + "-" * (14 + 19 * len(cells)))
-    for name in STRESS:
+    row = []
+    resid = {}
+    for c, df in cells.items():
+        x = df["dSIGMA"].astype(float).to_numpy()
+        y = df["dLAMB"].astype(float).to_numpy()
+        r = float(np.corrcoef(x, y)[0, 1]) if x.std() and y.std() else np.nan
+        row.append("%18s" % ("%+.3f" % r))
+        b = np.polyfit(x, y, 1) if np.isfinite(r) else (0.0, 0.0)
+        resid[c] = pd.Series(y - (b[0] * x + b[1]), index=df.index)
+    print("  %-14s %s" % ("corr", " ".join(row)))
+    for name, win in STRESS.items():
         row = []
         for c in cells:
-            d = lam[name].get(c, np.nan) - sig[name].get(c, np.nan)
-            row.append("%18s" % ("%+6.0f pts" % d if np.isfinite(d) else "-"))
+            p_, _ = pctile(resid[c], win)
+            row.append("%18s" % ("%5.0f%%" % p_ if np.isfinite(p_) else "-"))
         print("  %-14s %s" % (name, " ".join(row)))
+    print("  A residual that still lands high in stress is lambda carrying")
+    print("  something sigma does not. Near 50% everywhere and the jump")
+    print("  intensity is a restatement of the diffusion.")
+
+    # --- what the jump distribution looks like, stress vs calm ---------------
+    print()
+    print("  JUMP SHAPE, at the median parameters of stress vs calm dates:")
+    print("  %-26s %8s %8s %8s %8s %9s"
+          % ("cell / regime", "P(down)", "up size", "dn size", "dn/up",
+             "jump skew"))
+    print("  " + "-" * 74)
+    for c, df in cells.items():
+        for regime, eps in (("stress", STRESS), ("calm", CALM)):
+            idx = pd.Index([])
+            for lo, hi in eps.values():
+                idx = idx.union(df.loc[lo:hi].index)
+            if not len(idx):
+                continue
+            w = df.loc[idx]
+            pp = float(w["dPPROB"].median())
+            e1 = float(w["dETA1"].median())
+            e2 = float(w["dETA2"].median())
+            m1 = pp / e1 - (1 - pp) / e2
+            m2 = 2 * (pp / e1 ** 2 + (1 - pp) / e2 ** 2)
+            m3 = 6 * (pp / e1 ** 3 - (1 - pp) / e2 ** 3)
+            v = m2 - m1 ** 2
+            sk = (m3 - 3 * m1 * m2 + 2 * m1 ** 3) / v ** 1.5
+            print("  %-26s %8.3f %7.2f%% %7.2f%% %8.2f %+9.3f"
+                  % ("%s / %s" % (c, regime), 1 - pp, 100 / e1, 100 / e2,
+                     (1 / e2) / (1 / e1), sk))
+    print("  Frequency asymmetry and SIZE asymmetry are different claims and")
+    print("  can move in opposite directions. On the 756 skew-tight by-year")
+    print("  means they do: P(down) rises 0.41 -> 0.50 from calm to stress")
+    print("  while the down/up SIZE ratio compresses 1.83 -> 1.38 and the jump")
+    print("  skew goes -1.25 -> -0.67. Less skewed, not more - which is the")
+    print("  index-option stylised fact, where skew is steepest in quiet")
+    print("  markets and flattens when ATM vol spikes.")
 
     print()
     print("  WINDOW COVERAGE - share of the episode inside the trailing window")

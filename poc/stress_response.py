@@ -61,6 +61,10 @@ from Library.DataAccess import PMLE_DIR                          # noqa: E402
 DEFAULT_CELLS = ("skew-tight:252,skewtight-lamflat:252,"
                  "skew-tight:756,skewtight-lamflat:756")
 
+# Report order, jump channel first: that is what the tables are about, and
+# alpha is last because a window cannot identify it at all.
+SYS_PARAMS = ["dLAMB", "dSIGMA", "dPPROB", "dETA1", "dETA2", "dALPHA"]
+
 STRESS = {
     "GFC 2008H2":   ("2008-07-01", "2008-12-31"),
     "GFC 2009H1":   ("2009-01-01", "2009-06-30"),
@@ -124,6 +128,34 @@ def table(title, cells, episodes, col, note):
         out[name] = cellvals
         print("  %-14s %s" % (name, " ".join(row)))
     print("  %s" % note)
+    return out
+
+
+def responds(cells, stress=None, calm=None):
+    """One line per parameter: stress percentile against the calm control."""
+    stress = STRESS if stress is None else stress
+    calm = CALM if calm is None else calm
+    print()
+    print("  RESPONDS? median percentile over stress episodes against the")
+    print("  calm control, per parameter. A parameter that responds shows a")
+    print("  wide gap; one that is wandering shows none.")
+    print("  %-8s %s" % ("param", " ".join("%22s" % c for c in cells)))
+    print("  " + "-" * (8 + 23 * len(cells)))
+    out = {}
+    for k in SYS_PARAMS:
+        row = []
+        for c, df in cells.items():
+            if k not in df:
+                row.append("%22s" % "-")
+                continue
+            st = np.nanmedian([pctile(df[k], w)[0] for w in stress.values()])
+            cm = np.nanmedian([pctile(df[k], w)[0] for w in calm.values()])
+            out[(k, c)] = (st, cm)
+            row.append("%22s" % ("%3.0f%% vs %3.0f%%  (%+4.0f)"
+                                 % (st, cm, st - cm)))
+        print("  %-8s %s" % (k, " ".join(row)))
+    print("  Sign matters as much as size: pprob is expected to go the OTHER")
+    print("  way, low in stress, because it is P(UP jump).")
     return out
 
 
@@ -203,26 +235,7 @@ def main():
     table("ETA2 - down-jump decay; FALLING means bigger down jumps",
           cells, STRESS, "dETA2", "  Mean down jump is 1/eta2.")
 
-    # --- the one-line answer for every parameter -----------------------------
-    print()
-    print("  RESPONDS? median percentile over stress episodes against the")
-    print("  calm control, per parameter. A parameter that responds shows a")
-    print("  wide gap; one that is wandering shows none.")
-    print("  %-8s %s" % ("param",
-                         " ".join("%22s" % c for c in cells)))
-    print("  " + "-" * (8 + 23 * len(cells)))
-    for k in SYS_PARAMS:
-        row = []
-        for c, df in cells.items():
-            if k not in df:
-                row.append("%22s" % "-"); continue
-            st = np.nanmedian([pctile(df[k], w)[0] for w in STRESS.values()])
-            cm = np.nanmedian([pctile(df[k], w)[0] for w in CALM.values()])
-            row.append("%22s" % ("%3.0f%% vs %3.0f%%  (%+4.0f)"
-                                 % (st, cm, st - cm)))
-        print("  %-8s %s" % (k, " ".join(row)))
-    print("  Sign matters as much as size: pprob is expected to go the OTHER")
-    print("  way, low in stress, because it is P(UP jump).")
+    responds(cells)
 
     # --- is lambda redundant given sigma? -----------------------------------
     print()

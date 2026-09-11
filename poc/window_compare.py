@@ -17,6 +17,18 @@ Width against width, an unmoved posterior reads 1.00 for any prior shape.
     python poc/window_compare.py --priors skew-tight --lb-b 756
     python poc/window_compare.py --priors skew-tight --lb-b 756 --beg 20080101 --end 20091231
 
+--priors-b compares two ARMS instead of two windows. Leave --lb-b at --lb-a
+and name a second arm, and the same table reads as what a prior was doing to
+a posterior it disagreed with:
+
+    python poc/window_compare.py --priors skew-tight \
+        --priors-b skewtight-lamflat --lb-a 252 --lb-b 252
+    python poc/window_compare.py --priors skew-tight \
+        --priors-b skewtight-lamflat --lb-a 756 --lb-b 756
+
+Absolute interval widths are printed beside the ratios, because two arms have
+two denominators and the ratio columns are then not comparable to each other.
+
 WHAT A LONGER WINDOW COSTS. A 252-day window drops the GFC in late 2009; a
 756-day window carries it to late 2011. The cross-sectional result - banks
 loading on the 2008 gap and not the 2020 one, cruise reversing - is a
@@ -75,7 +87,14 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--priors", default="skew-tight")
+    ap.add_argument("--priors", default="skew-tight",
+                    help="the reference arm")
+    ap.add_argument("--priors-b", default=None,
+                    help="the arm under test. Defaults to --priors, which is "
+                         "the window comparison. Naming a DIFFERENT arm and "
+                         "leaving --lb-b at --lb-a compares two priors at one "
+                         "window instead - the way to see what a prior was "
+                         "doing to a posterior it disagreed with.")
     ap.add_argument("--lb-a", type=int, default=252,
                     help="the reference window (default 252, one year)")
     ap.add_argument("--lb-b", type=int, default=756,
@@ -88,9 +107,14 @@ def main():
         SYSTEMATIC_PRIOR_SETS, prior_ci_width)
     from poc.estimate_systematic import store_id
 
-    priors = SYSTEMATIC_PRIOR_SETS[a.priors]
-    da = load_drawer(store_id(a.priors, priors, a.lb_a), a.beg, a.end)
-    db = load_drawer(store_id(a.priors, priors, a.lb_b), a.beg, a.end)
+    tag_a, tag_b = a.priors, a.priors_b or a.priors
+    pri_a = SYSTEMATIC_PRIOR_SETS[tag_a]
+    pri_b = SYSTEMATIC_PRIOR_SETS[tag_b]
+    if (tag_a, a.lb_a) == (tag_b, a.lb_b):
+        raise SystemExit("A and B are the same run (%s, %d days). Change "
+                         "--priors-b or --lb-b." % (tag_a, a.lb_a))
+    da = load_drawer(store_id(tag_a, pri_a, a.lb_a), a.beg, a.end)
+    db = load_drawer(store_id(tag_b, pri_b, a.lb_b), a.beg, a.end)
     common = da.index.intersection(db.index)
     if not len(common):
         raise SystemExit(
@@ -103,8 +127,8 @@ def main():
 
     print()
     print("=" * 78)
-    print("window comparison :: %d vs %d days, priors %s"
-          % (a.lb_a, a.lb_b, a.priors))
+    print("comparison :: A = %s @ %d days   B = %s @ %d days"
+          % (tag_a, a.lb_a, tag_b, a.lb_b))
     print("=" * 78)
     print("  %d shared valuation date(s)  %s -> %s"
           % (len(common), common.min().date(), common.max().date()))
@@ -112,19 +136,24 @@ def main():
           "equal-tailed;" % (100 * CI_PROB, 100 * CI_PROB))
     print("  1.00 means the posterior is the prior. Below 0.70 is identified.")
     print()
-    print("  %-8s %9s %9s %8s %9s %9s %8s   %s"
-          % ("param", "mean A", "mean B", "d mean", "ratio A", "ratio B",
-             "width B/A", "verdict"))
-    print("  " + "-" * 88)
+    print("  %-8s %9s %9s %9s %9s %8s %8s %8s   %s"
+          % ("param", "mean A", "mean B", "width A", "width B", "ratio A",
+             "ratio B", "W B/A", "verdict"))
+    print("  " + "-" * 100)
 
     for k in SYS_PARAMS:
         if k not in da or k not in db:
             continue
-        pw = prior_ci_width(priors[_MAP[k]], CI_PROB)
+        # Each side against its OWN prior. Two arms have two denominators, and
+        # dividing both posteriors by one of them is how a lambda width got
+        # reported here against a Gamma(10, 0.5) that no run has used since
+        # the paper arm.
+        pwa = prior_ci_width(pri_a[_MAP[k]], CI_PROB) if pri_a else None
+        pwb = prior_ci_width(pri_b[_MAP[k]], CI_PROB) if pri_b else None
         wa, wb = width(da, k), width(db, k)
-        if wa is None or wb is None or not pw:
+        if wa is None or wb is None or not pwa or not pwb:
             continue
-        ra, rb = float(wa.median()) / pw, float(wb.median()) / pw
+        ra, rb = float(wa.median()) / pwa, float(wb.median()) / pwb
         ma, mb = float(da[k].mean()), float(db[k].mean())
         shrink = float(wb.median()) / float(wa.median())
 
@@ -138,9 +167,16 @@ def main():
             verdict = "flat - no information at either length"
         else:
             verdict = "no material gain"
-        print("  %-8s %9.4f %9.4f %8.4f %9.3f %9.3f %8.3f   %s"
-              % (k, ma, mb, mb - ma, ra, rb, shrink, verdict))
+        print("  %-8s %9.4f %9.4f %9.4f %9.4f %8.3f %8.3f %8.3f   %s"
+              % (k, ma, mb, float(wa.median()), float(wb.median()),
+                 ra, rb, shrink, verdict))
 
+    if tag_a != tag_b:
+        print()
+        print("  A and B are DIFFERENT ARMS, so ratio A and ratio B are each")
+        print("  against their own prior and are not comparable to each other.")
+        print("  The comparable columns are width A against width B, which is")
+        print("  what the prior was doing to the posterior, and W B/A.")
     print()
     print("  A longer window buys sqrt(3) = 1.73 on a parameter the likelihood")
     print("  already resolves, so width B/A near 0.58 is the most a purely")

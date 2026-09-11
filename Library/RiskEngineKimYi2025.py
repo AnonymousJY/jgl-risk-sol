@@ -375,6 +375,48 @@ SYSTEMATIC_PRIORS_ALPHA_LOW["alpha_rv"] = (
 # to keep their own copies of this mapping and of the drawer suffixes, which is
 # how estimate_systematic and estimate_idiosyncratic came to offer different
 # arms from the same library.
+# skew-tight with lambda's prior replaced by a FLAT one, and nothing else
+# touched. This exists to settle one question the skew-tight runs cannot
+# answer about themselves.
+#
+# skew-tight asserts lambda ~ Gamma(3, 0.5): mean 6, a GAP prior - few large
+# jumps. The 252-day posterior comes back at 8.8, near the prior. The 756-day
+# posterior comes back at 19.6, more than three prior means out, sitting deep
+# in the right tail of that Gamma, and 1.47x the prior's own width. A posterior
+# dragged that far into a prior's tail widens for a reason that has nothing to
+# do with the data: it is fighting the prior.
+#
+# How far out, as Gamma(3, 0.5) density relative to its own mode:
+#
+#     lambda  6.0   0.83      the prior mean
+#     lambda  8.8   0.44      the 252-day posterior mean - still on the prior
+#     lambda 19.6   0.0098    the 756-day posterior mean - 1% of peak
+#     lambda 40.0   2.1e-07
+#     lambda 56.5   1.1e-10   the 756 run's LARGEST posterior mean
+#
+# The three-year posterior sits where this prior is a wall, not a preference,
+# and a crisis window at 40+ is somewhere the prior has declared impossible.
+# That distorts the mean downward and the width in a direction no reading of
+# the identification ratio can undo. It is a confound in the 252-day series
+# too - crisis windows there reach the same region - which is why this arm
+# should be run at BOTH lengths rather than only at 756.
+#
+# Under Uniform(0, 200) the prior is flat everywhere lambda has ever gone
+# (the 756 run's maximum is 56.5), so the posterior width IS the likelihood's
+# curvature, at both window lengths, with the prior taken out of the argument.
+# Run 252 and 756 under this arm and compare the ABSOLUTE widths - the
+# ratio-to-prior is meaningless against a support of 200 and the diagnostic
+# prints it only because it prints it for everything.
+#
+# If the 756 width stays near 19, the width is the likelihood's and the
+# three-year window really does fail to pin the jump intensity. If it
+# collapses, the Gamma(3, 0.5) tail was the whole effect and the
+# mis-specification reading of that widening was wrong.
+SYSTEMATIC_PRIORS_SKEW_TIGHT_LAMFLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_SKEW_TIGHT_LAMFLAT["lamb"] = (
+    "Uniform", {"lower": 0.0, "upper": 200.0})           # mean 100.0 sd 57.735
+
+
 SYSTEMATIC_PRIOR_SETS = {
     "paper":      None,                      # priors=None -> SYSTEMATIC_PRIORS
     "gaps":       SYSTEMATIC_PRIORS_GAPS,
@@ -384,6 +426,7 @@ SYSTEMATIC_PRIOR_SETS = {
     "alpha-flat": SYSTEMATIC_PRIORS_ALPHA_FLAT,
     "alpha-low":  SYSTEMATIC_PRIORS_ALPHA_LOW,
     "alpha-tiny": SYSTEMATIC_PRIORS_ALPHA_TINY,
+    "skewtight-lamflat": SYSTEMATIC_PRIORS_SKEW_TIGHT_LAMFLAT,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
@@ -391,7 +434,8 @@ SYSTEMATIC_PRIOR_SETS = {
 STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
                 "skew": "__skew", "skew-tight": "__skewtight",
                 "alpha-flat": "__alphaflat", "alpha-low": "__alphalow",
-                "alpha-tiny": "__alphatiny"}
+                "alpha-tiny": "__alphatiny",
+                "skewtight-lamflat": "__skewtightlamflat"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.
@@ -473,6 +517,28 @@ def prior_ci_width(spec, prob=0.95):
     Equal-tailed to match CI_CONVENTION, not highest-density: for a Uniform
     the HDI is the whole support and would read 1.00 for a prior that a
     genuinely informative likelihood should still be able to beat.
+
+    HOW BIG THE ARTEFACT ACTUALLY WAS, per arm. The commit that introduced
+    this function gave a table of old floors naming sigma, pprob, lamb and
+    eta1 - those numbers are right for the distributions beside them but the
+    distributions are the PAPER arm's, not skew-tight's, and skew-tight is
+    what every rolling run since has used. Under skew-tight the priors are
+    much tighter, a tight prior is closer to Gaussian in shape, and the
+    normal approximation the old denominator made is correspondingly better:
+
+        dSIGMA  Gamma(2, 10)          95% W  0.5329   old floor 0.961
+        dALPHA  Beta(9.5, 9.5)               0.4329              0.988
+        dPPROB  Beta(10.925, 8.075)          0.4278              0.987
+        dLAMB   Gamma(3, 0.5)              13.2120              0.973
+        dETA1   Gamma(16, 0.32)            48.7339              0.995
+        dETA2   Gamma(16, 0.64)            24.3669              0.995
+
+    So this fix moves a skew-tight verdict by at most 4%, not the 6-16% that
+    table implied. Where it genuinely matters is the arm it was found on:
+    alpha-flat (Beta(1,1)) and alpha-tiny (Uniform(0, 0.02)) really do have a
+    floor of 0.840, and an alpha posterior sitting exactly on its prior really
+    was being read there as a 16% narrowing. The fix is right; the claim that
+    it rewrote the skew-tight numbers was not.
     """
     from scipy import stats
 

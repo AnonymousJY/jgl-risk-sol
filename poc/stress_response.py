@@ -131,31 +131,107 @@ def table(title, cells, episodes, col, note):
     return out
 
 
+def _width(df, k):
+    """Median 95% posterior width for one parameter."""
+    if k + "_W" in df:
+        return float(df[k + "_W"].astype(float).median())
+    lo, hi = df.get(k + "_CI_LOWER"), df.get(k + "_CI_UPPER")
+    if lo is None or hi is None:
+        return float("nan")
+    return float((hi.astype(float) - lo.astype(float)).median())
+
+
 def responds(cells, stress=None, calm=None):
-    """One line per parameter: stress percentile against the calm control."""
+    """Stress-minus-calm percentile, with the two columns that make it readable.
+
+    A percentile gap on its own proves nothing, and this table carries its own
+    proof of that. dALPHA is unidentified at 252 days by every measure in this
+    study - its posterior is its prior to three decimals - and it still shows a
+    gap of about +40. So +40 is roughly what a parameter that knows NOTHING
+    scores, and any gap has to be read against two other things:
+
+      move = cross-date sd of the posterior mean / the 95% width at one date.
+             How far the series travels against the uncertainty it travels
+             within. Below ~0.15 the series is not going anywhere.
+
+      drag = r(param, sigma) * gap(sigma) + r(param, lambda) * gap(lambda).
+             What the gap would be if the parameter did nothing of its own and
+             was merely carried along the sigma/lambda ridge. A gap matched by
+             its drag is not evidence; a gap well past it is.
+
+    sigma and lambda are the regressors, so they get no drag column - they are
+    judged on `move` and on their identification ratio alone.
+    """
     stress = STRESS if stress is None else stress
     calm = CALM if calm is None else calm
     print()
-    print("  RESPONDS? median percentile over stress episodes against the")
-    print("  calm control, per parameter. A parameter that responds shows a")
-    print("  wide gap; one that is wandering shows none.")
-    print("  %-8s %s" % ("param", " ".join("%22s" % c for c in cells)))
-    print("  " + "-" * (8 + 23 * len(cells)))
+    print("  RESPONDS? stress percentile minus the calm control, per")
+    print("  parameter, against how far the series actually travels and")
+    print("  against what being dragged along sigma/lambda alone would give.")
     out = {}
-    for k in SYS_PARAMS:
-        row = []
-        for c, df in cells.items():
+    for c, df in cells.items():
+        gap, mv = {}, {}
+        for k in SYS_PARAMS:
             if k not in df:
-                row.append("%22s" % "-")
                 continue
             st = np.nanmedian([pctile(df[k], w)[0] for w in stress.values()])
             cm = np.nanmedian([pctile(df[k], w)[0] for w in calm.values()])
+            gap[k] = st - cm
+            w95 = _width(df, k)
+            sd = float(df[k].astype(float).std(ddof=1))
+            mv[k] = sd / w95 if w95 and np.isfinite(w95) else np.nan
             out[(k, c)] = (st, cm)
-            row.append("%22s" % ("%3.0f%% vs %3.0f%%  (%+4.0f)"
-                                 % (st, cm, st - cm)))
-        print("  %-8s %s" % (k, " ".join(row)))
-    print("  Sign matters as much as size: pprob is expected to go the OTHER")
-    print("  way, low in stress, because it is P(UP jump).")
+        print()
+        print("  %s" % c)
+        print("  %-8s %8s %8s %8s   %s"
+              % ("param", "gap", "move", "drag", "verdict"))
+        print("  " + "-" * 62)
+        for k in SYS_PARAMS:
+            if k not in gap:
+                continue
+            if k in ("dSIGMA", "dLAMB"):
+                drag, dtxt = None, "%8s" % "-"
+            else:
+                drag = 0.0
+                for ref in ("dSIGMA", "dLAMB"):
+                    if ref in df and df[k].std() and df[ref].std():
+                        r = float(np.corrcoef(df[k].astype(float),
+                                              df[ref].astype(float))[0, 1])
+                        drag += r * gap.get(ref, 0.0)
+                dtxt = "%+8.0f" % drag
+            # ORDER MATTERS. drag first, because a gap a parameter did not
+            # generate is not evidence however far the series travels. `move`
+            # is a CAVEAT, not a disqualification: it divides by the width at
+            # ONE date, and a contrast between two groups of dates is
+            # determined far better than any single date is. A parameter can
+            # have a real regime difference in its medians while every
+            # individual posterior is wide - which is exactly where pprob sits
+            # at 756 - and calling that "noise" would be the wrong call.
+            if drag is not None and abs(gap[k] - drag) < 15:
+                v = "explained by the sigma/lambda ridge"
+            elif not np.isfinite(mv[k]) or mv[k] < 0.15:
+                v = ("past its drag, but moves only %.0f%% of one posterior "
+                     "width" % (100 * mv[k]))
+            elif mv[k] > 0.4:
+                v = "REAL - travels, and past its drag"
+            else:
+                v = "past its drag, travels modestly"
+            print("  %-8s %+8.0f %8.2f %s   %s" % (k, gap[k], mv[k], dtxt, v))
+    print()
+    print("  Sign matters as much as size: pprob is P(UP jump) and is")
+    print("  expected to go the other way, low in stress.")
+    print()
+    print("  WHAT THIS TABLE STILL CANNOT DO. `move` is the per-date width,")
+    print("  which is the wrong denominator for a difference between two")
+    print("  GROUPS of dates - with 245 of them the group median is pinned")
+    print("  far better than any one date. The right statistic is the median")
+    print("  contrast against its own standard error, and a plain one would be")
+    print("  far too small here: consecutive 252-day windows share 251 of 252")
+    print("  observations, so these are nothing like independent draws. That")
+    print("  needs a BLOCK bootstrap over episode-length blocks, which is not")
+    print("  in this file. Until it is, read `drag` as the test and `move` as")
+    print("  a caveat - a row past its drag but low on move is unproven, not")
+    print("  refuted.")
     return out
 
 

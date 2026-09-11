@@ -482,6 +482,49 @@ SYSTEMATIC_PRIORS_PDOWN_FLAT["pprob_rv"] = (
     "Uniform", {"lower": 0.0, "upper": 0.5})            # mean 0.250 sd 0.1443
 
 
+# ---------------------------------------------------------------------------
+# pprob free. The arm for MEASURING the jump sign rather than asserting it.
+# ---------------------------------------------------------------------------
+# Why a cap cannot do this job, whatever value it takes. The economic claim is
+# that P(down) RISES in stress, which is a statement about the gap between
+# regimes. Under skew-tight the fitted by-year pprob means are 0.589 in calm
+# years and 0.503 in stress ones - a gap of 0.086 - and the censoring a cap
+# imposes falls on the CALM side, which is where the high values are:
+#
+#     cap    binds in        calm    stress     gap    share of gap surviving
+#     0.50   17/20 (85%)    0.5000   0.4934   0.0066            8%
+#     0.60    3/20 (15%)    0.5879   0.5028   0.0851           99%
+#     0.65    0/20  (0%)      -        -        -             100%
+#
+# (Clipping is a LOWER bound on the damage: a truncated posterior piles AT the
+# boundary, it does not merely stop there.)
+#
+# So 0.5 is the only cap with an economic meaning - down jumps are never the
+# rarer kind - and it costs 92% of the very contrast the restriction is
+# motivated by. 0.6 keeps the contrast and asserts nothing anyone would defend;
+# "up jumps can be as likely as 60%" is not a claim. That arm has been here
+# before: a293b64 added a pprob <= 0.6 cap and it was removed on 4 September
+# 2026 because capping a parameter the window cannot identify constrains the
+# prior rather than the data.
+#
+# That removal reasoning is now HALF out of date, which is why the question is
+# worth reopening rather than re-closing. Under the corrected width-against-
+# width ratio pprob sits at 0.937-0.945 on a 252-day window - still barely
+# identified, the removal stands there - but at 756 days under skewtight-
+# lamflat it reaches 0.562, with a width ratio of 0.600 against the sqrt(3) =
+# 0.577 a purely statistical gain would give. pprob at three years is the one
+# parameter in this study that gets the full theoretical benefit of the longer
+# window.
+#
+# So: assert with pdown-tight / pdown-flat, MEASURE with this, and measure it
+# at 756 where there is something to measure. Beta(1,1) rather than
+# Uniform(0,1) to match how alpha-flat states the same thing, and to keep the
+# sampler off a hard boundary in the transform.
+SYSTEMATIC_PRIORS_PPROB_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_PPROB_FLAT["pprob_rv"] = (
+    "Beta", {"alpha": 1.0, "beta": 1.0})                # mean 0.500 sd 0.2887
+
+
 SYSTEMATIC_PRIOR_SETS = {
     "paper":      None,                      # priors=None -> SYSTEMATIC_PRIORS
     "gaps":       SYSTEMATIC_PRIORS_GAPS,
@@ -494,6 +537,7 @@ SYSTEMATIC_PRIOR_SETS = {
     "skewtight-lamflat": SYSTEMATIC_PRIORS_SKEW_TIGHT_LAMFLAT,
     "pdown-tight": SYSTEMATIC_PRIORS_PDOWN_TIGHT,
     "pdown-flat":  SYSTEMATIC_PRIORS_PDOWN_FLAT,
+    "pprob-flat":  SYSTEMATIC_PRIORS_PPROB_FLAT,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
@@ -504,7 +548,8 @@ STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
                 "alpha-tiny": "__alphatiny",
                 "skewtight-lamflat": "__skewtightlamflat",
                 "pdown-tight": "__pdowntight",
-                "pdown-flat": "__pdownflat"}
+                "pdown-flat": "__pdownflat",
+                "pprob-flat": "__pprobflat"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.

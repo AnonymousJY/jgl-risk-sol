@@ -158,6 +158,32 @@ def main():
         print("  %-8s %11.5f %11.5f %8.3f"
               % (k, sa, sb, sb / sa if sa else np.nan))
     print()
+    print("  Confounding - correlation of each parameter's series with dSIGMA")
+    print("  and dLAMB, at the date level, inside each drawer:")
+    print("  %-8s %9s %9s %9s %9s" % ("param", "r sigma A", "r sigma B",
+                                      "r lamb A", "r lamb B"))
+    print("  " + "-" * 50)
+    for k in SYS_PARAMS:
+        if k in ("dSIGMA", "dLAMB") or k not in da or k not in db:
+            continue
+        r = []
+        for d, ref in ((da, "dSIGMA"), (db, "dSIGMA"), (da, "dLAMB"),
+                       (db, "dLAMB")):
+            r.append(float(np.corrcoef(d[k].astype(float),
+                                       d[ref].astype(float))[0, 1])
+                     if ref in d and d[k].std() > 0 and d[ref].std() > 0
+                     else float("nan"))
+        print("  %-8s %+9.3f %+9.3f %+9.3f %+9.3f" % (k, *r))
+    print()
+    print("  This is the test a parameter that starts MOVING under the longer")
+    print("  window has to pass. A posterior mean that wanders while its width")
+    print("  stays put is being pushed, not measured, and the usual thing")
+    print("  pushing it is the diffusion/jump split: sigma falls and lambda")
+    print("  rises as the window stops being one regime. A correlation with")
+    print("  dSIGMA that appears only in column B is that, not information.")
+    print("  The dates overlap heavily, so read the SIGN and the SIZE; there")
+    print("  are nothing like %d independent observations behind it." % len(common))
+    print()
     print("  A 3-year window overlaps 755 of its 756 observations day to day, so")
     print("  the series is smoother by construction. That is not a better")
     print("  estimate of anything - it is the same crisis held in view three")

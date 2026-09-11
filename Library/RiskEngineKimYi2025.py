@@ -872,11 +872,30 @@ IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX["mui"] = (
 IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX["rhoix_rv"] = (
     "Uniform", {"lower": 0.0005, "upper": 0.9995})        # rhoix mean 0.000
 
+# rhoix flat, mui left at Normal(0, 1). THIS is the arm to run against
+# "paper": the two differ in exactly one prior, so any movement in betai or
+# kappai between them is attributable to rhoix alone. flat-mu-rhoix above
+# moves two things at once and cannot support that reading - it stays only
+# because an arm that has written a drawer should not be deleted out from
+# under it.
+#
+# Leaving mui at Normal(0, 1) costs nothing. It is the one idiosyncratic
+# parameter the window genuinely identifies - at 504 days the likelihood pins
+# a drift to about sigma/sqrt(T) = 0.11 annualised, so a prior nine times
+# wider than that is already not doing any work, and widening it further only
+# makes mui's identification RATIO look better without changing its posterior.
+# A ratio against an arbitrary support is a statement about the support.
+IDIOSYNCRATIC_PRIORS_RHOIX_FLAT = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_RHOIX_FLAT["rhoix_rv"] = (
+    "Uniform", {"lower": 0.0005, "upper": 0.9995})        # rhoix mean 0.000
+
 IDIOSYNCRATIC_PRIOR_SETS = {
     "paper": None,                        # priors=None -> IDIOSYNCRATIC_PRIORS
+    "rhoix-flat": IDIOSYNCRATIC_PRIORS_RHOIX_FLAT,
     "flat-mu-rhoix": IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX,
 }
-IDIO_STORE_SUFFIX = {"paper": "", "flat-mu-rhoix": "__flatmurhoix"}
+IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
+                     "flat-mu-rhoix": "__flatmurhoix"}
 
 
 def pmle_kimyirisk_idiosyncratic(

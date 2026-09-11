@@ -10,12 +10,38 @@ poc/estimate_systematic.py still declares its own copies. Fold it onto this
 module once no run is in flight - editing it mid-run risks a forkserver child
 re-importing a half-written file.
 
-LOOKBACK here is the STUDY DEFAULT, one regulatory year. The two estimation
-drivers now take --lookback and carry the window in the drawer name (suffix
-__lb<n>, empty at 252), so a 3-year run is a separate store rather than an
-edit to this constant. Change this only to move the study itself; nothing
-that reads a drawer should infer its window from this value - read the
-drawer's _priors.json, which records the lookback the fits were made with.
+THE STUDY WINDOW IS NOW 504 DAYS (two years), decided 11 September 2026 off
+the window ladder. LOOKBACK below stays 252 ANYWAY, and the distinction
+matters enough to state twice.
+
+252 is the NAMING BASE, not the study window. estimate_systematic's
+BASE_LOOKBACK is what lookback_suffix compares against: a run at the base
+gets no suffix, anything else gets __lb<n>. Every drawer fitted at 252 to
+date is therefore unsuffixed. Move the base to 504 and the next 504-day run
+writes into those unsuffixed drawers - two window lengths interleaved inside
+one series, with run() reporting each date as "already on disk". That is the
+exact contamination this suffix scheme exists to prevent, and changing a
+constant named "STUDY DEFAULT" is the obvious way to walk into it.
+
+So: the study reads __lb504 drawers, the base stays 252 forever, and which
+window a drawer holds is read from its own _priors.json rather than inferred
+from any constant.
+
+WHY 504. From the ladder on alpha-pprob-flat, as posterior 95% width over
+prior 95% width:
+
+                 252      504      756
+    dSIGMA     0.056    0.046    0.040    identified throughout
+    dPPROB     0.885    0.638    0.461    crosses at two years
+    dALPHA     0.994    0.937    0.730    needs ~19 years; full sample only
+    dLAMB      0.906    1.177    1.445    never - and worse with more data
+    dETA1      0.989    0.947    0.866    never
+    dETA2      1.017    1.026    1.030    never
+
+Two years is the shortest window that identifies both sigma and the jump
+sign. It costs some responsiveness in sigma - its cross-date sd falls from
+2.11 of its own posterior width to 1.66 - and it dilutes the episode and
+vintage contrasts, which are statements about what a window CONTAINS.
 """
 import numpy as np
 import pandas as pd

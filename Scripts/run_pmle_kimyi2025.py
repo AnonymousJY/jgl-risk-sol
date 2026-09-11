@@ -84,13 +84,18 @@ def pmle_kimyirisk_idiosyncratic_helper(args) -> tuple:
 
     Returns ``(valuation_dt, idiosyncratic_id, results)``.
     """
-    valuation_dt, params_sys, return_vector, delta_t, seed_number, n_mc_paths, idiosyncratic_id = args
+    # Eight elements when an arm is in force, seven for the published
+    # configuration - so every existing caller keeps working unchanged.
+    (valuation_dt, params_sys, return_vector, delta_t, seed_number,
+     n_mc_paths, idiosyncratic_id) = args[:7]
+    priors = args[7] if len(args) > 7 else None
     results = pmle_kimyirisk_idiosyncratic(
         params_sys=params_sys,
         idi_returns=return_vector,
         delta_t=delta_t,
         seed_number=seed_number,
         n_mc_paths=n_mc_paths,
+        priors=priors,
     )
     return valuation_dt, idiosyncratic_id, results
 

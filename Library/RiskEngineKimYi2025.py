@@ -648,6 +648,9 @@ def prior_moments(spec):
     if dist == "Uniform":
         lo, hi = float(kw["lower"]), float(kw["upper"])
         return 0.5 * (lo + hi), (hi - lo) / np.sqrt(12.0)
+    if dist == "Normal":
+        return (float(kw.get("mu", 0.0)),
+                float(kw.get("sigma", kw.get("sd", 1.0))))
     a, b = float(kw["alpha"]), float(kw["beta"])
     if dist == "Gamma":
         return a / b, np.sqrt(a) / b
@@ -816,6 +819,66 @@ def pmle_kimyirisk_systematic(
     }
 
 
+# ---------------------------------------------------------------------------
+# Priors on the idiosyncratic block
+# ---------------------------------------------------------------------------
+# These name the UNCONSTRAINED variable in each case, because the transform
+# that follows is structural and is not a modelling choice: kappai, gammai and
+# betai are exp() of their _rv, and rhoix is 2*rhoix_rv - 1 carried through
+# arctanh/tanh. So a spec here changes the prior and never the parameterisation.
+#
+# WHICH OF THESE THE DATA CAN ACTUALLY SPEAK TO. In KimYiLogLike the five enter
+# only through two scalars:
+#
+#     _variance() = (sigma*betai)^2 + 2*sigma*betai*kappai*rhoix + kappai^2
+#     _drift()    = mui + 0.5*(sigma*betai)^2 - sigma*betai*kappai*rhoix
+#
+# Two equations, four unknowns - mui, betai, kappai, rhoix - and rhoix appears
+# ONLY inside the product sigma*betai*kappai*rhoix. The idiosyncratic
+# likelihood never sees the systematic SERIES either, only systematic
+# constants, so there is no cross-moment to break the tie. gammai is the
+# exception: it rescales the jump decays as eta/gammai and is separately
+# identified.
+#
+# So a prior on rhoix is not a starting point the data refines - it PICKS A
+# POINT on a two-dimensional flat manifold, and betai and kappai follow it
+# there. That is why the flat arm below is a diagnostic and not an estimator.
+IDIOSYNCRATIC_PRIORS = {
+    "mui":       ("Normal", {"mu": 0.0, "sigma": 1.0}),   # mean 0.000 sd 1.000
+    "kappai_rv": ("Gamma",  {"alpha": 2.0, "beta": 1.0}), # mean 2.000 sd 1.414
+    "gamma_rv":  ("Gamma",  {"alpha": 3.0, "beta": 1.0}), # mean 3.000 sd 1.732
+    "betai_rv":  ("Gamma",  {"alpha": 3.0, "beta": 1.0}), # mean 3.000 sd 1.732
+    "rhoix_rv":  ("Beta",   {"alpha": 5.0, "beta": 2.0}), # rhoix mean 0.4286
+}
+
+# Flat on mui and rhoix, nothing else touched.
+#
+# mui is already close to flat and, unlike rhoix, IDENTIFIED: at 504 days the
+# likelihood pins a drift to about sigma/sqrt(T) = 0.11 annualised, so
+# Normal(0,1) is already nine times wider than the data's own resolution.
+# Uniform(-5, 5) is literally flat and its edges sit ~45 likelihood sds away,
+# so they cannot bind. Expect this half to change nothing, which is the point:
+# it shows the drift prior was never doing the work.
+#
+# rhoix_rv Uniform gives rhoix = 2*rhoix_rv - 1 flat on (-1, 1) with mean 0 -
+# no assertion that a name's idiosyncratic Brownian is positively correlated
+# with the systematic one. BOUNDED JUST INSIDE: rhoix is carried through
+# arctanh, which is infinite at +-1. Beta(5,2) has zero density there and is
+# safe; a uniform is not. 0.0005/0.9995 puts rhoix in (-0.999, 0.999) and
+# keeps arctanh finite, at the cost of 0.1% of the support at each end.
+IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX["mui"] = (
+    "Uniform", {"lower": -5.0, "upper": 5.0})             # mean 0.000 sd 2.887
+IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX["rhoix_rv"] = (
+    "Uniform", {"lower": 0.0005, "upper": 0.9995})        # rhoix mean 0.000
+
+IDIOSYNCRATIC_PRIOR_SETS = {
+    "paper": None,                        # priors=None -> IDIOSYNCRATIC_PRIORS
+    "flat-mu-rhoix": IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX,
+}
+IDIO_STORE_SUFFIX = {"paper": "", "flat-mu-rhoix": "__flatmurhoix"}
+
+
 def pmle_kimyirisk_idiosyncratic(
         idi_returns: NDArray[np.float64],
         params_sys: dict,
@@ -823,7 +886,8 @@ def pmle_kimyirisk_idiosyncratic(
         seed_number: np.uint64 = np.uint64(20240114),
         n_mc_paths: int = 10_000,
         nuts_sampler: Literal["pymc", "nutpie", "jax", "numpyro", "blackjax"] = "nutpie",
-        is_progress_bar: bool = False
+        is_progress_bar: bool = False,
+        priors: dict = None
 ) -> dict:
     SEED = np.uint64(seed_number)
     Delta_t = delta_t
@@ -837,19 +901,31 @@ def pmle_kimyirisk_idiosyncratic(
     eta1 = params_sys["dETA1"]
     eta2 = params_sys["dETA2"]
 
-    with pm.Model():
-        mui = pm.Normal(name="mui")
+    # priors=None reproduces the published configuration exactly.
+    pr = dict(IDIOSYNCRATIC_PRIORS)
+    if priors:
+        unknown = set(priors) - set(pr)
+        if unknown:
+            raise ValueError("unknown idiosyncratic prior key(s): %s"
+                             % sorted(unknown))
+        pr.update(priors)
 
-        kappai_rv = pm.Gamma(name="kappai_rv", alpha=2., beta=1.)
+    with pm.Model():
+        # The pymc variable names are load-bearing: _warn_low_ess and every
+        # summarize() call below address them by name, and "gamma_rv" is the
+        # odd one out. Keep them exactly as they are.
+        mui = _build_prior("mui", pr["mui"])
+
+        kappai_rv = _build_prior("kappai_rv", pr["kappai_rv"])
         kappai = pm.Deterministic("kappai", pt.log(kappai_rv))
 
-        gammai_rv = pm.Gamma(name="gamma_rv", alpha=3., beta=1.)
+        gammai_rv = _build_prior("gamma_rv", pr["gamma_rv"])
         gammai = pm.Deterministic("gammai", pt.log(gammai_rv))
 
-        betai_rv = pm.Gamma(name="betai_rv", alpha=3., beta=1.)
+        betai_rv = _build_prior("betai_rv", pr["betai_rv"])
         betai = pm.Deterministic("betai", pt.log(betai_rv))
 
-        rhoix_rv = pm.Beta(name="rhoix_rv", alpha=5, beta=2.)
+        rhoix_rv = _build_prior("rhoix_rv", pr["rhoix_rv"])
         loc, scale = -1., 2.
         rhoix = pm.Deterministic("rhoix", pt.arctanh((scale * rhoix_rv) + loc))
 

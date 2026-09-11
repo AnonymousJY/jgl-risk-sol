@@ -99,7 +99,15 @@ from poc.estimate_systematic import (                        # noqa: E402
 LOOKBACK = BASE_LOOKBACK
 from Library.RiskEngineKimYi2025 import (                    # noqa: E402
     SYSTEMATIC_PRIOR_SETS as PRIOR_SETS,
+    IDIOSYNCRATIC_PRIOR_SETS, IDIO_STORE_SUFFIX, IDIOSYNCRATIC_PRIORS,
+    prior_moments, prior_ci_width,
 )
+
+# The idiosyncratic arm in force, set by main() from --idio-priors. Module
+# level so the forkserver children inherit it rather than needing it threaded
+# through every signature.
+IDIO_TAG = "paper"
+IDIO_PRIORS_IN_FORCE = None
 
 COLOR = None
 
@@ -121,6 +129,39 @@ BEG = "20070101"
 END = "20260831"
 
 
+def idio_prior_summary(param):
+    """(label, mean, sd, 95% width) of the prior ACTUALLY IN FORCE for one
+    reported parameter.
+
+    The reported column is a transform of the sampled variable, so the prior
+    has to be carried through the same map or the denominator belongs to a
+    different quantity:
+
+        dKAPPAI = exp(log kappai_rv) = kappai_rv   - identity, same prior
+        dGAMMAI, dBETAI                            - likewise
+        dMUI    = mui                              - identity
+        dRHOIX  = tanh(arctanh(2 rhoix_rv - 1))    - LINEAR, so mean and width
+                                                     both scale by 2 and the
+                                                     mean shifts by -1
+
+    Reading dRHOIX's ratio against rhoix_rv's own width would understate it by
+    exactly a factor of two, and the hard-coded table this replaces would have
+    reported the PAPER prior's moments under any other arm - the same silent
+    mismatch the systematic side had.
+    """
+    key = {"dMUI": "mui", "dKAPPAI": "kappai_rv", "dGAMMAI": "gamma_rv",
+           "dBETAI": "betai_rv", "dRHOIX": "rhoix_rv"}[param]
+    spec = (IDIOSYNCRATIC_PRIORS if IDIO_PRIORS_IN_FORCE is None
+            else IDIO_PRIORS_IN_FORCE)[key]
+    m, sd = prior_moments(spec)
+    w = prior_ci_width(spec, CI_PROB)
+    if param == "dRHOIX":
+        m, sd, w = 2.0 * m - 1.0, 2.0 * sd, 2.0 * w
+    label = "%s%s" % (spec[0], tuple(round(float(v), 4)
+                                     for _, v in sorted(spec[1].items())))
+    return label, m, sd, w
+
+
 # ---------------------------------------------------------------------------
 # where results go
 # ---------------------------------------------------------------------------
@@ -134,11 +175,15 @@ def name_store_id(name, anchor, tag, priors, lookback=None):
     the same trap that cost a systematic run.
     """
     lb = lookback_suffix(LOOKBACK if lookback is None else lookback)
+    # The idiosyncratic arm is part of the estimate exactly as the systematic
+    # one is, and a flat rhoix prior moves betai and kappai with it. Two arms
+    # must not share a drawer.
+    idio = IDIO_STORE_SUFFIX.get(IDIO_TAG, "")
     if anchor == "full":
-        return "%s__full%s" % (name, lb)
+        return "%s__full%s%s" % (name, idio, lb)
     suffix = "" if tag == "paper" else "%s_%s" % (STORE_SUFFIX[tag],
                                                   priors_digest(priors))
-    return "%s__%s%s%s" % (name, anchor, suffix, lb)
+    return "%s__%s%s%s%s" % (name, anchor, suffix, idio, lb)
 
 
 def full_sample_series():
@@ -238,7 +283,8 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None,
             continue
         params_sys, sys_series = cache[dt]
         tasks.append(((dt, params_sys, rv, np.array(1 / BASE_DAYS), SEED,
-                       N_MC_PATHS, drawer), sys_series, name))
+                       N_MC_PATHS, drawer, IDIO_PRIORS_IN_FORCE),
+                      sys_series, name))
 
     manifest_written = set()
     for _, _, name in tasks:
@@ -318,6 +364,11 @@ def write_manifest(drawer, name, anchor, tag, priors):
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, "_conditioning.json"), "w") as fh:
         json.dump({"name": name, "anchor": anchor, "lookback": LOOKBACK,
+                   "idio_priors_tag": IDIO_TAG,
+                   "idio_priors": ({k: [d, kw] for k, (d, kw)
+                                    in sorted(IDIO_PRIORS_IN_FORCE.items())}
+                                   if IDIO_PRIORS_IN_FORCE is not None
+                                   else "engine defaults"),
                    "systematic_priors": tag,
                    "systematic_digest": priors_digest(priors),
                    "lookback": LOOKBACK, "seed": int(SEED),
@@ -391,15 +442,23 @@ def report(name, df):
 
     print("\nIdentification over time - share of valuation dates where the")
     print("posterior is narrower than the prior (ratio < 0.70):")
+    print("  ratio = posterior %.0f%% width / PRIOR %.0f%% width, both"
+          " equal-tailed," % (100 * CI_PROB, 100 * CI_PROB))
+    print("  so an unmoved posterior reads 1.00 whatever the prior's shape.")
     for k in IDIO_PARAMS:
         w = k + "_W"
-        if k not in IDIO_PRIORS or w not in df:
+        if w not in df:
             continue
-        label, pmean, psd = IDIO_PRIORS[k]
-        ratio = (df[w] * CI_WIDTH_TO_SD) / psd
-        shift = (df[k].median() - pmean) / psd
+        try:
+            label, pmean, psd, pw = idio_prior_summary(k)
+        except Exception:                                     # noqa: BLE001
+            continue
+        if not pw:
+            continue
+        ratio = df[w] / pw
+        shift = (df[k].median() - pmean) / psd if psd else float("nan")
         share = 100.0 * float((ratio < 0.70).mean())
-        print("   %-8s %-14s %5.1f%%   median ratio %.2f   shift %+.2f sd"
+        print("   %-8s %-16s %5.1f%%   median ratio %.2f   shift %+.2f sd"
               % (k, label, share, ratio.median(), shift))
     print("\n   0% means never identified at any date - that column is a")
     print("   series of priors. A large |shift| is decisive evidence of data")
@@ -447,6 +506,16 @@ def main():
                     help="which systematic values to hold constant. See the "
                          "module docstring - this is a modelling choice, not a "
                          "detail.")
+    ap.add_argument("--idio-priors", choices=tuple(IDIOSYNCRATIC_PRIOR_SETS),
+                    default="paper",
+                    help="priors on the NAME's own five parameters. paper: "
+                         "the published literals. flat-mu-rhoix: mui "
+                         "Uniform(-5,5) and rhoix flat on (-1,1) with mean 0. "
+                         "rhoix enters the likelihood only inside the product "
+                         "sigma*betai*kappai*rhoix, so that arm is a "
+                         "DIAGNOSTIC - it shows the posterior is the prior - "
+                         "and not an estimator. Non-default opens its own "
+                         "drawer.")
     ap.add_argument("--priors", choices=tuple(PRIOR_SETS), default="gaps",
                     help="which systematic run to condition on (ignored for "
                          "--anchor full)")
@@ -468,8 +537,10 @@ def main():
                          "overwriting in place")
     a = ap.parse_args()
 
-    global COLOR, LOOKBACK
+    global COLOR, LOOKBACK, IDIO_TAG, IDIO_PRIORS_IN_FORCE
     COLOR = a.color
+    IDIO_TAG = a.idio_priors
+    IDIO_PRIORS_IN_FORCE = IDIOSYNCRATIC_PRIOR_SETS[a.idio_priors]
     if a.lookback < 60:
         raise SystemExit("--lookback %d is too short; the study default is %d."
                          % (a.lookback, BASE_LOOKBACK))
@@ -492,6 +563,13 @@ def main():
     print("  window  : %s -> %s every %d business days, %d-day lookback"
           % (a.beg, a.end, a.step, LOOKBACK))
     print("  anchor  : %s" % a.anchor)
+    print("  idio priors: %s" % a.idio_priors)
+    if a.idio_priors != "paper":
+        print("    NON-DEFAULT - own drawer (%s). rhoix is not identified by"
+              % IDIO_STORE_SUFFIX[a.idio_priors])
+        print("    this likelihood at any prior, so read the rhoix posterior")
+        print("    as a check that it equals its prior, and watch what betai")
+        print("    and kappai do when it is free to move.")
     if a.anchor == "hybrid":
         print("    dSIGMA/dLAMB/dPPROB from the rolling fit in %s" % sys_store)
         print("    dALPHA/dETA1/dETA2 from FULL_SAMPLE - a window cannot")

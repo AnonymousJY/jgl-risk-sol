@@ -69,10 +69,17 @@ STRESS = {
     "SVB 2023":     ("2023-03-01", "2023-06-30"),
     "Tariffs 2025": ("2025-04-01", "2025-07-31"),
 }
+# A calm control has to be chosen by what the trailing WINDOW held, not by
+# what the calendar year was called. "calm 2017" over a 252-day window reaches
+# back into 2016 - Brexit and the US election - and "calm 2019H2" reaches into
+# the Q4 2018 selloff, which is why both scored 58% and 73% on lambda in the
+# first run and looked like failed controls when they were badly chosen ones.
+# These are second halves, so the window is inside the named year.
 CALM = {
-    "calm 2013":    ("2013-01-01", "2013-12-31"),
-    "calm 2017":    ("2017-01-01", "2017-12-31"),
-    "calm 2019H2":  ("2019-07-01", "2019-12-31"),
+    "calm 2013H2":  ("2013-07-01", "2013-12-31"),
+    "calm 2014H2":  ("2014-07-01", "2014-12-31"),
+    "calm 2017H2":  ("2017-07-01", "2017-12-31"),
+    "calm 2024H2":  ("2024-07-01", "2024-12-31"),
 }
 
 
@@ -145,6 +152,26 @@ def main():
     if not cells:
         raise SystemExit("no drawers loaded")
 
+    # Percentile is "where in its OWN series", so two cells are comparable
+    # only if the series cover the same dates. A daily drawer of 5,131 dates
+    # against a monthly one of 245 is not the same denominator.
+    common = None
+    for df in cells.values():
+        common = df.index if common is None else common.intersection(df.index)
+    if len(common) < 20:
+        raise SystemExit("cells share only %d dates - run them on the same "
+                         "--beg/--end/--step first" % len(common))
+    dropped = {c: len(df) - len(common) for c, df in cells.items()}
+    cells = {c: df.loc[common] for c, df in cells.items()}
+    if any(dropped.values()):
+        print()
+        print("  ALIGNED to %d dates shared by every cell (dropped %s)."
+              % (len(common),
+                 ", ".join("%s: %d" % (c, n) for c, n in dropped.items()
+                           if n)))
+        print("  Percentile is position within a cell's own series, so an")
+        print("  unaligned daily drawer and monthly one are not comparable.")
+
     print()
     print("=" * 78)
     print("stress response :: percentile within each cell's OWN series")
@@ -175,6 +202,27 @@ def main():
           cells, STRESS, "dETA1", "  Mean up jump is 1/eta1.")
     table("ETA2 - down-jump decay; FALLING means bigger down jumps",
           cells, STRESS, "dETA2", "  Mean down jump is 1/eta2.")
+
+    # --- the one-line answer for every parameter -----------------------------
+    print()
+    print("  RESPONDS? median percentile over stress episodes against the")
+    print("  calm control, per parameter. A parameter that responds shows a")
+    print("  wide gap; one that is wandering shows none.")
+    print("  %-8s %s" % ("param",
+                         " ".join("%22s" % c for c in cells)))
+    print("  " + "-" * (8 + 23 * len(cells)))
+    for k in SYS_PARAMS:
+        row = []
+        for c, df in cells.items():
+            if k not in df:
+                row.append("%22s" % "-"); continue
+            st = np.nanmedian([pctile(df[k], w)[0] for w in STRESS.values()])
+            cm = np.nanmedian([pctile(df[k], w)[0] for w in CALM.values()])
+            row.append("%22s" % ("%3.0f%% vs %3.0f%%  (%+4.0f)"
+                                 % (st, cm, st - cm)))
+        print("  %-8s %s" % (k, " ".join(row)))
+    print("  Sign matters as much as size: pprob is expected to go the OTHER")
+    print("  way, low in stress, because it is P(UP jump).")
 
     # --- is lambda redundant given sigma? -----------------------------------
     print()

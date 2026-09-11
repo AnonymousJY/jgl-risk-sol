@@ -408,10 +408,35 @@ SYSTEMATIC_PRIORS_ALPHA_LOW["alpha_rv"] = (
 # ratio-to-prior is meaningless against a support of 200 and the diagnostic
 # prints it only because it prints it for everything.
 #
-# If the 756 width stays near 19, the width is the likelihood's and the
-# three-year window really does fail to pin the jump intensity. If it
-# collapses, the Gamma(3, 0.5) tail was the whole effect and the
-# mis-specification reading of that widening was wrong.
+# It came back at 63.5, which is neither. The prior was not shifting lambda,
+# it was doing essentially all the work of pinning it: freeing it gives an
+# interval as wide as the level itself. lambda, eta1, eta2 and sigma are
+# identified only JOINTLY, up to a ridge along which many small jumps and a
+# smaller diffusion trade against few large jumps and a larger one.
+#
+# WHICH IS WHY THIS ARM IS A DIAGNOSTIC AND NOT A CANDIDATE. A point on that
+# ridge is chosen by what a jump is supposed to MEAN, and the flat arm chooses
+# one where the word stops meaning anything:
+#
+#   cell             lambda  days/jump  up size  dn size  jump var%  ann sd
+#   252 skew-tight     8.76       28.8    1.99%    3.75%      39.1%   19.4%
+#   252 lamflat       31.01        8.1    1.76%    3.35%      69.7%   24.1%
+#   756 skew-tight    19.57       12.9    1.85%    3.08%      56.7%   20.6%
+#   756 lamflat       69.98        3.6    1.27%    2.24%      78.1%   23.0%
+#
+# lambda = 70 is a "jump" every 3.6 trading days of 1.3% up and 2.2% down,
+# carrying 78% of total variance - the jump component has eaten the diffusion
+# and the Kou decomposition no longer names two different things. The implied
+# rate of jumps at or beyond 5% is 1.41/yr under skew-tight against 3.98/yr
+# under the flat arm; SPX has had roughly 1.8 such days a year since 2007.
+#
+# So Gamma(3, 0.5) is an IDENTIFYING RESTRICTION, not a nuisance prior. The
+# likelihood gives the ridge, economics picks the point, and the data then
+# moves along what is left - which it demonstrably does: the skew-tight lambda
+# prior has sd 3.46 while the fitted series has cross-date sd 6.28. The prior
+# is the same at every valuation date and cannot generate dispersion 1.8x its
+# own width. The LEVEL is asserted; the MOVEMENT is measured, and the movement
+# is what the economic claim rests on (poc/stress_response.py).
 SYSTEMATIC_PRIORS_SKEW_TIGHT_LAMFLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
 SYSTEMATIC_PRIORS_SKEW_TIGHT_LAMFLAT["lamb"] = (
     "Uniform", {"lower": 0.0, "upper": 200.0})           # mean 100.0 sd 57.735

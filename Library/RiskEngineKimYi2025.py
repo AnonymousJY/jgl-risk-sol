@@ -442,6 +442,46 @@ SYSTEMATIC_PRIORS_SKEW_TIGHT_LAMFLAT["lamb"] = (
     "Uniform", {"lower": 0.0, "upper": 200.0})           # mean 100.0 sd 57.735
 
 
+# ---------------------------------------------------------------------------
+# Hard negative skew on the jump SIGN: P(up) centred at 0.25, confined to
+# (0, 0.5]. Two versions, because "mean 0.25 on (0, 0.5]" has two readings and
+# they answer different questions.
+# ---------------------------------------------------------------------------
+# READ pprob CAREFULLY. In KimYiLogLike.logp, pprob multiplies the UP branch
+# and qprob = 1 - pprob the down branch, so pprob is P(UP JUMP). A prior mean
+# of 0.25 therefore asserts P(down) = 0.75 - three down jumps for every up one
+# - and the cap at 0.5 asserts that down jumps are never less likely than up
+# ones at any date. That is a sign restriction, not a preference.
+#
+# WHAT THE DATA CURRENTLY SAYS ABOUT THAT RESTRICTION. Under skew-tight, whose
+# pprob prior is centred at 0.575, the fitted by-year means run 0.484 to 0.602
+# with a median of 0.565, and 85% of years sit ABOVE 0.5. So the cap binds for
+# most of the sample and the posterior will pile against it rather than
+# distribute inside it. That is not a malfunction - it is the same test the
+# alpha-tiny arm ran, where a prior whose support excluded the full-sample
+# value returned its own mean to four decimals and said so. But it changes
+# what to read: pprob itself will be censored, so the informative output is
+# what eta1 and eta2 do to ABSORB the constraint, and whether the fit to the
+# window degrades (poc/variance_check.py).
+#
+# pdown-tight holds INFORMATIVENESS constant and moves only the centre. Its
+# truncated sd is 0.1110 against skew-tight's 0.1105, so a change in the
+# posterior is the centre moving and not the prior loosening - the confound
+# that made the alpha arms hard to read until the floors were worked out.
+SYSTEMATIC_PRIORS_PDOWN_TIGHT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_PDOWN_TIGHT["pprob_rv"] = (
+    "Beta", {"alpha": 2.8385, "beta": 7.8121,           # truncated: mean 0.250
+             "lower": 0.0, "upper": 0.5})               #            sd   0.111
+
+# pdown-flat asserts the sign restriction and NOTHING about degree inside it.
+# Mean 0.25 and support (0, 0.5] both hold exactly and by construction. It is
+# the looser prior - sd 0.1443, 95% width 0.4750 against 0.4094 - so read its
+# identification ratio against its own width, which the diagnostic now does.
+SYSTEMATIC_PRIORS_PDOWN_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_PDOWN_FLAT["pprob_rv"] = (
+    "Uniform", {"lower": 0.0, "upper": 0.5})            # mean 0.250 sd 0.1443
+
+
 SYSTEMATIC_PRIOR_SETS = {
     "paper":      None,                      # priors=None -> SYSTEMATIC_PRIORS
     "gaps":       SYSTEMATIC_PRIORS_GAPS,
@@ -452,6 +492,8 @@ SYSTEMATIC_PRIOR_SETS = {
     "alpha-low":  SYSTEMATIC_PRIORS_ALPHA_LOW,
     "alpha-tiny": SYSTEMATIC_PRIORS_ALPHA_TINY,
     "skewtight-lamflat": SYSTEMATIC_PRIORS_SKEW_TIGHT_LAMFLAT,
+    "pdown-tight": SYSTEMATIC_PRIORS_PDOWN_TIGHT,
+    "pdown-flat":  SYSTEMATIC_PRIORS_PDOWN_FLAT,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
@@ -460,7 +502,9 @@ STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
                 "skew": "__skew", "skew-tight": "__skewtight",
                 "alpha-flat": "__alphaflat", "alpha-low": "__alphalow",
                 "alpha-tiny": "__alphatiny",
-                "skewtight-lamflat": "__skewtightlamflat"}
+                "skewtight-lamflat": "__skewtightlamflat",
+                "pdown-tight": "__pdowntight",
+                "pdown-flat": "__pdownflat"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.

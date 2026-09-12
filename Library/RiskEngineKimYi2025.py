@@ -1009,6 +1009,31 @@ IDIOSYNCRATIC_PRIORS_RHOIX_FIXED["rhoix_rv"] = (
 # anything - it is the restriction stated where a reader can see it, instead of
 # left loose and carried into b_diff and every equivalent shock as though it
 # had been estimated.
+# rho_iX flat at ZERO, same width as rhoix-tight. The centre-move test.
+#
+# rhoix-tight declared 0.25 and the posterior came back at 0.2348 with a width
+# ratio of 1.00 at every date - the posterior IS the prior. That is consistent
+# with rho_iX being unidentified, but it is equally consistent with the data
+# agreeing with 0.25, and one run at one centre cannot tell those apart. Same
+# width, different centre can: Uniform(0.40, 0.60) on rhoix_rv is
+# Uniform(-0.20, +0.20) on rho_iX, mean 0, sd 0.1155 - identical to
+# rhoix-tight's, so only the centre has moved.
+#
+# WHAT TO LOOK FOR, because the interesting outcome is not in the rho_iX
+# column. b_diff = betai + kappai*rho_iX/sigma is the combination the
+# likelihood actually sees, and under rhoix-tight it splits as betai 1.26 plus
+# 0.28 from the correlation term, summing to b_i 1.54 at C. Pin rho_iX near
+# zero and the second term has to vanish - kappai cannot compensate, because
+# no value of kappai makes kappai*0 non-zero. So either rho_iX refuses to sit
+# at zero, which would mean it is identified after all, or betai rises to
+# absorb the whole loading and b_i is left roughly where it was. The second
+# outcome is the sharpest statement this study can make about what the data
+# pins: the sum, not the split.
+IDIOSYNCRATIC_PRIORS_RHOIX_ZERO = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_RHOIX_ZERO["rhoix_rv"] = (
+    "Uniform", {"lower": 0.40, "upper": 0.60})     # rho_iX U(-0.20, +0.20)
+
+
 IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT = dict(IDIOSYNCRATIC_PRIORS)
 IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT["rhoix_rv"] = (
     "Uniform", {"lower": 0.525, "upper": 0.725})   # rho_iX U(0.05, 0.45)
@@ -1020,11 +1045,13 @@ IDIOSYNCRATIC_PRIOR_SETS = {
     "flat-mu-rhoix": IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX,
     "rhoix-fixed": IDIOSYNCRATIC_PRIORS_RHOIX_FIXED,
     "rhoix-tight": IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT,
+    "rhoix-zero": IDIOSYNCRATIC_PRIORS_RHOIX_ZERO,
 }
 IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "flat-mu-rhoix": "__flatmurhoix",
                      "rhoix-fixed": "__rhoixfixed",
-                     "rhoix-tight": "__rhoixtight"}
+                     "rhoix-tight": "__rhoixtight",
+                     "rhoix-zero": "__rhoixzero"}
 
 
 def pmle_kimyirisk_idiosyncratic(

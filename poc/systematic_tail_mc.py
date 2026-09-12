@@ -41,6 +41,9 @@ from Library.Parameters import ParametersConstant                    # noqa: E40
 from Library.Random import RandomMT19937                             # noqa: E402
 from Library.RiskEngineKimYi2025 import (KimYiRiskEngine,            # noqa: E402
                                          SYSTEMATIC_PRIOR_SETS)
+from Library.StatisticsMC import (                                   # noqa: E402
+    StatisticsMCQuantile, StatisticsMCConditionalQuantile,
+)
 from Library.TableHeatmap import (                                   # noqa: E402
     render as heat, legend as heat_legend,
 )
@@ -81,18 +84,42 @@ def simulate(row, dt, horizon, paths, seed):
 
 
 def es(x, level, lower=True):
-    """(quantile, ES, se, n) of the `level` tail of a sample.
+    """(quantile, ES, se, n) as MAGNITUDES, via Library.StatisticsMC.
 
-    Used for both the simulated paths and the realised returns. On 200,000
-    paths the se is the Monte Carlo error; on 252 realised days it is the
-    sampling error of six observations and should be read as a warning rather
-    than a precision.
+    The house gatherers do the work: StatisticsMCConditionalQuantile for the
+    ES, StatisticsMCQuantile for the quantile. Both are fed the NEGATED sample
+    for the upper tail, which turns the gatherer's lower-tail ES into the
+    upper one - and since it already returns a positive magnitude, the two
+    sides come back on one scale.
+
+    The tail is the gatherers' own int(n * level): TRUNCATED, and with no
+    floor. So n is returned too, and 173 realised days at level 0.005 give an
+    empty tail and a nan rather than a number resting on a single day.
+
+    se is the Monte Carlo error of that same tail, sd(tail)/sqrt(n), computed
+    here because the gatherers do not offer one - StatisticsMCConfidenceInterval
+    is a CI on the MEAN of every path, not on a tail average.
+
+    Used for the realised returns as well as the simulated paths, so both
+    sides of every comparison are the same estimator.
     """
-    x = np.sort(np.asarray(x, dtype=float))
-    m = max(int(round(level * x.size)), 2)
-    tail = x[:m] if lower else x[-m:]
-    return (float(x[m - 1] if lower else x[-m]), float(tail.mean()),
-            float(tail.std(ddof=1) / np.sqrt(m)), m)
+    v = np.asarray(x, dtype=float).ravel()
+    m = int(v.size * level)
+    if m < 1:
+        return float("nan"), float("nan"), float("nan"), 0
+    s = v if lower else -v
+
+    g = StatisticsMCConditionalQuantile(level)
+    g.dump_result(s.reshape(-1, 1))
+    e = float(np.asarray(g.get_result_so_far()).item())
+
+    q = StatisticsMCQuantile(level if lower else 1.0 - level)
+    q.dump_result(v.reshape(-1, 1))
+    qv = float(np.asarray(q.get_result_so_far()).item())
+
+    tail = np.sort(s)[:m]
+    se = float(tail.std(ddof=1) / np.sqrt(m)) if m > 1 else float("nan")
+    return (-qv if lower else qv), e, se, m
 
 
 def main():
@@ -158,7 +185,7 @@ def main():
     for lv, i in zip(levels, t.index):
         qd, ed, _, nd = es(r.values, lv, True)
         qu, eu, _, nu = es(r.values, lv, False)
-        t.loc[i, "qDown"], t.loc[i, "ESdown"] = -100 * qd, -100 * ed
+        t.loc[i, "qDown"], t.loc[i, "ESdown"] = 100 * qd, 100 * ed
         t.loc[i, "qUp"], t.loc[i, "ESup"] = 100 * qu, 100 * eu
         sizes.append("%.3f: %d" % (lv, nd))
     _LOG.info(heat(t, decimals=3, color=COLOR))
@@ -204,12 +231,12 @@ def main():
         for y, i in zip(par.index, t.index):
             _, sd_, sdse, _ = es(sim[y], lv, True)
             _, su, suse, _ = es(sim[y], lv, False)
-            t.loc[i, "simESdn"], t.loc[i, "seDn"] = -100 * sd_, 100 * sdse
+            t.loc[i, "simESdn"], t.loc[i, "seDn"] = 100 * sd_, 100 * sdse
             t.loc[i, "simESup"], t.loc[i, "seUp"] = 100 * su, 100 * suse
-            if y in ry and len(ry[y]) >= 20:
+            if y in ry and int(len(ry[y]) * lv) >= 1:
                 _, rd, _, _ = es(ry[y], lv, True)
                 _, ru, _, _ = es(ry[y], lv, False)
-                t.loc[i, "realESdn"] = -100 * rd
+                t.loc[i, "realESdn"] = 100 * rd
                 t.loc[i, "realESup"] = 100 * ru
                 t.loc[i, "ratioDn"] = sd_ / rd
                 t.loc[i, "ratioUp"] = su / ru
@@ -227,17 +254,16 @@ def main():
         # not 0.5%. It is being compared against a simulated column that is
         # genuinely at 0.5%, so the ratio is overstated. Say so rather than
         # let the column be read as if it meant what its header says.
-        ns = [es(ry[y], lv, True)[3] for y in par.index
-              if y in ry and len(ry[y]) >= 20]
-        eff = [n / float(len(ry[y])) for y, n in
-               zip([y for y in par.index if y in ry and len(ry[y]) >= 20], ns)]
+        yrs = [y for y in par.index if y in ry]
+        ns = [int(len(ry[y]) * lv) for y in yrs]
+        eff = [n / float(len(ry[y])) for y, n in zip(yrs, ns)]
         _LOG.info("  realised tail: %d-%d days per year (simulated: %s paths). "
                   % (min(ns), max(ns), "{:,}".format(max(int(round(lv * a.paths)), 2))))
         if min(ns) < 5:
-            _LOG.info("  TOO FEW to mean much, and the 2-day floor puts the")
-            _LOG.info("  realised columns at an effective level of %.3f-%.3f,"
+            _LOG.info("  TOO FEW to mean much. int() truncation puts the")
+            _LOG.info("  realised columns at an effective level of %.4f-%.4f,"
                       % (min(eff), max(eff)))
-            _LOG.info("  not %.3f - so realESdn reads mild and ratioDn high."
+            _LOG.info("  not %.3f, and a year with an empty tail is blank."
                       % lv)
         m = t.mean(numeric_only=True)
         _LOG.info("  mean   simESdn %.3f  realESdn %.3f  ratio %.2f"

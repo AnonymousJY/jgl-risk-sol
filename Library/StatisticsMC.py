@@ -87,6 +87,10 @@ class StatisticsMCVariance(StatisticsMCBase):
 class StatisticsMCConfidenceInterval(StatisticsMCBase):
 
     def __init__(self, confidence_level: NDArray[np.float64] = 0.975):
+        # inner_mean was never assigned, so dump_result raised AttributeError
+        # on the first call. Nothing in the repo used this class, which is why
+        # it went unnoticed.
+        self.inner_mean = StatisticsMCMean()
         self.inner_var = StatisticsMCVariance()
         self.n_paths = np.int64(0)
         self.confidence_level = confidence_level
@@ -168,9 +172,18 @@ class StatisticsMCConditionalQuantile(StatisticsMCBase):
         self.running_sum = result
 
     def get_result_so_far(self) -> NDArray[np.float64]:
-        x = np.sort(self.running_sum)
+        # running_sum is stored as (n, 1) by the setter, and np.sort defaults
+        # to axis=-1 - the length-1 axis - so the array came back UNSORTED and
+        # x[:threshold] was the first `threshold` paths in generation order,
+        # not the worst ones. On 10,000 standard draws that returned 0.000071
+        # where the expected shortfall was 0.028389. Ravel first.
+        x = np.sort(np.asarray(self.running_sum).ravel())
         n = x.shape[0]
-        threshold = int(n * self.alpha)
+        # The alpha setter stores a (1, 1) array, and on numpy >= 2 neither
+        # int() nor float() accepts one - only 0-d arrays convert - so this
+        # method could not run at all. .item() takes a size-1 array of any
+        # shape.
+        threshold = int(n * np.asarray(self.alpha).item())
         return np.mean(x[:threshold]) * -1.
 
     def __deepcopy__(self, memodict={}) -> StatisticsMCBase:

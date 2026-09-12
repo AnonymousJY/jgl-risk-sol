@@ -23,6 +23,8 @@ the escapes - into HTML that survives Outlook, which renders mail through Word
 rather than a browser.
 """
 
+import io
+import logging
 import os
 import re
 import sys
@@ -228,3 +230,53 @@ def to_eml(lines, subject="", title=None, to="", sender="", **kw):
     m.add_alternative(to_html(lines, title=subject if title is None else title,
                               **kw), subtype="html")
     return m.as_bytes()
+
+
+# ---------------------------------------------------------------------------
+# Capturing a whole run, without editing the run.
+# ---------------------------------------------------------------------------
+# estimate_systematic.py has 158 _LOG.info calls and estimate_idiosyncratic.py
+# has 100. Neither should acquire an HTML export by being rewritten 258 times.
+# A logging handler collects every record as the terminal received it, escapes
+# and all, so to_html reproduces the run exactly and the scripts need four
+# lines each.
+#
+# ONE CONSEQUENCE. The shading has to be present in the RECORD, which means
+# colour has to be on for the run and not only for the export - the handler
+# sees what render() already produced and cannot re-render it. A caller that
+# asks for --html should therefore force colour on. The terminal then carries
+# escapes too; redirect it if that matters.
+
+
+class _Capture(logging.Handler):
+
+    def __init__(self):
+        logging.Handler.__init__(self)
+        self.lines = []
+
+    def emit(self, record):
+        try:
+            self.lines.append(record.getMessage())
+        except Exception:                    # a report must never die of its
+            pass                             # own bookkeeping
+
+
+def capture(logger):
+    """Attach a collector to `logger` and return it. Read `.lines` after."""
+    h = _Capture()
+    logger.addHandler(h)
+    return h
+
+
+def write_capture(handler, html_path=None, eml_path=None, title=""):
+    """Write the collected run out. Returns the paths written, in order."""
+    done = []
+    if html_path:
+        with io.open(html_path, "w", encoding="utf-8") as fh:
+            fh.write(to_html(handler.lines, title=title))
+        done.append(html_path)
+    if eml_path:
+        with open(eml_path, "wb") as fh:
+            fh.write(to_eml(handler.lines, subject=title))
+        done.append(eml_path)
+    return done

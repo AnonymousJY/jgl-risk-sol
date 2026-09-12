@@ -82,7 +82,7 @@ from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
 )
 from Library.TableHeatmap import (                           # noqa: E402
-    render as heat, legend as heat_legend,
+    render as heat, legend as heat_legend, capture, write_capture,
 )
 from Library.DataAccess import (                             # noqa: E402
     get_aligned_price_panel, get_pmle_params, pmle_params_exists,
@@ -645,13 +645,25 @@ def main():
                     help="force heat shading on (default: on for a terminal)")
     ap.add_argument("--no-color", dest="color", action="store_false",
                     help="plain numbers, no shading")
+    ap.add_argument("--html", default=None, metavar="PATH",
+                    help="also write the whole run as an HTML document that "
+                         "keeps the heat shading in Outlook. Forces --color "
+                         "on, since the handler collects what was printed")
+    ap.add_argument("--eml", default=None, metavar="PATH",
+                    help="also write it as a message file Outlook can open")
     ap.add_argument("--force", "--overwrite", dest="force", action="store_true",
                     help="re-fit every (name, date) even if already on disk, "
                          "overwriting in place")
     a = ap.parse_args()
 
     global COLOR, LOOKBACK, IDIO_TAG, IDIO_PRIORS_IN_FORCE, HELD_SYSTEMATIC
+    _cap = None
     COLOR = a.color
+    if a.html or a.eml:
+        # The handler collects records as printed, so the shading must be in
+        # them already - it cannot be added at export time.
+        COLOR = True if COLOR is None else COLOR
+        _cap = capture(_LOG)
     IDIO_TAG = a.idio_priors
     IDIO_PRIORS_IN_FORCE = IDIOSYNCRATIC_PRIOR_SETS[a.idio_priors]
     if a.lookback < 60:
@@ -749,6 +761,12 @@ def main():
                            % name_store_id(name, a.anchor, a.priors, priors))
         df.to_csv(out)
         _LOG.info("\n  written to %s" % os.path.relpath(out, _REPO_ROOT))
+
+    if _cap is not None:
+        title = ("idiosyncratic PMLE, %s on %s, lookback %d"
+                 % (a.idio_priors, a.priors, LOOKBACK))
+        for w in write_capture(_cap, a.html, a.eml, title=title):
+            _LOG.info("  wrote %s" % w)
 
 
 def _reap_forkserver():

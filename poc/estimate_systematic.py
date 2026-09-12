@@ -73,7 +73,7 @@ from Library.PosteriorSummary import (                       # noqa: E402
     CI_WIDTH_TO_SD, CI_CONVENTION, CI_PROB,
 )
 from Library.TableHeatmap import (                          # noqa: E402
-    render as heat, legend as heat_legend,
+    render as heat, legend as heat_legend, capture, write_capture,
 )
 
 # Heat shading: on for a terminal, off when piped or NO_COLOR is set.
@@ -797,6 +797,12 @@ def main():
                     help="force heat shading on (default: on for a terminal)")
     ap.add_argument("--no-color", dest="color", action="store_false",
                     help="plain numbers, no shading")
+    ap.add_argument("--html", default=None, metavar="PATH",
+                    help="also write the whole run as an HTML document that "
+                         "keeps the heat shading in Outlook. Forces --color "
+                         "on, since the handler collects what was printed")
+    ap.add_argument("--eml", default=None, metavar="PATH",
+                    help="also write it as a message file Outlook can open")
     ap.add_argument("--workers", type=int, default=None,
                     help="outer pool width. Default cpu_count//4, because each "
                          "fit already uses 4 chains on 4 cores.")
@@ -847,7 +853,13 @@ def main():
     a = ap.parse_args()
 
     global COLOR, PRIORS_IN_FORCE, STORE_ID, PRIORS_TAG, LOOKBACK
+    _cap = None
     COLOR = a.color
+    if a.html or a.eml:
+        # The handler collects records as printed, so the shading must be in
+        # them already - it cannot be added at export time.
+        COLOR = True if COLOR is None else COLOR
+        _cap = capture(_LOG)
     PRIORS_TAG = a.priors
     PRIORS_IN_FORCE = SYSTEMATIC_PRIOR_SETS[a.priors]
     if a.lookback < 60:
@@ -942,6 +954,12 @@ def main():
     df.to_csv(out)
     _LOG.info("\nWritten to %s" % out)
     _LOG.info("This series is the rolling systematic input to backfill_poc.py.")
+
+    if _cap is not None:
+        title = ("systematic PMLE, %s, lookback %d"
+                 % (PRIORS_TAG, LOOKBACK))
+        for w in write_capture(_cap, a.html, a.eml, title=title):
+            _LOG.info("  wrote %s" % w)
 
 
 def _reap_forkserver():

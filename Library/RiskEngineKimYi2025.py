@@ -1063,6 +1063,43 @@ IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO["rhoix_rv"] = (
     "Uniform", {"lower": 0.40, "upper": 0.60})     # rho_iX U(-0.20, +0.20)
 
 
+# The economically motivated arm: these are riskier assets than the market.
+#
+#   betai_rv   Gamma(3, 1.5)   mean 2.000 sd 1.1547   beta_i > 1
+#   kappai_rv  Gamma(2, 20/3)  mean 0.300 sd 0.2121   kappa_i > sigma
+#   rhoix_rv   U(0.525,0.725)  rho_iX mean 0.25       rho_iX in (0, 1]
+#
+# Each keeps its paper prior's SHAPE and so its coefficient of variation -
+# 0.577 for betai, 0.707 for kappai - so only the centres move.
+#
+# WHAT THIS ARM IS ACTUALLY TESTING, because the three centres cannot all be
+# reached. phi_i^2 = (sigma betai)^2 + 2 sigma betai kappai rho + kappai^2 is
+# the one quantity the name's likelihood pins - it held to 0.27%, -0.12% and
+# -0.44% at C, BAC and JPM across two arms that moved everything else - and it
+# is a budget:
+#
+#     sigma^2 b_diff^2 + kappai^2 (1 - rho^2) = phi_i^2
+#
+# At C's phi_i = 0.2837 with sigma = 0.1437 that caps b_diff at 1.974 (needing
+# kappai ~ 0) and kappai at 0.2930 (needing b_diff = 0). betai 2 with kappai
+# 0.3 implies phi_i = 0.4644, 64% above the data. So the prior sits outside the
+# feasible set and something must give.
+#
+# That is the alpha-tiny experiment again and it is worth running for the same
+# reason: WHICH parameter gives ground says which one the likelihood resists.
+# If betai holds near 2 and kappai collapses, the data cares about the total
+# and lets the split go where it is pushed. If both land mid-way, the ridge has
+# curvature we have not seen. Either way phi_i should not move - and if it does,
+# the invariance claim is wrong and that is worth more than the arm.
+IDIOSYNCRATIC_PRIORS_ECON = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_ECON["betai_rv"] = (
+    "Gamma", {"alpha": 3.0, "beta": 1.5})            # mean 2.000 sd 1.1547
+IDIOSYNCRATIC_PRIORS_ECON["kappai_rv"] = (
+    "Gamma", {"alpha": 2.0, "beta": 2.0 / 0.3})      # mean 0.300 sd 0.2121
+IDIOSYNCRATIC_PRIORS_ECON["rhoix_rv"] = (
+    "Uniform", {"lower": 0.525, "upper": 0.725})     # rho_iX U(0.05, 0.45)
+
+
 IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT = dict(IDIOSYNCRATIC_PRIORS)
 IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT["rhoix_rv"] = (
     "Uniform", {"lower": 0.525, "upper": 0.725})   # rho_iX U(0.05, 0.45)
@@ -1076,13 +1113,15 @@ IDIOSYNCRATIC_PRIOR_SETS = {
     "rhoix-tight": IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT,
     "rhoix-zero": IDIOSYNCRATIC_PRIORS_RHOIX_ZERO,
     "betai1-rhoix-zero": IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO,
+    "econ": IDIOSYNCRATIC_PRIORS_ECON,
 }
 IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "flat-mu-rhoix": "__flatmurhoix",
                      "rhoix-fixed": "__rhoixfixed",
                      "rhoix-tight": "__rhoixtight",
                      "rhoix-zero": "__rhoixzero",
-                     "betai1-rhoix-zero": "__b1rhoixzero"}
+                     "betai1-rhoix-zero": "__b1rhoixzero",
+                     "econ": "__econ"}
 
 
 def pmle_kimyirisk_idiosyncratic(

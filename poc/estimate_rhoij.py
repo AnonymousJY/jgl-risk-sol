@@ -42,6 +42,10 @@ from Library.StudyWindow import (                              # noqa: E402
     SYSTEMATIC_ID, DATE_FMT, LOOKBACK, BASE_DAYS, BEG, END, valuation_dates,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SEP = "|"
 
 
@@ -138,7 +142,7 @@ def run(names, dates, lookback, jump_cov=None):
         out.append(rec)
 
     if skipped:
-        print("  %d date(s) skipped for short history (first %s: %d complete "
+        _LOG.info("  %d date(s) skipped for short history (first %s: %d complete "
               "observations, need %d)"
               % (len(skipped), skipped[0][0], skipped[0][1], lookback))
     if not out:
@@ -214,17 +218,17 @@ def main():
 
     path = out_path(names, a.lookback, a.deduct_jump)
 
-    print("=" * 72)
-    print("Step 1c :: cross-name correlation")
-    print("=" * 72)
-    print("  names    : %s" % ", ".join(names))
-    print("  pairs    : %d" % (len(names) * (len(names) - 1) // 2))
-    print("  window   : %s -> %s every %d business days, %d-day lookback"
+    _LOG.info("=" * 72)
+    _LOG.info("Step 1c :: cross-name correlation")
+    _LOG.info("=" * 72)
+    _LOG.info("  names    : %s" % ", ".join(names))
+    _LOG.info("  pairs    : %d" % (len(names) * (len(names) - 1) // 2))
+    _LOG.info("  window   : %s -> %s every %d business days, %d-day lookback"
           % (a.beg, a.end, a.step, a.lookback))
-    print("  jump term: %s" % ("deducted" if jump_cov is not None
+    _LOG.info("  jump term: %s" % ("deducted" if jump_cov is not None
                                else "left in - the engine adds it on top of L"))
-    print("  file     : %s" % os.path.relpath(path, _REPO_ROOT))
-    print()
+    _LOG.info("  file     : %s" % os.path.relpath(path, _REPO_ROOT))
+    _LOG.info("")
 
     if a.report_only:
         if not os.path.exists(path):
@@ -244,28 +248,28 @@ def main():
                        "pair_order": pair_columns(names)}, fh, indent=2)
 
     labels = pair_columns(names)
-    print("  %d date(s) estimated, %s -> %s"
+    _LOG.info("  %d date(s) estimated, %s -> %s"
           % (len(df), df.index[0], df.index[-1]))
     if df["REPAIRED"].sum():
-        print("  %d matrix(es) eigenvalue-clipped to restore PSD"
+        _LOG.info("  %d matrix(es) eigenvalue-clipped to restore PSD"
               % int(df["REPAIRED"].sum()))
-    print()
+    _LOG.info("")
 
     stats = df[labels].agg(["mean", "min", "max"]).T
     width = max(len(x) for x in labels)
-    print("  %-*s   %8s %8s %8s" % (width, "pair", "mean", "min", "max"))
-    print("  " + "-" * (width + 28))
+    _LOG.info("  %-*s   %8s %8s %8s" % (width, "pair", "mean", "min", "max"))
+    _LOG.info("  " + "-" * (width + 28))
     for lab, r in stats.iterrows():
-        print("  %-*s   %8.4f %8.4f %8.4f"
+        _LOG.info("  %-*s   %8.4f %8.4f %8.4f"
               % (width, lab, r["mean"], r["min"], r["max"]))
 
     last = df.iloc[-1]
     mat = get_corr_mat(rhoij_vector(last, names).reshape((-1, 1)), len(names))
     np.linalg.cholesky(mat)
-    print("\n  latest (%s), Cholesky OK:" % df.index[-1])
-    print("  %-*s %s" % (width, "", " ".join("%8s" % n for n in names)))
+    _LOG.info("\n  latest (%s), Cholesky OK:" % df.index[-1])
+    _LOG.info("  %-*s %s" % (width, "", " ".join("%8s" % n for n in names)))
     for i, n in enumerate(names):
-        print("  %-*s %s" % (width, n,
+        _LOG.info("  %-*s %s" % (width, n,
                              " ".join("%8.4f" % v for v in mat[i])))
 
 

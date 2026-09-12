@@ -1,6 +1,10 @@
 import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import quad
+
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
 # from Library.ImportLibs import *
 
 
@@ -426,7 +430,7 @@ if __name__=='__main__':
         risk_free_rate=np.array(r).reshape((-1, 1)),
         dividend_yield=np.array(d).reshape((-1, 1))
     )
-    print(call_price)
+    _LOG.info(call_price)
 
     put_price = heston_put(
         und_strike=np.array(K).reshape((-1, 1)),
@@ -441,8 +445,8 @@ if __name__=='__main__':
         risk_free_rate=np.array(r).reshape((-1, 1)),
         dividend_yield=np.array(d).reshape((-1, 1))
     )
-    print(put_price)
+    _LOG.info(put_price)
 
     end = time.perf_counter()
 
-    print(f"Time took {end - beg:.4f} s")
+    _LOG.info(f"Time took {end - beg:.4f} s")

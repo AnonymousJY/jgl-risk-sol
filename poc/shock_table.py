@@ -47,6 +47,10 @@ from Library.DataAccess import (                                  # noqa: E402
     get_pmle_params, available_pmle_dates,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYS_KEYS = ["dSIGMA", "dLAMB", "dPPROB", "dETA1", "dETA2", "dALPHA"]
 IDIO_KEYS = ["dBETAI", "dKAPPAI", "dGAMMAI", "dRHOIX", "dMUI"]
 
@@ -60,7 +64,7 @@ def load_row(drawer, date=None):
         date = sorted(dates)[-1]
     elif date not in set(dates):
         nearest = min(dates, key=lambda d: abs(int(d) - int(date)))
-        print("  %s not in %s - using nearest, %s" % (date, drawer, nearest))
+        _LOG.info("  %s not in %s - using nearest, %s" % (date, drawer, nearest))
         date = nearest
     s = get_pmle_params(date, drawer)
     return date, {k: float(s[k]) for k in SYS_KEYS}, \
@@ -104,10 +108,10 @@ def main():
         raise SystemExit("unknown systematic arm %r" % a.priors)
     priors = SYSTEMATIC_PRIOR_SETS[a.priors]
 
-    print()
-    print("=" * 78)
-    print("equivalent shocks :: prescribed SPX move -> each name")
-    print("=" * 78)
+    _LOG.info("")
+    _LOG.info("=" * 78)
+    _LOG.info("equivalent shocks :: prescribed SPX move -> each name")
+    _LOG.info("=" * 78)
 
     for arm in arms:
         EI.IDIO_TAG = arm          # name_store_id reads this module global
@@ -118,32 +122,32 @@ def main():
             try:
                 dt, sysp, idio = load_row(drawer, a.date)
             except SystemExit as exc:
-                print("  %-6s SKIPPED - %s" % (nm, exc))
+                _LOG.info("  %-6s SKIPPED - %s" % (nm, exc))
                 continue
             rows[nm] = (dt, sysp, idio, drawer)
         if not rows:
             continue
 
         any_sys = next(iter(rows.values()))[1]
-        print()
-        print("  idiosyncratic arm: %s      systematic arm: %s, %d-day window"
+        _LOG.info("")
+        _LOG.info("  idiosyncratic arm: %s      systematic arm: %s, %d-day window"
               % (arm, a.priors, a.lookback))
-        print("  %-6s %-10s %8s %8s %8s %8s %8s %8s"
+        _LOG.info("  %-6s %-10s %8s %8s %8s %8s %8s %8s"
               % ("name", "date", "beta_i", "kappa_i", "rho_iX", "b_diff",
                  "gamma_i", "g/b"))
-        print("  " + "-" * 70)
+        _LOG.info("  " + "-" * 70)
         for nm, (dt, sysp, idio, _) in rows.items():
             b_diff = (idio["dBETAI"]
                       + idio["dKAPPAI"] * idio["dRHOIX"] / sysp["dSIGMA"])
-            print("  %-6s %-10s %8.4f %8.4f %+8.4f %8.4f %8.4f %8.2f"
+            _LOG.info("  %-6s %-10s %8.4f %8.4f %+8.4f %8.4f %8.4f %8.2f"
                   % (nm, dt, idio["dBETAI"], idio["dKAPPAI"], idio["dRHOIX"],
                      b_diff, idio["dGAMMAI"],
                      idio["dGAMMAI"] / b_diff if b_diff else float("nan")))
 
-        print()
-        print("  %-9s %8s   %s"
+        _LOG.info("")
+        _LOG.info("  %-9s %8s   %s"
               % ("SPX", "horizon", "  ".join("%16s" % n for n in rows)))
-        print("  " + "-" * (20 + 18 * len(rows)))
+        _LOG.info("  " + "-" * (20 + 18 * len(rows)))
         for x in shocks:
             try:
                 h = int(model_horizon(x, any_sys, alpha=a.quantile))
@@ -154,19 +158,19 @@ def main():
                 r = name_shock(x, sysp, idio, horizon_days=h)
                 cells.append("%16s" % ("%+7.1f%% +-%4.1f"
                                        % (100 * r["y"], 100 * r["sd"])))
-            print("  %+8.1f%% %7dd   %s" % (100 * x, h, "  ".join(cells)))
-        print()
-        print("  Each cell is the name's equivalent move, +- one sd of the")
-        print("  dispersion around it. horizon is where that SPX shock is the")
-        print("  %.0f%% tail under these systematic parameters." % (100 * a.quantile))
+            _LOG.info("  %+8.1f%% %7dd   %s" % (100 * x, h, "  ".join(cells)))
+        _LOG.info("")
+        _LOG.info("  Each cell is the name's equivalent move, +- one sd of the")
+        _LOG.info("  dispersion around it. horizon is where that SPX shock is the")
+        _LOG.info("  %.0f%% tail under these systematic parameters." % (100 * a.quantile))
 
     if len(arms) > 1:
-        print()
-        print("  The two blocks differ ONLY in the rho_iX prior. Any gap")
-        print("  between them is what that prior is worth in shock units, and")
-        print("  it is the number to put in front of a referee rather than an")
-        print("  identification ratio.")
-    print()
+        _LOG.info("")
+        _LOG.info("  The two blocks differ ONLY in the rho_iX prior. Any gap")
+        _LOG.info("  between them is what that prior is worth in shock units, and")
+        _LOG.info("  it is the number to put in front of a referee rather than an")
+        _LOG.info("  identification ratio.")
+    _LOG.info("")
 
 
 if __name__ == "__main__":

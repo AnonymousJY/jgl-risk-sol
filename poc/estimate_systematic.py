@@ -84,6 +84,10 @@ from Scripts.run_pmle_kimyi2025 import (                    # noqa: E402
     SYSTEMATIC_PARAMS,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYSTEMATIC_ID = "^SPX"
 # Full-sample fits are stored under their own underlying id so they cannot
 # collide with, or be mistaken for, a rolling estimate.
@@ -279,16 +283,16 @@ def run_full_sample(beg=BEG, end=END):
         & (return_ts.index <= pd.to_datetime(end, format=DATE_FMT)),
         SYSTEMATIC_ID].to_numpy()
 
-    print("  full-sample fit on %d daily returns (%s to %s)"
+    _LOG.info("  full-sample fit on %d daily returns (%s to %s)"
           % (len(rv), beg, end))
-    print("  this is one MCMC fit - expect minutes, not seconds\n")
+    _LOG.info("  this is one MCMC fit - expect minutes, not seconds\n")
 
     t0 = time.perf_counter()
     _, _, results = pmle_kimyirisk_systematic_helper(
         ("FULLSAMPLE", rv, np.array(1 / BASE_DAYS), SEED, N_MC_PATHS,
          SYSTEMATIC_ID, PRIORS_IN_FORCE))
     elapsed = time.perf_counter() - t0
-    print("  done in %.0fs\n" % elapsed)
+    _LOG.info("  done in %.0fs\n" % elapsed)
 
     params = assemble_systematic_params(results)
 
@@ -308,7 +312,7 @@ def run_full_sample(beg=BEG, end=END):
                    "seconds": round(elapsed, 1),
                    "params": {k: [float(x) for x in v]
                               for k, v in params.items()}}, fh, indent=2)
-    print("  raw results written to %s" % raw)
+    _LOG.info("  raw results written to %s" % raw)
 
     # The parameter store keys on a parseable date, so the pseudo-date
     # "FULLSAMPLE" raised DateParseError in pd.to_datetime. Key on the real end
@@ -321,18 +325,18 @@ def run_full_sample(beg=BEG, end=END):
                                    priors_digest(PRIORS_IN_FORCE)))
         write_manifest(fs_id, PRIORS_TAG, PRIORS_IN_FORCE)
         out = save_pmle_params(end, fs_id, params)
-        print("  saved to %s" % out)
+        _LOG.info("  saved to %s" % out)
     except Exception as exc:                                      # noqa: BLE001
-        print("  WARNING could not write to the parameter store: %s: %s"
+        _LOG.info("  WARNING could not write to the parameter store: %s: %s"
               % (type(exc).__name__, exc))
-        print("  The fit itself is safe in %s" % raw)
+        _LOG.info("  The fit itself is safe in %s" % raw)
 
     # the only question that matters: did the posterior move off the prior?
     from poc.prior_diagnostics import PRIORS, HDI_TO_SD          # noqa: E402
-    print("  %-8s %-14s %9s %9s %9s %7s %8s  %s"
+    _LOG.info("  %-8s %-14s %9s %9s %9s %7s %8s  %s"
           % ("param", "prior", "pri_mean", "post_mean", "post_sd", "ratio",
              "shift", "verdict"))
-    print("  " + "-" * 84)
+    _LOG.info("  " + "-" * 84)
     for k, (label, pmean, psd) in PRIORS.items():
         if k not in params:
             continue
@@ -356,12 +360,12 @@ def run_full_sample(beg=BEG, end=END):
             v = "weak"
         else:
             v = "PRIOR-DRIVEN"
-        print("  %-8s %-14s %9.3f %9.3f %9.3f %7.2f %+8.2f  %s"
+        _LOG.info("  %-8s %-14s %9.3f %9.3f %9.3f %7.2f %+8.2f  %s"
               % (k, label, pmean, m, post_sd, ratio, shift, v))
-    print("\n  If dETA1 and dETA2 are now DATA-DRIVEN, the identification")
-    print("  problem is solved from returns alone and nothing further is")
-    print("  needed. If they are still PRIOR-DRIVEN with ~230 jumps, then and")
-    print("  only then is the option-implied route worth the complexity.")
+    _LOG.info("\n  If dETA1 and dETA2 are now DATA-DRIVEN, the identification")
+    _LOG.info("  problem is solved from returns alone and nothing further is")
+    _LOG.info("  needed. If they are still PRIOR-DRIVEN with ~230 jumps, then and")
+    _LOG.info("  only then is the option-implied route worth the complexity.")
 
 
 # Worker recycling: explicit pool teardown, NOT max_tasks_per_child.
@@ -391,11 +395,11 @@ def _pool_kwargs(workers):
         import inspect
         if "max_tasks_per_child" in inspect.signature(ProcessPoolExecutor).parameters:
             kw["max_tasks_per_child"] = MAX_TASKS_PER_CHILD
-            print("  NOTE max_tasks_per_child=%d requested. This has hung a run"
+            _LOG.info("  NOTE max_tasks_per_child=%d requested. This has hung a run"
                   % MAX_TASKS_PER_CHILD)
-            print("       before; POOL_CHUNK is the safer recycler.")
+            _LOG.info("       before; POOL_CHUNK is the safer recycler.")
         else:
-            print("  NOTE max_tasks_per_child needs Python 3.11+; ignoring.")
+            _LOG.info("  NOTE max_tasks_per_child needs Python 3.11+; ignoring.")
     return kw
 
 
@@ -420,19 +424,19 @@ def _drain(pending, on_done, label="tasks"):
         finished, pending = wait(pending, timeout=STALL_TIMEOUT,
                                  return_when=FIRST_COMPLETED)
         if not finished:
-            print("\n" + "=" * 72, flush=True)
-            print("  STALLED - no %s completed in %.0fs. The pool is wedged."
-                  % (label, STALL_TIMEOUT), flush=True)
-            print("=" * 72, flush=True)
-            print("  %d still pending. Everything finished is on disk; rerun"
-                  % len(pending), flush=True)
-            print("  to resume. To cut the risk, reduce memory pressure:", flush=True)
-            print("    JGL_POOL_CHUNK=20 <same command>", flush=True)
-            print("    <same command> --workers 2", flush=True)
-            print(flush=True)
-            print("  Check whether the kernel killed a worker:", flush=True)
-            print("    sudo dmesg -T | grep -i 'killed process' | tail", flush=True)
-            print("    free -h        # is the machine in swap?", flush=True)
+            _LOG.info("\n" + "=" * 72)
+            _LOG.info("  STALLED - no %s completed in %.0fs. The pool is wedged."
+                  % (label, STALL_TIMEOUT))
+            _LOG.info("=" * 72)
+            _LOG.info("  %d still pending. Everything finished is on disk; rerun"
+                  % len(pending))
+            _LOG.info("  to resume. To cut the risk, reduce memory pressure:")
+            _LOG.info("    JGL_POOL_CHUNK=20 <same command>")
+            _LOG.info("    <same command> --workers 2")
+            _LOG.info("")
+            _LOG.info("  Check whether the kernel killed a worker:")
+            _LOG.info("    sudo dmesg -T | grep -i 'killed process' | tail")
+            _LOG.info("    free -h        # is the machine in swap?")
             for f in pending:
                 f.cancel()
             raise SystemExit(3)
@@ -499,30 +503,30 @@ def run(dates, workers=None, force=False):
         (usable if pd.to_datetime(dt, format=DATE_FMT) >= first_ok
          else too_early).append(dt)
     if too_early:
-        print("  %d dates dropped: fewer than %d prior returns available."
+        _LOG.info("  %d dates dropped: fewer than %d prior returns available."
               % (len(too_early), LOOKBACK))
-        print("  Earliest estimable date is %s. To reach back to %s, the price"
+        _LOG.info("  Earliest estimable date is %s. To reach back to %s, the price"
               % (first_ok.date(), BEG))
-        print("  snapshot must start ~%d business days earlier." % LOOKBACK)
+        _LOG.info("  snapshot must start ~%d business days earlier." % LOOKBACK)
 
     on_disk = [d for d in usable if pmle_params_exists(d, STORE_ID)]
     todo = usable if force else [d for d in usable if d not in set(on_disk)]
-    print("  %d dates requested, %d usable, %d already on disk, %d to estimate."
+    _LOG.info("  %d dates requested, %d usable, %d already on disk, %d to estimate."
           % (len(dates), len(usable), len(on_disk), len(todo)))
     if force and on_disk:
-        print()
-        print("  --force: OVERWRITING %d existing estimate(s) in %s"
+        _LOG.info("")
+        _LOG.info("  --force: OVERWRITING %d existing estimate(s) in %s"
               % (len(on_disk), STORE_ID))
-        print("  They are replaced in place. To keep them, stop now and run")
-        print("    python poc/archive_run.py --drawer '%s' --label <name> --apply"
+        _LOG.info("  They are replaced in place. To keep them, stop now and run")
+        _LOG.info("    python poc/archive_run.py --drawer '%s' --label <name> --apply"
               % STORE_ID)
-        print()
+        _LOG.info("")
     if not todo:
         return
 
     # Before any fitting, so an interrupted run still leaves a drawer that
     # says what it holds.
-    print("  priors recorded in %s"
+    _LOG.info("  priors recorded in %s"
           % os.path.relpath(write_manifest(STORE_ID, PRIORS_TAG, PRIORS_IN_FORCE),
                             _REPO_ROOT))
 
@@ -534,7 +538,7 @@ def run(dates, workers=None, force=False):
                      STORE_ID, PRIORS_IN_FORCE))
 
     workers = workers or default_workers()
-    print("  %d workers x 4 chains = %d concurrent samplers on %d cores"
+    _LOG.info("  %d workers x 4 chains = %d concurrent samplers on %d cores"
           % (workers, workers * 4, os.cpu_count() or 0))
 
     t0 = time.perf_counter()
@@ -559,20 +563,20 @@ def run(dates, workers=None, force=False):
                     except Exception as exc:                  # noqa: BLE001
                         # One bad date must not end a run of thousands.
                         failed += 1
-                        print("    FAILED  %s  %s: %s"
-                              % (requested, type(exc).__name__, exc), flush=True)
+                        _LOG.info("    FAILED  %s  %s: %s"
+                              % (requested, type(exc).__name__, exc))
                         return
                     save_pmle_params(dt, sid, assemble_systematic_params(results))
                     done += 1
                     if done % 10 == 0 or done == len(todo):
                         el = time.perf_counter() - t0
-                        print("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
+                        _LOG.info("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
                               % (done, len(todo), el,
-                                 el / done * (len(todo) - done)), flush=True)
+                                 el / done * (len(todo) - done)))
 
                 _drain(set(futures), _on_done, "dates")
             if start + chunk < len(args):
-                print("    -- pool recycled after %d dates --" % done, flush=True)
+                _LOG.info("    -- pool recycled after %d dates --" % done)
     except BrokenProcessPool:
         # A worker died without raising - it was killed by a signal, not by a
         # Python exception. Overwhelmingly this is the kernel OOM killer:
@@ -580,36 +584,36 @@ def run(dates, workers=None, force=False):
         # chains of draws, so peak memory scales with the worker count while
         # the estimate of "how many cores" does not.
         el = time.perf_counter() - t0
-        print("\n" + "=" * 72)
-        print("  WORKER KILLED - the pool is dead and the run stopped early.")
-        print("=" * 72)
-        print("  %d of %d dates completed and ARE SAFELY ON DISK (%.0fs)."
+        _LOG.info("\n" + "=" * 72)
+        _LOG.info("  WORKER KILLED - the pool is dead and the run stopped early.")
+        _LOG.info("=" * 72)
+        _LOG.info("  %d of %d dates completed and ARE SAFELY ON DISK (%.0fs)."
               % (done, len(todo), el))
-        print("  Nothing is lost: rerunning skips what is already written.")
-        print()
-        print("  A worker terminated without a Python exception, which means")
-        print("  it was killed by a signal rather than failing in Python.")
-        print("  Confirm the cause before rerunning:")
-        print()
-        print("      sudo dmesg -T | grep -i -E 'killed process|out of memory' | tail")
-        print("      journalctl -k --since '3 hours ago' | grep -i 'killed process'")
-        print()
-        print("  If that shows an OOM kill, rerun with fewer workers - memory")
-        print("  scales with worker count, cores do not:")
-        print()
-        print("      JGL_POOL_CHUNK=20 <same command>            (recycle sooner)")
-        print("      ./run_daily.sh %d                            (fewer workers)"
+        _LOG.info("  Nothing is lost: rerunning skips what is already written.")
+        _LOG.info("")
+        _LOG.info("  A worker terminated without a Python exception, which means")
+        _LOG.info("  it was killed by a signal rather than failing in Python.")
+        _LOG.info("  Confirm the cause before rerunning:")
+        _LOG.info("")
+        _LOG.info("      sudo dmesg -T | grep -i -E 'killed process|out of memory' | tail")
+        _LOG.info("      journalctl -k --since '3 hours ago' | grep -i 'killed process'")
+        _LOG.info("")
+        _LOG.info("  If that shows an OOM kill, rerun with fewer workers - memory")
+        _LOG.info("  scales with worker count, cores do not:")
+        _LOG.info("")
+        _LOG.info("      JGL_POOL_CHUNK=20 <same command>            (recycle sooner)")
+        _LOG.info("      ./run_daily.sh %d                            (fewer workers)"
               % max(1, workers // 2))
-        print()
-        print("  If it shows nothing, suspect a native crash in the sampler.")
-        print("  Reproduce one date in the foreground to get a real traceback:")
-        print()
-        print("      python poc/estimate_systematic.py --full-sample")
-        print("=" * 72)
+        _LOG.info("")
+        _LOG.info("  If it shows nothing, suspect a native crash in the sampler.")
+        _LOG.info("  Reproduce one date in the foreground to get a real traceback:")
+        _LOG.info("")
+        _LOG.info("      python poc/estimate_systematic.py --full-sample")
+        _LOG.info("=" * 72)
         return
 
     if failed:
-        print("\n  %d date(s) failed and were skipped; rerun to retry them."
+        _LOG.info("\n  %d date(s) failed and were skipped; rerun to retry them."
               % failed)
 
 
@@ -630,29 +634,29 @@ def load_series():
 
 
 def report(df):
-    print("\n" + "=" * 72)
-    print("SPX P-measure parameters :: %s to %s   (%d valuation dates)"
+    _LOG.info("\n" + "=" * 72)
+    _LOG.info("SPX P-measure parameters :: %s to %s   (%d valuation dates)"
           % (df.index.min().date(), df.index.max().date(), len(df)))
-    print("=" * 72)
-    print("\nDistribution across valuation dates:")
+    _LOG.info("=" * 72)
+    _LOG.info("\nDistribution across valuation dates:")
     _p = [c for c in df.columns if not c.endswith("_W")]
-    print(df[_p].describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]]
+    _LOG.info(df[_p].describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]]
             .round(4).to_string())
 
     params_only = [c for c in df.columns if not c.endswith("_W")]
     if len(df) < 2:
-        print("\nStability - needs at least 2 valuation dates; %d estimated."
+        _LOG.info("\nStability - needs at least 2 valuation dates; %d estimated."
               % len(df))
     else:
-        print("\nStability - coefficient of variation (sd / |mean|):")
+        _LOG.info("\nStability - coefficient of variation (sd / |mean|):")
         cv = (df[params_only].std() / df[params_only].mean().abs()).sort_values()
         for k, v in cv.items():
             note = "" if v < 0.25 else "   <-- varies a lot across windows"
-            print("   %-8s %6.3f%s" % (k, v, note))
-        print("\n   Read this WITH the identification table below, not alone. A")
-        print("   low CV means the estimate barely moves - which is evidence of")
-        print("   identification only if the parameter is actually identified.")
-        print("   A prior-driven parameter is stable because its prior is.")
+            _LOG.info("   %-8s %6.3f%s" % (k, v, note))
+        _LOG.info("\n   Read this WITH the identification table below, not alone. A")
+        _LOG.info("   low CV means the estimate barely moves - which is evidence of")
+        _LOG.info("   identification only if the parameter is actually identified.")
+        _LOG.info("   A prior-driven parameter is stable because its prior is.")
 
     # By year, mean and median, same layout. Both are shown because they answer
     # different questions on ~12 overlapping 252-day windows per year: the mean
@@ -662,9 +666,9 @@ def report(df):
     for stat in ("mean", "median"):
         t = getattr(df.groupby(df.index.year), stat)().round(4)
         t.index = [str(i) for i in t.index]
-        print("\nBy year (%s):" % stat)
-        print(heat(t, decimals=4, color=COLOR))
-    print(heat_legend(color=COLOR))
+        _LOG.info("\nBy year (%s):" % stat)
+        _LOG.info(heat(t, decimals=4, color=COLOR))
+    _LOG.info(heat_legend(color=COLOR))
 
 
     # prior sds, to judge identification date by date
@@ -701,14 +705,14 @@ def report(df):
         # Say so. A silent {} here drops the entire identification table, which
         # is the one part of this report the conclusions rest on - a bug in this
         # block once removed it from every run without a word.
-        print("\n  WARNING identification table skipped: %s: %s"
+        _LOG.info("\n  WARNING identification table skipped: %s: %s"
               % (type(exc).__name__, exc))
         prior_sd, prior_w = {}, {}
 
     if prior_w:
-        print("\nIdentification over time - share of valuation dates where the")
-        print("posterior is narrower than the prior (ratio < 0.70):")
-        print("  ratio = posterior %.0f%% width / PRIOR %.0f%% width, both "
+        _LOG.info("\nIdentification over time - share of valuation dates where the")
+        _LOG.info("posterior is narrower than the prior (ratio < 0.70):")
+        _LOG.info("  ratio = posterior %.0f%% width / PRIOR %.0f%% width, both "
               "equal-tailed." % (100 * CI_PROB, 100 * CI_PROB))
         for k in SYSTEMATIC_PARAMS:
             w = k + "_W"
@@ -718,18 +722,18 @@ def report(df):
                 continue
             ratio = df[w] / prior_w[k]
             share = 100.0 * float((ratio < 0.70).mean())
-            print("   %-8s %5.1f%%   median ratio %.2f   (min %.2f, max %.2f)"
+            _LOG.info("   %-8s %5.1f%%   median ratio %.2f   (min %.2f, max %.2f)"
                   % (k, share, ratio.median(), ratio.min(), ratio.max()))
-        print("\n   Width against width on purpose: the earlier form divided the")
-        print("   posterior width by the prior SD, which assumes a normal prior and")
-        print("   put the no-information floor at 0.84 under a flat one. Here an")
-        print("   unmoved posterior reads exactly 1.00 whatever the prior's shape.")
-        print("\n   0% means the parameter is never identified at any date in the")
-        print("   sample - that rolling series is a series of priors, not estimates.")
-        print("   A ratio at or above 1.00 means the posterior is no narrower than")
-        print("   the prior: the likelihood is flat in that direction.")
+        _LOG.info("\n   Width against width on purpose: the earlier form divided the")
+        _LOG.info("   posterior width by the prior SD, which assumes a normal prior and")
+        _LOG.info("   put the no-information floor at 0.84 under a flat one. Here an")
+        _LOG.info("   unmoved posterior reads exactly 1.00 whatever the prior's shape.")
+        _LOG.info("\n   0% means the parameter is never identified at any date in the")
+        _LOG.info("   sample - that rolling series is a series of priors, not estimates.")
+        _LOG.info("   A ratio at or above 1.00 means the posterior is no narrower than")
+        _LOG.info("   the prior: the likelihood is flat in that direction.")
 
-    print("\nJump intensity dLAMB at known stress episodes (should spike):")
+    _LOG.info("\nJump intensity dLAMB at known stress episodes (should spike):")
     for label, (a, b) in {
         "GFC 2008H2":  ("2008-07-01", "2008-12-31"),
         "Euro 2011":   ("2011-07-01", "2011-12-31"),
@@ -739,30 +743,30 @@ def report(df):
     }.items():
         w = df.loc[a:b, "dLAMB"] if "dLAMB" in df else pd.Series(dtype=float)
         if len(w):
-            print("   %-14s median %.2f   (full-sample median %.2f)"
+            _LOG.info("   %-14s median %.2f   (full-sample median %.2f)"
                   % (label, w.median(), df["dLAMB"].median()))
 
 
 def verify(df):
     """Check the April 2025 estimates against the values reported in the paper."""
     w = df.loc["2025-04-01":"2025-04-30"]
-    print("\n" + "=" * 72)
-    print("VERIFICATION :: April 2025 against the paper's reported ranges")
-    print("=" * 72)
+    _LOG.info("\n" + "=" * 72)
+    _LOG.info("VERIFICATION :: April 2025 against the paper's reported ranges")
+    _LOG.info("=" * 72)
     if not len(w):
-        print("  No April 2025 valuation dates estimated yet. Run with a step")
-        print("  that lands in that window before relying on this check.")
+        _LOG.info("  No April 2025 valuation dates estimated yet. Run with a step")
+        _LOG.info("  that lands in that window before relying on this check.")
         return
-    print("  %d valuation dates in April 2025\n" % len(w))
+    _LOG.info("  %d valuation dates in April 2025\n" % len(w))
     for k, (lo, hi) in PAPER_APRIL_2025.items():
         if k not in w:
             continue
         obs_lo, obs_hi = w[k].min(), w[k].max()
         ok = (obs_hi >= lo) and (obs_lo <= hi)
-        print("   %-8s paper [%6.2f, %6.2f]   here [%6.2f, %6.2f]   %s"
+        _LOG.info("   %-8s paper [%6.2f, %6.2f]   here [%6.2f, %6.2f]   %s"
               % (k, lo, hi, obs_lo, obs_hi, "OK" if ok else "*** MISMATCH ***"))
-    print("\n  A mismatch means this pipeline is not reproducing the published")
-    print("  estimator. Fix that before trusting any parameter in this run.")
+    _LOG.info("\n  A mismatch means this pipeline is not reproducing the published")
+    _LOG.info("  estimator. Fix that before trusting any parameter in this run.")
 
 
 def main():
@@ -847,65 +851,65 @@ def main():
     LOOKBACK = a.lookback
     STORE_ID = store_id(a.priors, PRIORS_IN_FORCE)
 
-    print("=" * 72)
-    print("Step 1 :: SPX P-measure parameters via the repository's P-MLE")
-    print("=" * 72)
-    print("  %s -> %s, every %d business days, %d-day lookback"
+    _LOG.info("=" * 72)
+    _LOG.info("Step 1 :: SPX P-measure parameters via the repository's P-MLE")
+    _LOG.info("=" * 72)
+    _LOG.info("  %s -> %s, every %d business days, %d-day lookback"
           % (a.beg, a.end, a.step, LOOKBACK))
-    print("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
-    print("  priors: %s" % a.priors)
-    print("  estimates stored under: %s" % STORE_ID)
+    _LOG.info("  credible intervals: %.0f%% equal-tailed (%s)" % (100 * CI_PROB, CI_CONVENTION))
+    _LOG.info("  priors: %s" % a.priors)
+    _LOG.info("  estimates stored under: %s" % STORE_ID)
     if LOOKBACK != BASE_LOOKBACK:
-        print("    NON-DEFAULT WINDOW: %d returns, not %d. The __lb%d suffix"
+        _LOG.info("    NON-DEFAULT WINDOW: %d returns, not %d. The __lb%d suffix"
               % (LOOKBACK, BASE_LOOKBACK, LOOKBACK))
-        print("    keeps this out of the one-year drawer; nothing here is")
-        print("    comparable to a %d-day estimate at the same date except by"
+        _LOG.info("    keeps this out of the one-year drawer; nothing here is")
+        _LOG.info("    comparable to a %d-day estimate at the same date except by"
               % BASE_LOOKBACK)
-        print("    reading both drawers side by side.")
-    print("    the trailing digest fingerprints the prior VALUES, so editing"
+        _LOG.info("    reading both drawers side by side.")
+    _LOG.info("    the trailing digest fingerprints the prior VALUES, so editing"
           "\n    any prior opens a new drawer instead of silently reusing the"
           "\n    old one. _priors.json in the drawer records the full spec.")
     if a.priors == "gaps":
-        print("    eta1 and eta2 share Gamma(4,0.2): mean 20, i.e. a 5% jump")
-        print("    lambda Gamma(3,0.5): mean 6, kept coherent with that size")
-        print("    NOTE this asserts a jump scale the full sample argues")
-        print("    against - watch whether the posterior is dragged back up")
+        _LOG.info("    eta1 and eta2 share Gamma(4,0.2): mean 20, i.e. a 5% jump")
+        _LOG.info("    lambda Gamma(3,0.5): mean 6, kept coherent with that size")
+        _LOG.info("    NOTE this asserts a jump scale the full sample argues")
+        _LOG.info("    against - watch whether the posterior is dragged back up")
     if a.priors == "asym":
-        print("    eta1 Gamma(4,0.16): mean 25 -> mean UP   jump 4.0%")
-        print("    eta2 Gamma(4,0.08): mean 50 -> mean DOWN jump 2.0%")
-        print("    NOTE this asserts POSITIVE jump skew - bigger up moves than")
-        print("    down. It is the opposite of the paper's own defaults and of")
-        print("    the full sample (eta1 78.6 / eta2 60.7). Watch whether the")
-        print("    posterior pulls eta2 back BELOW eta1; if it stays put, the")
-        print("    separation seen elsewhere was never the data's doing.")
+        _LOG.info("    eta1 Gamma(4,0.16): mean 25 -> mean UP   jump 4.0%")
+        _LOG.info("    eta2 Gamma(4,0.08): mean 50 -> mean DOWN jump 2.0%")
+        _LOG.info("    NOTE this asserts POSITIVE jump skew - bigger up moves than")
+        _LOG.info("    down. It is the opposite of the paper's own defaults and of")
+        _LOG.info("    the full sample (eta1 78.6 / eta2 60.7). Watch whether the")
+        _LOG.info("    posterior pulls eta2 back BELOW eta1; if it stays put, the")
+        _LOG.info("    separation seen elsewhere was never the data's doing.")
     if a.priors == "skew":
-        print("    eta1 Gamma(4,0.08): mean 50 -> mean UP   jump 2.0%")
-        print("    eta2 Gamma(4,0.16): mean 25 -> mean DOWN jump 4.0%")
-        print("    NEGATIVE jump skew - the equity direction, and the exact")
-        print("    mirror of --priors asym. E[Y^2] is identical under both at")
-        print("    p=0.5, so if the window is skew-blind this should return")
-        print("    sigma, lambda and total vol within noise of asym, an eta")
-        print("    separation near -19.8 against asym's +19.8, and pprob near")
-        print("    0.519 against asym's 0.481. A DIFFERENCE between the two is")
-        print("    the only result that would overturn that reading.")
+        _LOG.info("    eta1 Gamma(4,0.08): mean 50 -> mean UP   jump 2.0%")
+        _LOG.info("    eta2 Gamma(4,0.16): mean 25 -> mean DOWN jump 4.0%")
+        _LOG.info("    NEGATIVE jump skew - the equity direction, and the exact")
+        _LOG.info("    mirror of --priors asym. E[Y^2] is identical under both at")
+        _LOG.info("    p=0.5, so if the window is skew-blind this should return")
+        _LOG.info("    sigma, lambda and total vol within noise of asym, an eta")
+        _LOG.info("    separation near -19.8 against asym's +19.8, and pprob near")
+        _LOG.info("    0.519 against asym's 0.481. A DIFFERENCE between the two is")
+        _LOG.info("    the only result that would overturn that reading.")
     if a.priors == "skew-tight":
-        print("    every wide prior sd HALVED, all centres unchanged:")
-        print("      eta1     Gamma(16, 0.32)      mean 50.000  sd 12.500")
-        print("      eta2     Gamma(16, 0.64)      mean 25.000  sd  6.250")
-        print("      alpha    Beta(9.5, 9.5)       mean  0.500  sd  0.112")
-        print("      pprob    Beta(10.925, 8.075)  mean  0.575  sd  0.111")
-        print("      sigma and lambda unchanged - already data-driven")
-        print("    Predicted:")
-        print("      dETA1   width 84.24 -> 43.5    ratio 0.70 -> 0.89")
-        print("      dETA2   width 46.73 -> 22.7    ratio 0.77 -> 0.92")
-        print("      dALPHA  width 0.795 -> 0.427   ratio 0.91 -> 0.97")
-        print("      dPPROB  width 0.688 -> 0.404   ratio 0.79 -> 0.93")
-        print("    Every interval halves and every ratio moves TOWARD 1 - the")
-        print("    columns look tighter and score as LESS identified, because")
-        print("    the prior shrinks faster than the posterior. A narrow")
-        print("    interval here is not information. Do NOT read these columns")
-        print("    as better estimated than skew's; they are the same evidence")
-        print("    reported against a stronger assertion.")
+        _LOG.info("    every wide prior sd HALVED, all centres unchanged:")
+        _LOG.info("      eta1     Gamma(16, 0.32)      mean 50.000  sd 12.500")
+        _LOG.info("      eta2     Gamma(16, 0.64)      mean 25.000  sd  6.250")
+        _LOG.info("      alpha    Beta(9.5, 9.5)       mean  0.500  sd  0.112")
+        _LOG.info("      pprob    Beta(10.925, 8.075)  mean  0.575  sd  0.111")
+        _LOG.info("      sigma and lambda unchanged - already data-driven")
+        _LOG.info("    Predicted:")
+        _LOG.info("      dETA1   width 84.24 -> 43.5    ratio 0.70 -> 0.89")
+        _LOG.info("      dETA2   width 46.73 -> 22.7    ratio 0.77 -> 0.92")
+        _LOG.info("      dALPHA  width 0.795 -> 0.427   ratio 0.91 -> 0.97")
+        _LOG.info("      dPPROB  width 0.688 -> 0.404   ratio 0.79 -> 0.93")
+        _LOG.info("    Every interval halves and every ratio moves TOWARD 1 - the")
+        _LOG.info("    columns look tighter and score as LESS identified, because")
+        _LOG.info("    the prior shrinks faster than the posterior. A narrow")
+        _LOG.info("    interval here is not information. Do NOT read these columns")
+        _LOG.info("    as better estimated than skew's; they are the same evidence")
+        _LOG.info("    reported against a stronger assertion.")
 
     if a.full_sample:
         run_full_sample(a.beg, a.end)
@@ -917,7 +921,7 @@ def main():
 
     df = load_series()
     if not len(df):
-        print("\nNothing estimated yet.")
+        _LOG.info("\nNothing estimated yet.")
         return
     report(df)
     if a.verify:
@@ -927,8 +931,8 @@ def main():
         _REPO_ROOT, "poc",
         "systematic_params%s.csv" % artifact_suffix(PRIORS_TAG, PRIORS_IN_FORCE))
     df.to_csv(out)
-    print("\nWritten to %s" % out)
-    print("This series is the rolling systematic input to backfill_poc.py.")
+    _LOG.info("\nWritten to %s" % out)
+    _LOG.info("This series is the rolling systematic input to backfill_poc.py.")
 
 
 def _reap_forkserver():

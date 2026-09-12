@@ -11,11 +11,11 @@ try:
     if cp.cuda.is_available():
         np = cp  # Use CuPy if a CUDA-enabled GPU is available
         cpx = sc
-        print("Using CuPy (GPU accelerated)")
+        _LOG.info("Using CuPy (GPU accelerated)")
     else:
-        print("Using NumPy (CPU) - CuPy installed but no GPU available")
+        _LOG.info("Using NumPy (CPU) - CuPy installed but no GPU available")
 except ImportError:
-    print("Using NumPy (CPU) - CuPy not installed")
+    _LOG.info("Using NumPy (CPU) - CuPy not installed")
 
 from numpy.typing import NDArray
 from abc import ABC, abstractmethod
@@ -30,3 +30,7 @@ from Library.SkewCalibrationBase import *
 from Library.OptionPricerKou2002 import kou_call, kou_put
 from Library.OptionPricerBSM1973 import *
 from Library.SkewCalibrationKimYi2025 import *
+
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)

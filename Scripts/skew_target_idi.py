@@ -36,6 +36,10 @@ from Library.OptionPricerBSM1973 import bsm_call_price
 from Library.RootFinder import bisection
 from Scripts.load_portfolio import get_idiosyncratic_ids
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # ---------- configuration ---------------------------------------------------
 BASELINE_DATE = "20250409"
 IDI_ASSETS = get_idiosyncratic_ids()   # e.g. ["COIN"]
@@ -155,23 +159,23 @@ def find_gammai(target_dskew, baseline_params, baseline_skew_pts, target_atm,
 
 # ---------- report ---------------------------------------------------------
 def run_for_asset(asset):
-    print(f"\n{'='*100}")
-    print(f"Asset: {asset}   (idiosyncratic baseline loaded from {BASELINE_DATE})")
-    print(f"{'='*100}")
+    _LOG.info(f"\n{'='*100}")
+    _LOG.info(f"Asset: {asset}   (idiosyncratic baseline loaded from {BASELINE_DATE})")
+    _LOG.info(f"{'='*100}")
 
     base = load_idi_baseline(asset, BASELINE_DATE)
-    print(f"Baseline params: gamma_i={base['gammai']:.3f}  beta_i={base['betai']:.3f}  "
+    _LOG.info(f"Baseline params: gamma_i={base['gammai']:.3f}  beta_i={base['betai']:.3f}  "
           f"kappa_i={base['kappai']:.3f}  rho_iX={base['rhoix']:.3f}")
 
     iv90 = iv_at(base, 0.90); iv100 = iv_at(base, 1.00); iv110 = iv_at(base, 1.10)
     base_skew_pts = (iv90 - iv110) * 100
-    print(f"Baseline IVs (vol pts): IV90={iv90*100:.2f}  IV100={iv100*100:.2f}  "
+    _LOG.info(f"Baseline IVs (vol pts): IV90={iv90*100:.2f}  IV100={iv100*100:.2f}  "
           f"IV110={iv110*100:.2f}  skew={base_skew_pts:+.2f}")
 
     hdr = (f"\n{'target dskew':>12s}  {'gamma_i':>8s}  {'kappa_i':>8s}  "
            f"{'IV90':>6s}  {'IV100':>6s}  {'IV110':>6s}  "
            f"{'dIV100':>7s}  {'skew':>6s}  {'achieved':>9s}")
-    print(hdr); print("-" * len(hdr))
+    _LOG.info(hdr); _LOG.info("-" * len(hdr))
     for tgt in SKEW_TARGETS:
         final = find_gammai(tgt, base, base_skew_pts, iv100)
         f_iv90  = iv_at(final, 0.90)
@@ -179,17 +183,17 @@ def run_for_asset(asset):
         f_iv110 = iv_at(final, 1.10)
         f_skew_pts = (f_iv90 - f_iv110) * 100
         achieved = f_skew_pts - base_skew_pts
-        print(f"{tgt:+12.2f}  {final['gammai']:8.3f}  {final['kappai']:8.4f}  "
+        _LOG.info(f"{tgt:+12.2f}  {final['gammai']:8.3f}  {final['kappai']:8.4f}  "
               f"{f_iv90*100:6.2f}  {f_iv100*100:6.2f}  {f_iv110*100:6.2f}  "
               f"{(f_iv100 - iv100)*100:+7.2f}  {f_skew_pts:6.2f}  {achieved:+9.2f}")
 
 
 def main():
-    print(f"Systematic baseline (SPX {BASELINE_DATE}): "
+    _LOG.info(f"Systematic baseline (SPX {BASELINE_DATE}): "
           f"sigma={SYS['sigma']:.3f}  lamb={SYS['lamb']:.2f}  "
           f"eta1={SYS['eta1']:.2f}  eta2={SYS['eta2']:.2f}  p={SYS['pprob']:.2f}")
-    print(f"Option: S={S0}  T={T*365:.0f}d  r={R:.2%}  q={Q:.2%}")
-    print(f"Targets (vol points of skew steepening): {SKEW_TARGETS}")
+    _LOG.info(f"Option: S={S0}  T={T*365:.0f}d  r={R:.2%}  q={Q:.2%}")
+    _LOG.info(f"Targets (vol points of skew steepening): {SKEW_TARGETS}")
 
     for asset in IDI_ASSETS:
         run_for_asset(asset)

@@ -57,6 +57,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import poc.autocallable_stress as A                            # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 def identified(name, sigma):
     """(phi_i, b_i) - the two combinations the data actually pins down."""
@@ -130,19 +134,19 @@ def main():
                          float(2 * beta_dist.ppf(q, 5, 2) - 1)))
 
     spot0 = np.full(len(A.NAMES), 100.)
-    print()
-    print("=" * 78)
-    print("rho_iX sensitivity :: %s :: %s" % (" / ".join(A.NAMES), A.VINTAGE))
-    print("=" * 78)
-    print("  sigma %.4f   fitted rho_iX: %s"
+    _LOG.info("")
+    _LOG.info("=" * 78)
+    _LOG.info("rho_iX sensitivity :: %s :: %s" % (" / ".join(A.NAMES), A.VINTAGE))
+    _LOG.info("=" * 78)
+    _LOG.info("  sigma %.4f   fitted rho_iX: %s"
           % (sigma, ", ".join("%s %.4f" % (n, fitted[n]) for n in A.NAMES)))
-    print("  phi_i and b_i are HELD at their fitted values in every row;")
-    print("  beta_i and kappa_i are re-solved so the fit is unchanged.")
-    print("  Common random numbers: differences are signal, not MC noise.")
-    print()
-    print("  %-11s %8s %9s %9s %26s %13s %13s"
+    _LOG.info("  phi_i and b_i are HELD at their fitted values in every row;")
+    _LOG.info("  beta_i and kappa_i are re-solved so the fit is unchanged.")
+    _LOG.info("  Common random numbers: differences are signal, not MC noise.")
+    _LOG.info("")
+    _LOG.info("  %-11s %8s %9s %9s %26s %13s %13s"
           % ("rho_iX", "phi chk", "kappa", "beta", "R_ij", "note", "put"))
-    print("  " + "-" * 96)
+    _LOG.info("  " + "-" * 96)
 
     rows = []
     for label, rho in rhos:
@@ -155,43 +159,43 @@ def main():
         drift = max(abs(ph[i] - base[n][0]) for i, n in enumerate(A.NAMES))
         put, pv = A.put_value(spot0, spot0, a)
         shown = fitted[A.NAMES[0]] if rho is None else rho
-        print("  %-11s %8.1e %9.4f %9.4f  %24s %13s %13s"
+        _LOG.info("  %-11s %8.1e %9.4f %9.4f  %24s %13s %13s"
               % (label + (" %.3f" % shown), drift,
                  A.IDIO[A.NAMES[0]]["dKAPPAI"], A.IDIO[A.NAMES[0]]["dBETAI"],
                  " ".join("%.4f" % v for v in rij),
                  format(pv, ",.0f"), format(put, ",.0f")))
         rows.append((label, shown, pv, put, list(rij)))
 
-    print()
-    print("  phi chk is max |phi_i(row) - phi_i(fitted)|; it must be ~1e-15. If")
-    print("  it is, the walk stayed on the flat direction and every row fits")
-    print("  the data exactly as well as the fitted one.")
-    print()
-    print("  Move against the fitted row, on common random numbers:")
-    print()
-    print("  %-17s %13s %13s %10s %10s"
+    _LOG.info("")
+    _LOG.info("  phi chk is max |phi_i(row) - phi_i(fitted)|; it must be ~1e-15. If")
+    _LOG.info("  it is, the walk stayed on the flat direction and every row fits")
+    _LOG.info("  the data exactly as well as the fitted one.")
+    _LOG.info("")
+    _LOG.info("  Move against the fitted row, on common random numbers:")
+    _LOG.info("")
+    _LOG.info("  %-17s %13s %13s %10s %10s"
           % ("rho_iX", "d note", "d put", "d put %", "d R_ij"))
-    print("  " + "-" * 68)
+    _LOG.info("  " + "-" * 68)
     b_pv, b_put, b_rij = rows[0][2], rows[0][3], rows[0][4]
     worst = 0.0
     for label, shown, pv, put, rij in rows[1:]:
         dr = max(abs(x - y) for x, y in zip(rij, b_rij))
         pct = 100.0 * (put - b_put) / b_put if b_put else float("nan")
         worst = max(worst, abs(pct))
-        print("  %-17s %13s %13s %9.2f%% %10.4f"
+        _LOG.info("  %-17s %13s %13s %9.2f%% %10.4f"
               % (label + " %.3f" % shown, format(pv - b_pv, "+,.0f"),
                  format(put - b_put, "+,.0f"), pct, dr))
-    print()
+    _LOG.info("")
     if worst < 1.0:
-        print("  Under 1% across the prior's whole plausible range. The")
-        print("  non-identification is a limitation to state, not a result to")
-        print("  qualify: phi_i and the translation are untouched by")
-        print("  construction, and R_ij carries too little of it to matter.")
+        _LOG.info("  Under 1% across the prior's whole plausible range. The")
+        _LOG.info("  non-identification is a limitation to state, not a result to")
+        _LOG.info("  qualify: phi_i and the translation are untouched by")
+        _LOG.info("  construction, and R_ij carries too little of it to matter.")
     else:
-        print("  Above 1%. R_ij carries enough of the unidentified direction to")
-        print("  affect the answer, so the prices need an interval rather than a")
-        print("  point - or the joint estimation that would identify rho_iX.")
-    print()
+        _LOG.info("  Above 1%. R_ij carries enough of the unidentified direction to")
+        _LOG.info("  affect the answer, so the prices need an interval rather than a")
+        _LOG.info("  point - or the joint estimation that would identify rho_iX.")
+    _LOG.info("")
 
 
 if __name__ == "__main__":

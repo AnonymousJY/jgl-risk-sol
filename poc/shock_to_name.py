@@ -39,6 +39,10 @@ import numpy as np
 from scipy.stats import norm, poisson
 from scipy.signal import fftconvolve
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
@@ -468,27 +472,27 @@ def main():
     xs = [float(v) / 100.0 for v in a.shocks.split(",")]
     hs = [int(v) for v in a.horizons.split(",")]
 
-    print("=" * 74)
-    print("%s   %s" % (a.name, used))
-    print("=" * 74)
-    print("  systematic  " + "  ".join("%s %.4f" % (k[1:].lower(), sysp[k]) for k in SYS_KEYS))
-    print("  name        " + "  ".join("%s %.4f" % (k[1:].lower(), idio[k]) for k in IDIO_KEYS))
+    _LOG.info("=" * 74)
+    _LOG.info("%s   %s" % (a.name, used))
+    _LOG.info("=" * 74)
+    _LOG.info("  systematic  " + "  ".join("%s %.4f" % (k[1:].lower(), sysp[k]) for k in SYS_KEYS))
+    _LOG.info("  name        " + "  ".join("%s %.4f" % (k[1:].lower(), idio[k]) for k in IDIO_KEYS))
     r0 = name_shock(xs[0], sysp, idio, hs[0], a.psi)
-    print("\n  b_diff = beta + kappa*rho/sigma = %.4f      gamma_i = %.4f"
+    _LOG.info("\n  b_diff = beta + kappa*rho/sigma = %.4f      gamma_i = %.4f"
           % (r0["b_diff"], r0["gamma"]))
-    print("  m_i = %.4f" % r0["m_i"])
+    _LOG.info("  m_i = %.4f" % r0["m_i"])
 
     if len(hs) == 1:
         h = hs[0]
-        print("\n  horizon %d day(s), sigma_h = %.3f%%" % (h, 100 * r0["sigma_h"]))
-        print("\n      x     P(jump|x)    E[Y|x]     E[D|x]    b_eff        y_i    sd(y|x)")
-        print("  " + "-" * 70)
+        _LOG.info("\n  horizon %d day(s), sigma_h = %.3f%%" % (h, 100 * r0["sigma_h"]))
+        _LOG.info("\n      x     P(jump|x)    E[Y|x]     E[D|x]    b_eff        y_i    sd(y|x)")
+        _LOG.info("  " + "-" * 70)
         for x in xs:
             r = name_shock(x, sysp, idio, h, a.psi)
-            print("  %6.1f%%    %7.4f  %8.3f%%  %8.3f%%  %7.3f  %8.2f%%  %7.2f%%"
+            _LOG.info("  %6.1f%%    %7.4f  %8.3f%%  %8.3f%%  %7.3f  %8.2f%%  %7.2f%%"
                   % (100 * x, r["p_jump"], 100 * r["EY"], 100 * r["ED"],
                      r["b_eff"], 100 * r["y"], 100 * r["sd"]))
-        print("\n  y_i is a conditional MEAN. Quote it with sd(y|x), never alone.")
+        _LOG.info("\n  y_i is a conditional MEAN. Quote it with sd(y|x), never alone.")
         return
 
     grids = {k: np.zeros((len(hs), len(xs))) for k in ("y", "b_eff", "w", "sd")}
@@ -505,16 +509,16 @@ def main():
                             ("CONDITIONAL SD  sd(y_i | x, h)", "sd", True),
                             ("EFFECTIVE BETA  b_eff(x, h)", "b_eff", False),
                             ("JUMP SHARE  w(x, h)", "w", False)):
-        print("\n" + title)
-        print("=" * len(hdr)); print(hdr); print("-" * len(hdr))
+        _LOG.info("\n" + title)
+        _LOG.info("=" * len(hdr)); _LOG.info(hdr); _LOG.info("-" * len(hdr))
         for i, h in enumerate(hs):
             cells = "".join(("%9.2f%%" % (100 * grids[key][i, j])) if pct
                             else ("%10.3f" % grids[key][i, j])
                             for j in range(len(xs)))
-            print("  %4dd " % h + cells)
-    print("\n  sigma_h: " + "  ".join("%dd=%.2f%%" % (h, 100 * s_)
+            _LOG.info("  %4dd " % h + cells)
+    _LOG.info("\n  sigma_h: " + "  ".join("%dd=%.2f%%" % (h, 100 * s_)
                                       for h, s_ in zip(hs, sig)))
-    print("""
+    _LOG.info("""
   b_eff runs between b_diff (all diffusion) and gamma_i (all jump). Down a
   column it converges to the same value for EVERY shock as h grows - w tends
   to the jump share of total variance - so the two loadings only separate at

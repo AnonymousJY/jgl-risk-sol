@@ -24,6 +24,10 @@ if _REPO_ROOT not in sys.path:
 
 from Library.DataAccess import write_snapshot, _safe_symbol  # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # ---------------------------------------------------------------------------
 # Symbols
 # ---------------------------------------------------------------------------
@@ -94,10 +98,10 @@ def _largest_moves(series, n=3):
 
 def main():
     symbols = [SYSTEMATIC_ID] + ETFS + sorted(NAMES)
-    print("=" * 72)
-    print("jgl-risk-sol :: spot backfill study - snapshot export")
-    print("=" * 72)
-    print("%d symbols\n" % len(symbols))
+    _LOG.info("=" * 72)
+    _LOG.info("jgl-risk-sol :: spot backfill study - snapshot export")
+    _LOG.info("=" * 72)
+    _LOG.info("%d symbols\n" % len(symbols))
 
     coverage = {}
     extremes = {}
@@ -107,39 +111,39 @@ def main():
         try:
             series = fetch_one(symbol)
         except Exception as exc:                                  # noqa: BLE001
-            print("  FAILED  %-6s %s" % (symbol, exc))
+            _LOG.info("  FAILED  %-6s %s" % (symbol, exc))
             failed.append(symbol)
             continue
 
         write_snapshot(series.to_frame(), "prices_%s.csv" % _safe_symbol(symbol))
         coverage[symbol] = series.index.min()
         extremes[symbol] = _largest_moves(series)
-        print("  wrote   %-6s %5d rows  %s -> %s"
+        _LOG.info("  wrote   %-6s %5d rows  %s -> %s"
               % (symbol, len(series), series.index.min().date(),
                  series.index.max().date()))
 
     late = {s: d for s, d in coverage.items() if d > REQUIRED_START}
-    print("\n" + "-" * 72)
+    _LOG.info("\n" + "-" * 72)
     if failed:
-        print("COULD NOT FETCH: %s" % ", ".join(failed))
+        _LOG.info("COULD NOT FETCH: %s" % ", ".join(failed))
     if late:
-        print("HISTORY STARTS TOO LATE (unusable as test names):")
+        _LOG.info("HISTORY STARTS TOO LATE (unusable as test names):")
         for s, start in sorted(late.items()):
-            print("   %-6s first observation %s" % (s, start.date()))
-        print("   Drop or replace these in NAMES before running the study.")
+            _LOG.info("   %-6s first observation %s" % (s, start.date()))
+        _LOG.info("   Drop or replace these in NAMES before running the study.")
     if not failed and not late:
-        print("All symbols reach back to %s. No substitutions needed."
+        _LOG.info("All symbols reach back to %s. No substitutions needed."
               % REQUIRED_START.date())
 
-    print("\nLargest daily moves per symbol - check for split-adjustment artifacts:")
+    _LOG.info("\nLargest daily moves per symbol - check for split-adjustment artifacts:")
     for sym in sorted(extremes):
         moves = ", ".join("%s %+.0f%%" % (d, p) for d, p in extremes[sym])
         flag = "  <-- CHECK" if any(abs(p) > 60 for _, p in extremes[sym]) else ""
-        print("   %-6s %s%s" % (sym, moves, flag))
+        _LOG.info("   %-6s %s%s" % (sym, moves, flag))
 
-    print("-" * 72)
-    print("Snapshots in data/snapshots/. Commit them - the study is then")
-    print("reproducible from committed inputs, independent of vendor revisions.")
+    _LOG.info("-" * 72)
+    _LOG.info("Snapshots in data/snapshots/. Commit them - the study is then")
+    _LOG.info("reproducible from committed inputs, independent of vendor revisions.")
 
 
 if __name__ == "__main__":

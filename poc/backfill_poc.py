@@ -40,6 +40,10 @@ from Library.ArrayBackend import (                # noqa: E402
     xp, asnumpy, rng_for, BACKEND, describe as describe_backend,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
@@ -584,21 +588,21 @@ def main():
     rets = log_returns(prices)
 
     diffusive, marks, is_jump, sys_params = filter_systematic(rets[INDEX])
-    print("compute backend: %s" % describe_backend())
-    print("\nSystematic parameters (from %s):" % INDEX)
+    _LOG.info("compute backend: %s" % describe_backend())
+    _LOG.info("\nSystematic parameters (from %s):" % INDEX)
     for k, v in sys_params.items():
-        print("  %-16s %.6f" % (k, v))
-    print("\nFace-validity gate - jump mass by episode:")
-    print(sanity_check(marks).to_string(index=False))
-    print("\nIf the GFC and Covid rows are not dominant, stop here. The filter is wrong.\n")
+        _LOG.info("  %-16s %.6f" % (k, v))
+    _LOG.info("\nFace-validity gate - jump mass by episode:")
+    _LOG.info(sanity_check(marks).to_string(index=False))
+    _LOG.info("\nIf the GFC and Covid rows are not dominant, stop here. The filter is wrong.\n")
 
     if not NAMES:
-        print("Populate NAMES with {ticker: sector_etf} and re-run.")
+        _LOG.info("Populate NAMES with {ticker: sector_etf} and re-run.")
         return
 
-    print("Measured stress content of each estimation window")
-    print("(no window is calm - this is why it is measured, not labelled)\n")
-    print("  %-6s %-12s %-24s %5s %8s %9s %8s"
+    _LOG.info("Measured stress content of each estimation window")
+    _LOG.info("(no window is calm - this is why it is measured, not labelled)\n")
+    _LOG.info("  %-6s %-12s %-24s %5s %8s %9s %8s"
           % ("crisis", "window", "range", "jumps", "per_yr", "mass", "max%"))
     stress = {}
     for crisis_label, CRISIS in CRISES.items():
@@ -606,11 +610,11 @@ def main():
             _assert_no_overlap(window, CRISIS, wlabel, crisis_label)
             st = window_stress(marks, is_jump, window)
             stress[(crisis_label, wlabel)] = st
-            print("  %-6s %-12s %s..%s %5d %8.1f %9.4f %8.1f"
+            _LOG.info("  %-6s %-12s %s..%s %5d %8.1f %9.4f %8.1f"
                   % (crisis_label, wlabel, window[0], window[1],
                      st["win_jump_days"], st["win_jump_per_yr"],
                      st["win_jump_mass"], st["win_max_jump_pct"]))
-    print()
+    _LOG.info("")
 
     rows = []
     for crisis_label, CRISIS in CRISES.items():
@@ -661,45 +665,45 @@ def main():
                           **stress[(crisis_label, wlabel)], **p})
                 rows.append(s)
             except Exception as e:                      # noqa: BLE001
-                print("skip %s / %s / %s: %s" % (crisis_label, ticker, wlabel, e))
+                _LOG.info("skip %s / %s / %s: %s" % (crisis_label, ticker, wlabel, e))
 
     res = pd.DataFrame(rows)
     res.to_csv("poc_results.csv", index=False)
 
-    print("\nTier 2 headline - mean |ES(97.5%) error| by crisis and estimation window:")
+    _LOG.info("\nTier 2 headline - mean |ES(97.5%) error| by crisis and estimation window:")
     for c in ("recon", "etf", "betaidx"):
         res[c + "_abs"] = res[c + "_es975_err_pct"].abs()
     summary = (res.groupby(["crisis", "window"])[["recon_abs", "etf_abs", "betaidx_abs"]]
                   .mean().round(1))
-    print(summary.to_string())
-    print("\nSame, excluding financials (XLF) - the sector whose 2008 moves were")
-    print("driven by solvency rather than market-wide liquidity:")
-    print(res[res.etf != "XLF"].groupby(["crisis", "window"])
+    _LOG.info(summary.to_string())
+    _LOG.info("\nSame, excluding financials (XLF) - the sector whose 2008 moves were")
+    _LOG.info("driven by solvency rather than market-wide liquidity:")
+    _LOG.info(res[res.etf != "XLF"].groupby(["crisis", "window"])
              [["recon_abs", "etf_abs", "betaidx_abs"]].mean().round(1).to_string())
-    print("\nThe claim is recon_abs < etf_abs and recon_abs < betaidx_abs, with the")
-    print("margin widening in gamma, and holding across BOTH crises. Degradation")
-    print("across estimation windows is the transportability result.")
+    _LOG.info("\nThe claim is recon_abs < etf_abs and recon_abs < betaidx_abs, with the")
+    _LOG.info("margin widening in gamma, and holding across BOTH crises. Degradation")
+    _LOG.info("across estimation windows is the transportability result.")
     n_unident = int((res["pct_roll_gamma_ident"] < 50).sum())
     if n_unident:
-        print("\nWARNING: gamma identified in fewer than half the rolling positions")
-        print("for %d of %d runs. Those estimates rest on very few jump days -"
+        _LOG.info("\nWARNING: gamma identified in fewer than half the rolling positions")
+        _LOG.info("for %d of %d runs. Those estimates rest on very few jump days -"
               % (n_unident, len(res)))
-        print("report them separately from the headline.")
-        print(res[res["pct_roll_gamma_ident"] < 50]
+        _LOG.info("report them separately from the headline.")
+        _LOG.info(res[res["pct_roll_gamma_ident"] < 50]
               .groupby(["crisis", "window"]).size().to_string())
     else:
-        print("\ngamma identified in a majority of rolling positions for all %d runs."
+        _LOG.info("\ngamma identified in a majority of rolling positions for all %d runs."
               % len(res))
 
     res["es975_ci_width_pct"] = (100.0 * (res.es975_recon_p975 - res.es975_recon_p025)
                                  / res.es975_recon_mean)
-    print("\nParameter uncertainty - width of the bootstrap 95% interval on the")
-    print("reconstructed ES, as % of the mean. This is the Principle seven /")
-    print("SR 26-2 'assessment of uncertainty in the final outcome':")
-    print(res.groupby(["crisis", "window"])["es975_ci_width_pct"]
+    _LOG.info("\nParameter uncertainty - width of the bootstrap 95% interval on the")
+    _LOG.info("reconstructed ES, as % of the mean. This is the Principle seven /")
+    _LOG.info("SR 26-2 'assessment of uncertainty in the final outcome':")
+    _LOG.info(res.groupby(["crisis", "window"])["es975_ci_width_pct"]
              .describe()[["mean", "50%", "max"]].round(1).to_string())
 
-    print("\nFull detail written to poc_results.csv")
+    _LOG.info("\nFull detail written to poc_results.csv")
 
 
 def filter_only():
@@ -713,42 +717,42 @@ def filter_only():
     rets = log_returns(prices)
     diffusive, marks, is_jump, params = filter_systematic(rets[INDEX])
 
-    print("=" * 72)
-    print("Step 1 :: systematic liquidity factor from %s" % INDEX)
-    print("=" * 72)
+    _LOG.info("=" * 72)
+    _LOG.info("Step 1 :: systematic liquidity factor from %s" % INDEX)
+    _LOG.info("=" * 72)
     for k, v in params.items():
-        print("  %-18s %s" % (k, ("%.6f" % v) if isinstance(v, float) else v))
+        _LOG.info("  %-18s %s" % (k, ("%.6f" % v) if isinstance(v, float) else v))
 
-    print("\nFace-validity gate - jump mass by episode:")
-    print(sanity_check(marks).to_string(index=False))
+    _LOG.info("\nFace-validity gate - jump mass by episode:")
+    _LOG.info(sanity_check(marks).to_string(index=False))
 
-    print("\nTop 15 jump days by magnitude:")
+    _LOG.info("\nTop 15 jump days by magnitude:")
     top = marks[marks != 0].abs().sort_values(ascending=False).head(15)
     for d in top.index:
-        print("   %s  %+7.2f%%" % (d.date(), marks.loc[d] * 100))
+        _LOG.info("   %s  %+7.2f%%" % (d.date(), marks.loc[d] * 100))
 
-    print("\nJump days per calendar year:")
+    _LOG.info("\nJump days per calendar year:")
     per_yr = is_jump.groupby(is_jump.index.year).sum()
-    print("   " + "  ".join("%d:%d" % (y, n) for y, n in per_yr.items()))
+    _LOG.info("   " + "  ".join("%d:%d" % (y, n) for y, n in per_yr.items()))
 
-    print("\nEstimation-window stress (measured, not labelled):")
-    print("  %-6s %-12s %-24s %5s %8s %9s %8s"
+    _LOG.info("\nEstimation-window stress (measured, not labelled):")
+    _LOG.info("  %-6s %-12s %-24s %5s %8s %9s %8s"
           % ("crisis", "window", "range", "jumps", "per_yr", "mass", "max%"))
     for crisis_label, CRISIS in CRISES.items():
         for wlabel, window in EST_WINDOWS[crisis_label].items():
             _assert_no_overlap(window, CRISIS, wlabel, crisis_label)
             st = window_stress(marks, is_jump, window)
-            print("  %-6s %-12s %s..%s %5d %8.1f %9.4f %8.1f"
+            _LOG.info("  %-6s %-12s %s..%s %5d %8.1f %9.4f %8.1f"
                   % (crisis_label, wlabel, window[0], window[1],
                      st["win_jump_days"], st["win_jump_per_yr"],
                      st["win_jump_mass"], st["win_max_jump_pct"]))
 
-    print("\n" + "-" * 72)
-    print("GATE: the GFC and COVID rows must dominate the episode table, and the")
-    print("top jump days must land on dates you recognise. If not, stop here -")
-    print("the filter is wrong and nothing downstream is meaningful.")
-    print("\nSensitivity: rerun with JUMP_THRESHOLD_SD at 2.5 and 3.5 before")
-    print("trusting any jump-dependent result.")
+    _LOG.info("\n" + "-" * 72)
+    _LOG.info("GATE: the GFC and COVID rows must dominate the episode table, and the")
+    _LOG.info("top jump days must land on dates you recognise. If not, stop here -")
+    _LOG.info("the filter is wrong and nothing downstream is meaningful.")
+    _LOG.info("\nSensitivity: rerun with JUMP_THRESHOLD_SD at 2.5 and 3.5 before")
+    _LOG.info("trusting any jump-dependent result.")
 
 
 if __name__ == "__main__":

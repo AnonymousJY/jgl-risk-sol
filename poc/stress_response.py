@@ -58,6 +58,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Library.DataAccess import PMLE_DIR                          # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 DEFAULT_CELLS = ("skew-tight:252,skewtight-lamflat:252,"
                  "skew-tight:756,skewtight-lamflat:756")
 
@@ -110,11 +114,11 @@ def pctile(series, window):
 
 
 def table(title, cells, episodes, col, note):
-    print()
-    print("  %s" % title)
-    print("  %-14s %s" % ("episode",
+    _LOG.info("")
+    _LOG.info("  %s" % title)
+    _LOG.info("  %-14s %s" % ("episode",
                           " ".join("%18s" % c for c in cells)))
-    print("  " + "-" * (14 + 19 * len(cells)))
+    _LOG.info("  " + "-" * (14 + 19 * len(cells)))
     out = {}
     for name, win in episodes.items():
         row, cellvals = [], {}
@@ -126,8 +130,8 @@ def table(title, cells, episodes, col, note):
             row.append("%18s" % ("%5.0f%%  (%7.2f)" % (p, med)
                                  if np.isfinite(p) else "-"))
         out[name] = cellvals
-        print("  %-14s %s" % (name, " ".join(row)))
-    print("  %s" % note)
+        _LOG.info("  %-14s %s" % (name, " ".join(row)))
+    _LOG.info("  %s" % note)
     return out
 
 
@@ -164,10 +168,10 @@ def responds(cells, stress=None, calm=None):
     """
     stress = STRESS if stress is None else stress
     calm = CALM if calm is None else calm
-    print()
-    print("  RESPONDS? stress percentile minus the calm control, per")
-    print("  parameter, against how far the series actually travels and")
-    print("  against what being dragged along sigma/lambda alone would give.")
+    _LOG.info("")
+    _LOG.info("  RESPONDS? stress percentile minus the calm control, per")
+    _LOG.info("  parameter, against how far the series actually travels and")
+    _LOG.info("  against what being dragged along sigma/lambda alone would give.")
     out = {}
     for c, df in cells.items():
         gap, mv = {}, {}
@@ -181,11 +185,11 @@ def responds(cells, stress=None, calm=None):
             sd = float(df[k].astype(float).std(ddof=1))
             mv[k] = sd / w95 if w95 and np.isfinite(w95) else np.nan
             out[(k, c)] = (st, cm)
-        print()
-        print("  %s" % c)
-        print("  %-8s %8s %8s %8s   %s"
+        _LOG.info("")
+        _LOG.info("  %s" % c)
+        _LOG.info("  %-8s %8s %8s %8s   %s"
               % ("param", "gap", "move", "drag", "verdict"))
-        print("  " + "-" * 62)
+        _LOG.info("  " + "-" * 62)
         for k in SYS_PARAMS:
             if k not in gap:
                 continue
@@ -216,22 +220,22 @@ def responds(cells, stress=None, calm=None):
                 v = "REAL - travels, and past its drag"
             else:
                 v = "past its drag, travels modestly"
-            print("  %-8s %+8.0f %8.2f %s   %s" % (k, gap[k], mv[k], dtxt, v))
-    print()
-    print("  Sign matters as much as size: pprob is P(UP jump) and is")
-    print("  expected to go the other way, low in stress.")
-    print()
-    print("  WHAT THIS TABLE STILL CANNOT DO. `move` is the per-date width,")
-    print("  which is the wrong denominator for a difference between two")
-    print("  GROUPS of dates - with 245 of them the group median is pinned")
-    print("  far better than any one date. The right statistic is the median")
-    print("  contrast against its own standard error, and a plain one would be")
-    print("  far too small here: consecutive 252-day windows share 251 of 252")
-    print("  observations, so these are nothing like independent draws. That")
-    print("  needs a BLOCK bootstrap over episode-length blocks, which is not")
-    print("  in this file. Until it is, read `drag` as the test and `move` as")
-    print("  a caveat - a row past its drag but low on move is unproven, not")
-    print("  refuted.")
+            _LOG.info("  %-8s %+8.0f %8.2f %s   %s" % (k, gap[k], mv[k], dtxt, v))
+    _LOG.info("")
+    _LOG.info("  Sign matters as much as size: pprob is P(UP jump) and is")
+    _LOG.info("  expected to go the other way, low in stress.")
+    _LOG.info("")
+    _LOG.info("  WHAT THIS TABLE STILL CANNOT DO. `move` is the per-date width,")
+    _LOG.info("  which is the wrong denominator for a difference between two")
+    _LOG.info("  GROUPS of dates - with 245 of them the group median is pinned")
+    _LOG.info("  far better than any one date. The right statistic is the median")
+    _LOG.info("  contrast against its own standard error, and a plain one would be")
+    _LOG.info("  far too small here: consecutive 252-day windows share 251 of 252")
+    _LOG.info("  observations, so these are nothing like independent draws. That")
+    _LOG.info("  needs a BLOCK bootstrap over episode-length blocks, which is not")
+    _LOG.info("  in this file. Until it is, read `drag` as the test and `move` as")
+    _LOG.info("  a caveat - a row past its drag but low on move is unproven, not")
+    _LOG.info("  refuted.")
     return out
 
 
@@ -277,18 +281,18 @@ def rotation_test(cells, n_rot=2000, seed=20240114, stress=None, calm=None):
         cm = np.nanmedian([pctile(series, w)[0] for w in calm.values()])
         return st - cm
 
-    print()
-    print("  ROTATION TEST - %d circular rotations per parameter." % n_rot)
-    print("  p is the share of rotations whose |gap| matches or beats the")
-    print("  observed one. The residual column is the test that counts.")
+    _LOG.info("")
+    _LOG.info("  ROTATION TEST - %d circular rotations per parameter." % n_rot)
+    _LOG.info("  p is the share of rotations whose |gap| matches or beats the")
+    _LOG.info("  observed one. The residual column is the test that counts.")
     out = {}
     for c, df in cells.items():
-        print()
-        print("  %s" % c)
-        print("  %-8s %8s %8s %10s %8s %8s   %s"
+        _LOG.info("")
+        _LOG.info("  %s" % c)
+        _LOG.info("  %-8s %8s %8s %10s %8s %8s   %s"
               % ("param", "gap", "p(raw)", "resid gap", "p(res)", "null sd",
                  "verdict"))
-        print("  " + "-" * 76)
+        _LOG.info("  " + "-" * 76)
         X = np.column_stack([np.ones(len(df))]
                             + [df[r].astype(float).to_numpy()
                                for r in ("dSIGMA", "dLAMB") if r in df])
@@ -318,13 +322,13 @@ def rotation_test(cells, n_rot=2000, seed=20240114, stress=None, calm=None):
             v = ("REAL beyond sigma/lambda" if p_res < 0.05 else
                  "not distinguishable from a persistent series"
                  if p_raw >= 0.05 else "raw only - it is the ridge")
-            print("  %-8s %+8.0f %8.3f %+10.0f %8.3f %8.1f   %s"
+            _LOG.info("  %-8s %+8.0f %8.3f %+10.0f %8.3f %8.1f   %s"
                   % (k, obs, p_raw, obs_r, p_res, nn.std(ddof=1), v))
-    print()
-    print("  null sd is the spread of the residual gap across rotations - how")
-    print("  big a gap this series produces against dates picked at random.")
-    print("  Compare it to the alpha row, which is the study's own control for")
-    print("  a parameter that knows nothing.")
+    _LOG.info("")
+    _LOG.info("  null sd is the spread of the residual gap across rotations - how")
+    _LOG.info("  big a gap this series produces against dates picked at random.")
+    _LOG.info("  Compare it to the alpha row, which is the study's own control for")
+    _LOG.info("  a parameter that knows nothing.")
     return out
 
 
@@ -363,11 +367,11 @@ def continuous_test(cells, rets, lookback_of, n_rot=2000, seed=20240114):
     from scipy import stats as sps
 
     rng = np.random.default_rng(seed)
-    print()
-    print("  CONTINUOUS STRESS - Spearman rho against the model-free feature")
-    print("  of the trailing window that each parameter MEANS, same rotation")
-    print("  null, %d rotations. Every date counts here, not six episodes," % n_rot)
-    print("  so this is the better-powered version of the table above.")
+    _LOG.info("")
+    _LOG.info("  CONTINUOUS STRESS - Spearman rho against the model-free feature")
+    _LOG.info("  of the trailing window that each parameter MEANS, same rotation")
+    _LOG.info("  null, %d rotations. Every date counts here, not six episodes," % n_rot)
+    _LOG.info("  so this is the better-powered version of the table above.")
     out = {}
     for c, df in cells.items():
         lb = lookback_of[c]
@@ -391,25 +395,25 @@ def continuous_test(cells, rets, lookback_of, n_rot=2000, seed=20240114):
                  "dETA1": "upsz", "dETA2": "dnsz", "dALPHA": "vol"}
         ok = np.isfinite(feat["vol"])
         if ok.sum() < 30:
-            print("  %s: only %d dates with a full window" % (c, ok.sum()))
+            _LOG.info("  %s: only %d dates with a full window" % (c, ok.sum()))
             continue
         d = df.loc[ok]
         feat = {k: v[ok] for k, v in feat.items()}
         X = np.column_stack([np.ones(len(d))]
                             + [d[r].astype(float).to_numpy()
                                for r in ("dSIGMA", "dLAMB") if r in d])
-        print()
-        print("  %s   (%d dates, %d-day trailing window)" % (c, len(d), lb))
-        print("  %-8s %-8s %9s %8s %10s %8s   %s"
+        _LOG.info("")
+        _LOG.info("  %s   (%d dates, %d-day trailing window)" % (c, len(d), lb))
+        _LOG.info("  %-8s %-8s %9s %8s %10s %8s   %s"
               % ("param", "covar", "rho", "p", "partial", "p", "verdict"))
-        print("  " + "-" * 79)
+        _LOG.info("  " + "-" * 79)
         for k in SYS_PARAMS:
             if k not in d:
                 continue
             rv = feat[COVAR[k]]
             good = np.isfinite(rv)
             if good.sum() < 30:
-                print("  %-8s %-8s  covariate undefined at %d dates"
+                _LOG.info("  %-8s %-8s  covariate undefined at %d dates"
                       % (k, COVAR[k], (~good).sum()))
                 continue
             y = d[k].astype(float).to_numpy()
@@ -431,15 +435,15 @@ def continuous_test(cells, rets, lookback_of, n_rot=2000, seed=20240114):
             out[(k, c)] = (r0, p0, r1, p1)
             v = ("REAL beyond sigma/lambda" if p1 < 0.05 else
                  "the ridge" if p0 < 0.05 else "not distinguishable")
-            print("  %-8s %-8s %+9.3f %8.3f %+10.3f %8.3f   %s"
+            _LOG.info("  %-8s %-8s %+9.3f %8.3f %+10.3f %8.3f   %s"
                   % (k, COVAR[k], r0, p0, r1, p1, v))
-    print()
-    print("  Every covariate is model-free - counted off the returns, with no")
-    print("  parameter in it - so a sigma that tracks realised vol is the model")
-    print("  working rather than a finding. The rows worth reading are the")
-    print("  PARTIAL ones for lambda and pprob: stress information the")
-    print("  diffusion does not already carry. dALPHA is the control and")
-    print("  should fail; if it does not, the test is too generous.")
+    _LOG.info("")
+    _LOG.info("  Every covariate is model-free - counted off the returns, with no")
+    _LOG.info("  parameter in it - so a sigma that tracks realised vol is the model")
+    _LOG.info("  working rather than a finding. The rows worth reading are the")
+    _LOG.info("  PARTIAL ones for lambda and pprob: stress information the")
+    _LOG.info("  diffusion does not already carry. dALPHA is the control and")
+    _LOG.info("  should fail; if it does not, the test is too generous.")
     return out
 
 
@@ -467,7 +471,7 @@ def main():
                 store_id(tag, SYSTEMATIC_PRIOR_SETS[tag], lb))
             lbs[cell] = lb
         except SystemExit as exc:
-            print("  %s SKIPPED - %s" % (cell, exc))
+            _LOG.info("  %s SKIPPED - %s" % (cell, exc))
     if not cells:
         raise SystemExit("no drawers loaded")
 
@@ -483,26 +487,26 @@ def main():
     dropped = {c: len(df) - len(common) for c, df in cells.items()}
     cells = {c: df.loc[common] for c, df in cells.items()}
     if any(dropped.values()):
-        print()
-        print("  ALIGNED to %d dates shared by every cell (dropped %s)."
+        _LOG.info("")
+        _LOG.info("  ALIGNED to %d dates shared by every cell (dropped %s)."
               % (len(common),
                  ", ".join("%s: %d" % (c, n) for c, n in dropped.items()
                            if n)))
-        print("  Percentile is position within a cell's own series, so an")
-        print("  unaligned daily drawer and monthly one are not comparable.")
+        _LOG.info("  Percentile is position within a cell's own series, so an")
+        _LOG.info("  unaligned daily drawer and monthly one are not comparable.")
 
-    print()
-    print("=" * 78)
-    print("stress response :: percentile within each cell's OWN series")
-    print("=" * 78)
+    _LOG.info("")
+    _LOG.info("=" * 78)
+    _LOG.info("stress response :: percentile within each cell's OWN series")
+    _LOG.info("=" * 78)
     for c, df in cells.items():
-        print("  %-26s %4d dates  %s -> %s   lambda median %7.2f"
+        _LOG.info("  %-26s %4d dates  %s -> %s   lambda median %7.2f"
               % (c, len(df), df.index.min().date(), df.index.max().date(),
                  float(df["dLAMB"].median())))
-    print()
-    print("  Each entry is percentile (median level). Percentile is what")
-    print("  compares across cells; the level in brackets does not, because")
-    print("  the arms differ by a factor of three on it by construction.")
+    _LOG.info("")
+    _LOG.info("  Each entry is percentile (median level). Percentile is what")
+    _LOG.info("  compares across cells; the level in brackets does not, because")
+    _LOG.info("  the arms differ by a factor of three on it by construction.")
 
     lam = table("LAMBDA - jump intensity", cells, STRESS, "dLAMB",
                 "A prior is identical at every date and cannot put lambda at "
@@ -531,15 +535,15 @@ def main():
             continuous_test(cells, px.pct_change().dropna()[SYSTEMATIC_ID],
                             lbs, n_rot=a.rotations)
         except Exception as exc:                              # noqa: BLE001
-            print("\n  continuous test skipped: %s: %s"
+            _LOG.info("\n  continuous test skipped: %s: %s"
                   % (type(exc).__name__, exc))
 
     # --- is lambda redundant given sigma? -----------------------------------
-    print()
-    print("  REDUNDANCY - lambda against sigma across all dates, and lambda")
-    print("  orthogonalised to sigma put through the stress percentiles again:")
-    print("  %-14s %s" % ("", " ".join("%18s" % c for c in cells)))
-    print("  " + "-" * (14 + 19 * len(cells)))
+    _LOG.info("")
+    _LOG.info("  REDUNDANCY - lambda against sigma across all dates, and lambda")
+    _LOG.info("  orthogonalised to sigma put through the stress percentiles again:")
+    _LOG.info("  %-14s %s" % ("", " ".join("%18s" % c for c in cells)))
+    _LOG.info("  " + "-" * (14 + 19 * len(cells)))
     row = []
     resid = {}
     for c, df in cells.items():
@@ -549,24 +553,24 @@ def main():
         row.append("%18s" % ("%+.3f" % r))
         b = np.polyfit(x, y, 1) if np.isfinite(r) else (0.0, 0.0)
         resid[c] = pd.Series(y - (b[0] * x + b[1]), index=df.index)
-    print("  %-14s %s" % ("corr", " ".join(row)))
+    _LOG.info("  %-14s %s" % ("corr", " ".join(row)))
     for name, win in STRESS.items():
         row = []
         for c in cells:
             p_, _ = pctile(resid[c], win)
             row.append("%18s" % ("%5.0f%%" % p_ if np.isfinite(p_) else "-"))
-        print("  %-14s %s" % (name, " ".join(row)))
-    print("  A residual that still lands high in stress is lambda carrying")
-    print("  something sigma does not. Near 50% everywhere and the jump")
-    print("  intensity is a restatement of the diffusion.")
+        _LOG.info("  %-14s %s" % (name, " ".join(row)))
+    _LOG.info("  A residual that still lands high in stress is lambda carrying")
+    _LOG.info("  something sigma does not. Near 50% everywhere and the jump")
+    _LOG.info("  intensity is a restatement of the diffusion.")
 
     # --- what the jump distribution looks like, stress vs calm ---------------
-    print()
-    print("  JUMP SHAPE, at the median parameters of stress vs calm dates:")
-    print("  %-26s %8s %8s %8s %8s %9s"
+    _LOG.info("")
+    _LOG.info("  JUMP SHAPE, at the median parameters of stress vs calm dates:")
+    _LOG.info("  %-26s %8s %8s %8s %8s %9s"
           % ("cell / regime", "P(down)", "up size", "dn size", "dn/up",
              "jump skew"))
-    print("  " + "-" * 74)
+    _LOG.info("  " + "-" * 74)
     for c, df in cells.items():
         for regime, eps in (("stress", STRESS), ("calm", CALM)):
             idx = pd.Index([])
@@ -583,23 +587,23 @@ def main():
             m3 = 6 * (pp / e1 ** 3 - (1 - pp) / e2 ** 3)
             v = m2 - m1 ** 2
             sk = (m3 - 3 * m1 * m2 + 2 * m1 ** 3) / v ** 1.5
-            print("  %-26s %8.3f %7.2f%% %7.2f%% %8.2f %+9.3f"
+            _LOG.info("  %-26s %8.3f %7.2f%% %7.2f%% %8.2f %+9.3f"
                   % ("%s / %s" % (c, regime), 1 - pp, 100 / e1, 100 / e2,
                      (1 / e2) / (1 / e1), sk))
-    print("  Frequency asymmetry and SIZE asymmetry are different claims and")
-    print("  can move in opposite directions. On the 756 skew-tight by-year")
-    print("  means they do: P(down) rises 0.41 -> 0.50 from calm to stress")
-    print("  while the down/up SIZE ratio compresses 1.83 -> 1.38 and the jump")
-    print("  skew goes -1.25 -> -0.67. Less skewed, not more - which is the")
-    print("  index-option stylised fact, where skew is steepest in quiet")
-    print("  markets and flattens when ATM vol spikes.")
+    _LOG.info("  Frequency asymmetry and SIZE asymmetry are different claims and")
+    _LOG.info("  can move in opposite directions. On the 756 skew-tight by-year")
+    _LOG.info("  means they do: P(down) rises 0.41 -> 0.50 from calm to stress")
+    _LOG.info("  while the down/up SIZE ratio compresses 1.83 -> 1.38 and the jump")
+    _LOG.info("  skew goes -1.25 -> -0.67. Less skewed, not more - which is the")
+    _LOG.info("  index-option stylised fact, where skew is steepest in quiet")
+    _LOG.info("  markets and flattens when ATM vol spikes.")
 
-    print()
-    print("  WINDOW COVERAGE - share of the episode inside the trailing window")
-    print("  at the episode's own dates, which is what the estimate could see:")
-    print("  %-14s %s" % ("episode", " ".join("%18s" % ("%d-day" % lbs[c])
+    _LOG.info("")
+    _LOG.info("  WINDOW COVERAGE - share of the episode inside the trailing window")
+    _LOG.info("  at the episode's own dates, which is what the estimate could see:")
+    _LOG.info("  %-14s %s" % ("episode", " ".join("%18s" % ("%d-day" % lbs[c])
                                               for c in cells)))
-    print("  " + "-" * (14 + 19 * len(cells)))
+    _LOG.info("  " + "-" * (14 + 19 * len(cells)))
     for name, (lo, hi) in STRESS.items():
         row = []
         for c in cells:
@@ -610,12 +614,12 @@ def main():
             # at the episode's LAST date, how far back does the window reach
             back = w.index.max() - pd.Timedelta(days=lbs[c] * 365.0 / 252.0)
             row.append("%18s" % ("from %s" % back.date()))
-        print("  %-14s %s" % (name, " ".join(row)))
-    print()
-    print("  Read a spike against that date. A 756-day window in late 2011")
-    print("  still holds the whole of 2008-09, so a 'Euro 2011' peak there may")
-    print("  be the GFC that has not yet left rather than anything in 2011.")
-    print()
+        _LOG.info("  %-14s %s" % (name, " ".join(row)))
+    _LOG.info("")
+    _LOG.info("  Read a spike against that date. A 756-day window in late 2011")
+    _LOG.info("  still holds the whole of 2008-09, so a 'Euro 2011' peak there may")
+    _LOG.info("  be the GFC that has not yet left rather than anything in 2011.")
+    _LOG.info("")
 
 
 if __name__ == "__main__":

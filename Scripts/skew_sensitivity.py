@@ -38,6 +38,10 @@ from Library.OptionPricerKimYi2025 import kimyi_call
 from Library.OptionPricerBSM1973 import bsm_call_price
 from Library.RootFinder import bisection
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # ---------- baseline calibration -------------------------------------------
 BASELINE_DATE = "20250409"          # any cached SPX date works
 p = get_pmle_params(BASELINE_DATE, "^SPX")
@@ -132,14 +136,14 @@ scenarios = {
 
 # ---------- run + report ----------------------------------------------------
 def _print_table(title, rows, baseline_iv):
-    print(f"\n=== {title} ===")
+    _LOG.info(f"\n=== {title} ===")
     header = (f"{'scenario':45s}  {'sigma':>6s}  "
               f"{'IV90':>6s}  {'IV100':>6s}  {'IV110':>6s}  "
               f"{'dIV90':>7s}  {'dIV100':>7s}  {'dIV110':>7s}  "
               f"{'skew':>6s}  {'dskew':>7s}")
-    print(header); print("-" * len(header))
+    _LOG.info(header); _LOG.info("-" * len(header))
     for r in rows:
-        print(f"{r['name']:45s}  {r['sigma']:6.3f}  "
+        _LOG.info(f"{r['name']:45s}  {r['sigma']:6.3f}  "
               f"{r['iv90']:6.2f}  {r['iv100']:6.2f}  {r['iv110']:6.2f}  "
               f"{r['div90']:+7.2f}  {r['div100']:+7.2f}  {r['div110']:+7.2f}  "
               f"{r['skew']:6.2f}  {r['dskew']:+7.2f}")
@@ -161,15 +165,15 @@ def _row(name, params, baseline_iv):
 
 
 def main():
-    print(f"\nBaseline: SPX {BASELINE_DATE}   "
+    _LOG.info(f"\nBaseline: SPX {BASELINE_DATE}   "
           f"sigma={BASELINE['sigma']:.3f}  lamb={BASELINE['lamb']:.2f}  "
           f"eta1={BASELINE['eta1']:.2f}  eta2={BASELINE['eta2']:.2f}  p={BASELINE['pprob']:.2f}")
-    print(f"Option: S={S0}  T={T*365:.0f}d  r={R:.2%}  q={Q:.2%}")
+    _LOG.info(f"Option: S={S0}  T={T*365:.0f}d  r={R:.2%}  q={Q:.2%}")
 
     # baseline IV curve drives every delta + the ATM target
     base_iv = iv_curve(BASELINE)
     target_atm = base_iv[1.00]
-    print(f"Baseline IVs (vol pts): IV90={base_iv[0.90]*100:.2f}  "
+    _LOG.info(f"Baseline IVs (vol pts): IV90={base_iv[0.90]*100:.2f}  "
           f"IV100={base_iv[1.00]*100:.2f}  IV110={base_iv[1.10]*100:.2f}  "
           f"skew={(base_iv[0.90]-base_iv[1.10])*100:+.2f}")
 

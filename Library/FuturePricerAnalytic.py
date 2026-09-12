@@ -15,6 +15,10 @@ functions with inputs reshaped to column vectors. Drop-in for the repo's Library
 import numpy as np
 from numpy.typing import NDArray
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 def _col(x) -> NDArray[np.float64]:
     return np.asarray(x, dtype=np.float64).reshape((-1, 1))
@@ -126,8 +130,8 @@ if __name__ == "__main__":
     S0, r, q, b, T, K = 5500., 0.043, 0.013, 0.0025, 0.25, 5400.
     F = future_fair_price(np.array(S0), np.array(r), np.array(q), np.array(b), np.array(T))
     V = forward_value(np.array(S0), np.array(K), np.array(r), np.array(q), np.array(b), np.array(T))
-    print("fair price F :", float(F.reshape(-1)[0]))
-    print("value (K=%.0f):" % K, float(V.reshape(-1)[0]))
-    print("delta        :", float(forward_delta(np.array(r), np.array(q), np.array(b), np.array(T)).reshape(-1)[0]))
+    _LOG.info("%s %s", "fair price F :", float(F.reshape(-1)[0]))
+    _LOG.info("%s %s", "value (K=%.0f):" % K, float(V.reshape(-1)[0]))
+    _LOG.info("%s %s", "delta        :", float(forward_delta(np.array(r), np.array(q), np.array(b), np.array(T)).reshape(-1)[0]))
     c = implied_carry_from_price(F, np.array(S0), np.array(T))
-    print("implied carry:", float(c.reshape(-1)[0]), "(should equal r-q-b =", r - q - b, ")")
+    _LOG.info("%s %s %s %s %s", "implied carry:", float(c.reshape(-1)[0]), "(should equal r-q-b =", r - q - b, ")")

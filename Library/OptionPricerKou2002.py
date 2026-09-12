@@ -4,6 +4,10 @@ from scipy.special import comb
 from scipy.special import ndtr
 from scipy.stats import poisson
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 def _Hh_ladder(n, x):
     """Hh_{-1} .. Hh_n in one bottom-up pass; ladder[i + 1] is Hh_i.
@@ -208,7 +212,7 @@ if __name__=='__main__':
 
     pv = kou_call(r=r, d=d, sigma=sigma, lam=lamb, p=pprob, eta1=eta1, eta2=eta2, S0=s, K=k, expiry=t)
     true_pv = 9.14732
-    print(f"Calcualted pv = {pv:.5f} vs. true pv = {true_pv} of call option")
+    _LOG.info(f"Calcualted pv = {pv:.5f} vs. true pv = {true_pv} of call option")
 
 
 # ---------------------------------------------------------------------------

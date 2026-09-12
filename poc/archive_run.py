@@ -33,6 +33,10 @@ sys.path.insert(0, _REPO_ROOT)
 
 from Library.DataAccess import PMLE_DIR                       # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # Mirrored from poc/estimate_systematic.py rather than imported. Importing it
 # drags in pymc, and a script whose entire job is to rename paths should run in
 # any environment - including one where the estimation stack is broken, which
@@ -108,20 +112,20 @@ def describe_priors(manifest):
 def do_list():
     found = drawers()
     if not found:
-        print("No estimate drawers under %s" % PMLE_DIR)
+        _LOG.info("No estimate drawers under %s" % PMLE_DIR)
         return
-    print("=" * 72)
-    print("Estimate drawers")
-    print("=" * 72)
+    _LOG.info("=" * 72)
+    _LOG.info("Estimate drawers")
+    _LOG.info("=" * 72)
     for d in found:
-        print("  %-34s %4d date(s)" % (d["id"], d["n"]))
-        print("      %s" % describe_priors(d["manifest"]))
+        _LOG.info("  %-34s %4d date(s)" % (d["id"], d["n"]))
+        _LOG.info("      %s" % describe_priors(d["manifest"]))
         cmd = resume_command(d["manifest"])
         if cmd:
-            print("      resume: %s" % cmd)
-    print("\n  Rename one with --drawer <id> --label <name>.")
-    print("  A 'resume' line re-runs that drawer's remaining dates; the run")
-    print("  skips what is already there, so it is safe to repeat.")
+            _LOG.info("      resume: %s" % cmd)
+    _LOG.info("\n  Rename one with --drawer <id> --label <name>.")
+    _LOG.info("  A 'resume' line re-runs that drawer's remaining dates; the run")
+    _LOG.info("  skips what is already there, so it is safe to repeat.")
 
 
 def _retag_contents(old_id, dst_dir):
@@ -198,34 +202,34 @@ def main():
                          "underscore. It becomes a path.")
 
     moves = plan(a.drawer, a.label)
-    print("=" * 72)
-    print("Rename '%s' -> '%s__%s'%s"
+    _LOG.info("=" * 72)
+    _LOG.info("Rename '%s' -> '%s__%s'%s"
           % (a.drawer, a.drawer, a.label, "" if a.apply else "   (DRY RUN)"))
-    print("=" * 72)
+    _LOG.info("=" * 72)
 
     collisions = [(s, d) for s, d in moves if os.path.exists(d)]
     for src, dst in moves:
-        print("  %s  %s" % ("BLOCKED" if os.path.exists(dst) else "move   ",
+        _LOG.info("  %s  %s" % ("BLOCKED" if os.path.exists(dst) else "move   ",
                             os.path.relpath(src, _REPO_ROOT)))
-        print("           -> %s" % os.path.relpath(dst, _REPO_ROOT))
-        print("           (%s)" % describe(src))
+        _LOG.info("           -> %s" % os.path.relpath(dst, _REPO_ROOT))
+        _LOG.info("           (%s)" % describe(src))
 
     if collisions:
-        print("\n  %d destination(s) already exist. Refusing to overwrite."
+        _LOG.info("\n  %d destination(s) already exist. Refusing to overwrite."
               % len(collisions))
         raise SystemExit(1)
 
     if not a.apply:
-        print("\n  Dry run. Add --apply to rename.")
+        _LOG.info("\n  Dry run. Add --apply to rename.")
         return
 
     for src, dst in moves:
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.move(src, dst)
         n = _retag_contents(a.drawer, dst) if os.path.isdir(dst) else 0
-        print("  moved %s%s" % (os.path.relpath(dst, _REPO_ROOT),
+        _LOG.info("  moved %s%s" % (os.path.relpath(dst, _REPO_ROOT),
                                 "  (%d file(s) retagged)" % n if n else ""))
-    print("\nDone. The original drawer name is free again, so a rerun under "
+    _LOG.info("\nDone. The original drawer name is free again, so a rerun under "
           "those\npriors will estimate from scratch rather than resume.")
 
 

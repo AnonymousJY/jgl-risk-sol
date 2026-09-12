@@ -54,6 +54,10 @@ from Scripts.skew_calibrate_systematic import (
     cache_path,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 def migrate(old_pickle_path: str) -> str:
     with open(old_pickle_path, "rb") as f:
@@ -94,7 +98,7 @@ def migrate(old_pickle_path: str) -> str:
         rows[(ticker, date_str)] = row
 
     if skipped:
-        print(
+        _LOG.info(
             f"Skipped {len(skipped)} idiosyncratic entr{'y' if len(skipped) == 1 else 'ies'} "
             f"with no matching systematic date: {skipped}"
         )
@@ -121,4 +125,4 @@ if __name__ == "__main__":
 
     written_path = migrate(old_path)
     migrated_df = pd.read_parquet(written_path)
-    print(f"Migrated {len(migrated_df)} rows from {old_path}\n  -> {written_path}")
+    _LOG.info(f"Migrated {len(migrated_df)} rows from {old_path}\n  -> {written_path}")

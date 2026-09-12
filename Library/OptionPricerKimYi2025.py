@@ -2,6 +2,10 @@ import numpy as np
 from numpy.typing import NDArray
 from Library.OptionPricerKou2002 import kou_call, kou_put
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 def psi_vol(
         betai: NDArray[np.float64],
@@ -137,5 +141,5 @@ if __name__=='__main__':
     put = kimyi_put(und_price=und_price, und_strike=und_strike, risk_free_rate=r, dividend_yield=d, kappai=kappai, gammai=gammai,
                   betai=betai, rhoix=rhoix, sigma=sigma, pprob=pprob, lamb=lamb, eta1=eta1, eta2=eta2, time_to_expiry=time_to_expiry)
 
-    print(f"Call prices: {call.squeeze()}")
-    print(f"Put prices: {put.squeeze()}")
+    _LOG.info(f"Call prices: {call.squeeze()}")
+    _LOG.info(f"Put prices: {put.squeeze()}")

@@ -56,6 +56,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Library.DataAccess import PMLE_DIR, get_price_panel        # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 DEFAULT_CELLS = ("skew-tight:252,skewtight-lamflat:252,"
                  "skew-tight:756,skewtight-lamflat:756")
 EPISODES = {"GFC 2008-09": ("2008-01-01", "2009-12-31"),
@@ -123,17 +127,17 @@ def main():
     px = get_price_panel([SYSTEMATIC_ID])
     rets = px.pct_change().dropna()[SYSTEMATIC_ID]
 
-    print()
-    print("=" * 78)
-    print("variance check :: model-implied one-day moments vs the fitted window")
-    print("=" * 78)
-    print("  A ratio of 1.00 means the arm reproduces the window it was fitted")
-    print("  on. Systematically above 1.00 means the arm asserts more risk than")
-    print("  the data showed; below, less.")
-    print()
-    print("  %-26s %6s %10s %10s %10s %10s"
+    _LOG.info("")
+    _LOG.info("=" * 78)
+    _LOG.info("variance check :: model-implied one-day moments vs the fitted window")
+    _LOG.info("=" * 78)
+    _LOG.info("  A ratio of 1.00 means the arm reproduces the window it was fitted")
+    _LOG.info("  on. Systematically above 1.00 means the arm asserts more risk than")
+    _LOG.info("  the data showed; below, less.")
+    _LOG.info("")
+    _LOG.info("  %-26s %6s %10s %10s %10s %10s"
           % ("cell", "dates", "sd ratio", "within 10%", "q2.5 ratio", "q2.5 hit"))
-    print("  " + "-" * 78)
+    _LOG.info("  " + "-" * 78)
 
     keep = {}
     for cell in [c.strip() for c in a.cells.split(",") if c.strip()]:
@@ -146,7 +150,7 @@ def main():
         try:
             df = load_drawer(drawer, a.beg, a.end)
         except SystemExit as exc:
-            print("  %-26s  SKIPPED - %s" % (cell, exc))
+            _LOG.info("  %-26s  SKIPPED - %s" % (cell, exc))
             continue
 
         rows = []
@@ -161,14 +165,14 @@ def main():
             rows.append((dt, msd, mq, float(win.std(ddof=1)),
                          float(win.quantile(0.025))))
         if not rows:
-            print("  %-26s  no usable dates" % cell)
+            _LOG.info("  %-26s  no usable dates" % cell)
             continue
         r = pd.DataFrame(rows, columns=["dt", "msd", "mq", "rsd", "rq"]
                          ).set_index("dt")
         r["sd_ratio"] = r.msd / r.rsd
         r["q_ratio"] = r.mq / r.rq
         keep[cell] = r
-        print("  %-26s %6d %10.3f %9.0f%% %10.3f %9.0f%%"
+        _LOG.info("  %-26s %6d %10.3f %9.0f%% %10.3f %9.0f%%"
               % (cell, len(r), r.sd_ratio.median(),
                  100 * ((r.sd_ratio - 1).abs() < 0.10).mean(),
                  r.q_ratio.median(),
@@ -176,26 +180,26 @@ def main():
 
     if not keep:
         return
-    print()
-    print("  Median sd ratio by episode - a ridge point holds across regimes,")
-    print("  a mis-specified one drifts with the regime:")
-    print("  %-26s %14s %14s %14s"
+    _LOG.info("")
+    _LOG.info("  Median sd ratio by episode - a ridge point holds across regimes,")
+    _LOG.info("  a mis-specified one drifts with the regime:")
+    _LOG.info("  %-26s %14s %14s %14s"
           % ("cell", *EPISODES.keys()))
-    print("  " + "-" * 72)
+    _LOG.info("  " + "-" * 72)
     for cell, r in keep.items():
         vals = []
         for lo, hi in EPISODES.values():
             w = r.loc[lo:hi, "sd_ratio"]
             vals.append(w.median() if len(w) else np.nan)
-        print("  %-26s %14.3f %14.3f %14.3f" % (cell, *vals))
-    print()
-    print("  The second moment is the low bar. If two arms both clear it while")
-    print("  disagreeing about lambda by a factor of three, the data is")
-    print("  indifferent along that ridge and the prior is choosing something")
-    print("  the returns cannot - which has to be SAID, not estimated. If one")
-    print("  arm misses it, that arm is off the ridge and the comparison of")
-    print("  their identification ratios was never meaningful.")
-    print()
+        _LOG.info("  %-26s %14.3f %14.3f %14.3f" % (cell, *vals))
+    _LOG.info("")
+    _LOG.info("  The second moment is the low bar. If two arms both clear it while")
+    _LOG.info("  disagreeing about lambda by a factor of three, the data is")
+    _LOG.info("  indifferent along that ridge and the prior is choosing something")
+    _LOG.info("  the returns cannot - which has to be SAID, not estimated. If one")
+    _LOG.info("  arm misses it, that arm is off the ridge and the comparison of")
+    _LOG.info("  their identification ratios was never meaningful.")
+    _LOG.info("")
 
 
 if __name__ == "__main__":

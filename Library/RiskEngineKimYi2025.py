@@ -13,6 +13,10 @@ from Library.Random import RandomBase, RandomMT19937
 from Library.Parameters import ParametersBase, ParametersConstant
 from Library.PosteriorSummary import summarize
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 ParamsResults = namedtuple('ParamsResults', ["dMEAN", "dCI_LOWER", "dCI_UPPER"])
 
@@ -209,10 +213,9 @@ def _warn_low_ess(idata, names, label):
         low = {v: float(e[v].values) for v in have
                if float(e[v].values) < JGL_MIN_TAIL_ESS}
         if low:
-            print("    LOW TAIL ESS (%s): %s  - interval endpoints for these "
+            _LOG.info("    LOW TAIL ESS (%s): %s  - interval endpoints for these "
                   "are unreliable at this draw count"
-                  % (label, ", ".join("%s %.0f" % (k, v) for k, v in low.items())),
-                  flush=True)
+                  % (label, ", ".join("%s %.0f" % (k, v) for k, v in low.items())))
     except Exception:                                            # noqa: BLE001
         pass
 

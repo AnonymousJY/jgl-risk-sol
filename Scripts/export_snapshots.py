@@ -45,6 +45,10 @@ if _REPO_ROOT not in sys.path:
 from Library.DataAccess import write_snapshot, _safe_symbol
 from Scripts.load_portfolio import get_idiosyncratic_ids
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # --- configuration -----------------------------------------------------------
 SYSTEMATIC_ID = "^SPX"
 IDIOSYNCRATIC_IDS = get_idiosyncratic_ids()  # e.g. ["COIN"]
@@ -70,7 +74,7 @@ def export_prices(extra=None, only=None):
     # either name is bound, so the comprehension cannot see `seen`.
     seen = set()
     symbols = [x for x in symbols if not (x in seen or seen.add(x))]
-    print(f"Exporting price snapshots for: {symbols}")
+    _LOG.info(f"Exporting price snapshots for: {symbols}")
 
     ends = {}
     for symbol in symbols:
@@ -80,7 +84,7 @@ def export_prices(extra=None, only=None):
         out_name = f"prices_{_safe_symbol(symbol)}.csv"
         path = write_snapshot(series.to_frame(), out_name)
         ends[symbol] = series.index.max()
-        print(f"  wrote {path}  ({len(series)} rows, "
+        _LOG.info(f"  wrote {path}  ({len(series)} rows, "
               f"{series.index.min().date()} -> {series.index.max().date()})")
     _warn_stale(ends)
 
@@ -104,13 +108,13 @@ def _warn_stale(ends):
     stale = {k: v for k, v in ends.items() if (newest - v).days > 3}
     if not stale:
         return
-    print()
-    print("  NOTE these are behind the freshest symbol (%s):" % newest.date())
+    _LOG.info("")
+    _LOG.info("  NOTE these are behind the freshest symbol (%s):" % newest.date())
     for k, v in sorted(stale.items(), key=lambda kv: kv[1]):
-        print("    %-8s %s  (%d days)" % (k, v.date(), (newest - v).days))
-    print("  A snapshot that lags the reference calendar shows up as a gap in")
-    print("  the panel report, not as staleness. Export every symbol the study")
-    print("  uses in one run rather than adding a basket on its own.")
+        _LOG.info("    %-8s %s  (%d days)" % (k, v.date(), (newest - v).days))
+    _LOG.info("  A snapshot that lags the reference calendar shows up as a gap in")
+    _LOG.info("  the panel report, not as staleness. Export every symbol the study")
+    _LOG.info("  uses in one run rather than adding a basket on its own.")
 
 
 def main():
@@ -127,11 +131,11 @@ def main():
     a = ap.parse_args()
     split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None
 
-    print("=" * 70)
-    print("mkt-depth-n-resiliency :: snapshot export")
-    print("=" * 70)
+    _LOG.info("=" * 70)
+    _LOG.info("mkt-depth-n-resiliency :: snapshot export")
+    _LOG.info("=" * 70)
     export_prices(extra=split(a.add), only=split(a.symbols))
-    print("Done. Commit the files under data/snapshots/ to make the "
+    _LOG.info("Done. Commit the files under data/snapshots/ to make the "
           "repository a self-contained replication package.")
 
 

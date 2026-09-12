@@ -45,6 +45,10 @@ from Library.RiskEngineKimYi2025 import (                      # noqa: E402
     pmle_kimyirisk_systematic, SYSTEMATIC_PRIOR_SETS,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYSTEMATIC_ID = "^SPX"
 LOOKBACK = 252
 BASE_DAYS = 252
@@ -139,15 +143,15 @@ def main():
     rv = returns_for(a.date)
     priors = SYSTEMATIC_PRIOR_SETS[a.priors]
     ncpu = os.cpu_count() or 1
-    print("=" * 76)
-    print("sampler benchmark  |  %s  %s  priors=%s  %d cpus"
+    _LOG.info("=" * 76)
+    _LOG.info("sampler benchmark  |  %s  %s  priors=%s  %d cpus"
           % (SYSTEMATIC_ID, a.date, a.priors, ncpu))
-    print("=" * 76)
+    _LOG.info("=" * 76)
 
     if a.only in (None, "draws"):
-        print("\nDRAWS  (chains=4, cores=4)   min tail ess across the six parameters")
-        print("  draws    total    seconds    min tail ess    ess/sec   ess per 1000 draws")
-        print("  " + "-" * 72)
+        _LOG.info("\nDRAWS  (chains=4, cores=4)   min tail ess across the six parameters")
+        _LOG.info("  draws    total    seconds    min tail ess    ess/sec   ess per 1000 draws")
+        _LOG.info("  " + "-" * 72)
         base = None
         for d in [int(x) for x in a.draws.split(",")]:
             el, idata = one_fit(rv, priors, draws=d, chains=4, cores=4)
@@ -155,16 +159,16 @@ def main():
             m = min(ess.values()) if ess else float("nan")
             if base is None:
                 base = (el, m)
-            print("  %6d  %7d  %9.1f  %14.0f  %9.1f  %14.0f"
+            _LOG.info("  %6d  %7d  %9.1f  %14.0f  %9.1f  %14.0f"
                   % (d, 4 * d, el, m, m / el if el else 0, 1000 * m / (4 * d)))
-        print("\n  Read: pick the smallest draws whose min tail ess clears ~1000.")
-        print("  Everything above that is wall time buying precision you discard")
-        print("  when you report a 95%% interval.")
+        _LOG.info("\n  Read: pick the smallest draws whose min tail ess clears ~1000.")
+        _LOG.info("  Everything above that is wall time buying precision you discard")
+        _LOG.info("  when you report a 95%% interval.")
 
     if a.only in (None, "layout"):
-        print("\nLAYOUT  what matters is fits/hour ACROSS THE MACHINE, not per fit")
-        print("  chains cores  workers  sec/fit   fits/hour   vs cores=4")
-        print("  " + "-" * 60)
+        _LOG.info("\nLAYOUT  what matters is fits/hour ACROSS THE MACHINE, not per fit")
+        _LOG.info("  chains cores  workers  sec/fit   fits/hour   vs cores=4")
+        _LOG.info("  " + "-" * 60)
         cs = [int(x) for x in a.cores.split(",")]
         meas = []
         for c in cs:
@@ -172,44 +176,44 @@ def main():
             meas.append((c, el, max(1, ncpu // c), 3600.0 * max(1, ncpu // c) / el))
         ref = next((t for c, _, _, t in meas if c == max(cs)), None)
         for c, el, w, thr in meas:
-            print("  %6d %5d  %7d  %7.1f  %10.1f   %s"
+            _LOG.info("  %6d %5d  %7d  %7.1f  %10.1f   %s"
                   % (4, c, w, el, thr,
                      "reference" if c == max(cs) else "%+.0f%%" % (100 * (thr / ref - 1))))
-        print("\n  cores=1 is slower per fit and can still win on throughput,")
-        print("  because the outer pool then runs %d fits at once instead of %d."
+        _LOG.info("\n  cores=1 is slower per fit and can still win on throughput,")
+        _LOG.info("  because the outer pool then runs %d fits at once instead of %d."
               % (ncpu, max(1, ncpu // 4)))
-        print()
-        print("  CAVEAT: these fits run ALONE on an idle machine, so fits/hour")
-        print("  assumes perfect scaling to a full pool and is optimistic - a")
-        print("  real run at 6 workers took ~47s/fit against 7.4s here. The")
-        print("  RANKING should survive, because contention penalises the")
-        print("  4-thread layout hardest, but confirm it with a real short run:")
-        print("    JGL_CORES=1 ./run_bg.sh poc/estimate_systematic.py --priors skew --step 21 --workers %d"
+        _LOG.info("")
+        _LOG.info("  CAVEAT: these fits run ALONE on an idle machine, so fits/hour")
+        _LOG.info("  assumes perfect scaling to a full pool and is optimistic - a")
+        _LOG.info("  real run at 6 workers took ~47s/fit against 7.4s here. The")
+        _LOG.info("  RANKING should survive, because contention penalises the")
+        _LOG.info("  4-thread layout hardest, but confirm it with a real short run:")
+        _LOG.info("    JGL_CORES=1 ./run_bg.sh poc/estimate_systematic.py --priors skew --step 21 --workers %d"
               % ncpu)
-        print("    JGL_CORES=4 ./run_bg.sh poc/estimate_systematic.py --priors skew --step 21 --workers %d"
+        _LOG.info("    JGL_CORES=4 ./run_bg.sh poc/estimate_systematic.py --priors skew --step 21 --workers %d"
               % max(1, ncpu // 4))
 
     if a.only in (None, "backend"):
-        print("\nBACKEND  (draws=2000, chains=4, cores=4)")
-        print("  backend     seconds   grad evals   us/grad")
-        print("  " + "-" * 48)
+        _LOG.info("\nBACKEND  (draws=2000, chains=4, cores=4)")
+        _LOG.info("  backend     seconds   grad evals   us/grad")
+        _LOG.info("  " + "-" * 48)
         for b in a.backends.split(","):
             try:
                 el, idata = one_fit(rv, priors, draws=2000, chains=4,
                                     cores=4, nuts_sampler=b)
             except Exception as exc:                             # noqa: BLE001
-                print("  %-10s  unavailable: %s" % (b, type(exc).__name__))
+                _LOG.info("  %-10s  unavailable: %s" % (b, type(exc).__name__))
                 continue
             n, note = _grad_evals(idata), ""
             if n is None:
                 n, note = 4 * (2000 + 1000), "  (DRAWS, not grads - see note)"
-            print("  %-10s  %7.1f  %11d  %8.1f%s"
+            _LOG.info("  %-10s  %7.1f  %11d  %8.1f%s"
                   % (b, el, n, 1e6 * el / n, note))
-        print("\n  This counts LEAPFROG STEPS from sample_stats, not draws. A")
-        print("  NUTS draw is a whole trajectory - often 7 to 31 gradients - so")
-        print("  time/draws overstates per-gradient cost by the average tree")
-        print("  size. Under ~100 us/grad the logp is compiling fine and draws")
-        print("  and layout are the only levers left.")
+        _LOG.info("\n  This counts LEAPFROG STEPS from sample_stats, not draws. A")
+        _LOG.info("  NUTS draw is a whole trajectory - often 7 to 31 gradients - so")
+        _LOG.info("  time/draws overstates per-gradient cost by the average tree")
+        _LOG.info("  size. Under ~100 us/grad the logp is compiling fine and draws")
+        _LOG.info("  and layout are the only levers left.")
 
 
 def _exit_now(code=0):

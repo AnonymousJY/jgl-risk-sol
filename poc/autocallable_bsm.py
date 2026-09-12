@@ -25,6 +25,10 @@ from Library.StatisticsMC import StatisticsMCMean                     # noqa: E4
 from Library.PathDependent import PathDependentWorstOfAutocallable    # noqa: E402
 from Library.ExoticEngine import ExoticEngineBlackScholesMerton       # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 C = lambda v: ParametersConstant(np.array(float(v)))
 N_ASSETS = 3
 
@@ -114,34 +118,34 @@ def main():
     shocks = [-0.60, -0.55, -0.50, -0.45, -0.40, -0.35, -0.30, -0.25, -0.20,
               -0.15, -0.10, -0.05, 0.0, 0.05, 0.10, 0.20, 0.30]
 
-    print("=" * 70)
-    print("Worst-of autocallable :: 3 identical Black-Scholes assets")
-    print("=" * 70)
-    print("  %dy quarterly, autocall %.0f%%, coupon %.2f%%/q above %.0f%%, "
+    _LOG.info("=" * 70)
+    _LOG.info("Worst-of autocallable :: 3 identical Black-Scholes assets")
+    _LOG.info("=" * 70)
+    _LOG.info("  %dy quarterly, autocall %.0f%%, coupon %.2f%%/q above %.0f%%, "
           "protection %.0f%%, memory"
           % (a.periods / 4, 100 * a.autocall, 100 * a.coupon,
              100 * a.coupon_barrier, 100 * a.protection))
-    print("  vol %.2f on every name, pairwise correlation %.2f, r %.2f%%, q %.2f%%"
+    _LOG.info("  vol %.2f on every name, pairwise correlation %.2f, r %.2f%%, q %.2f%%"
           % (a.vol, a.corr, 100 * a.rate, 100 * a.dividend))
-    print("  %s paths" % f"{a.paths:,}")
+    _LOG.info("  %s paths" % f"{a.paths:,}")
 
     put0, base, vega0, cega0 = put_greeks(spot0, spot0, a)
-    print("\n  note  %.4f   embedded put  %.4f   vega  %.4f   corr  %+.4f"
+    _LOG.info("\n  note  %.4f   embedded put  %.4f   vega  %.4f   corr  %+.4f"
           % (base, put0, vega0, cega0))
-    print("  The issuer is short the note and therefore long the put, so these")
-    print("  are the ISSUER's sensitivities.")
-    print("  vega  per +1 vol point on all three names   (central, +/-%.0f pts)"
+    _LOG.info("  The issuer is short the note and therefore long the put, so these")
+    _LOG.info("  are the ISSUER's sensitivities.")
+    _LOG.info("  vega  per +1 vol point on all three names   (central, +/-%.0f pts)"
           % (100 * a.bump))
-    print("  corr  per +10 bps of pairwise correlation   (central, +/-%.0f bps)"
+    _LOG.info("  corr  per +10 bps of pairwise correlation   (central, +/-%.0f bps)"
           % (10000 * a.corr_bump))
 
-    print("\n  %6s %6s %10s %9s %10s %8s %9s" %
+    _LOG.info("\n  %6s %6s %10s %9s %10s %8s %9s" %
           ("shock", "spot", "note", "put", "put P&L", "vega", "corr"))
-    print("  " + "-" * 66)
+    _LOG.info("  " + "-" * 66)
     for x in shocks:
         sp = spot0 * (1.0 + x)
         put, pv, vg, cg = put_greeks(sp, spot0, a)
-        print("  %+5.0f%% %6.0f %10.4f %9.4f %+10.4f %8.4f %+9.4f"
+        _LOG.info("  %+5.0f%% %6.0f %10.4f %9.4f %+10.4f %8.4f %+9.4f"
               % (100 * x, sp[0], pv, put, put - put0, vg, cg))
 
 

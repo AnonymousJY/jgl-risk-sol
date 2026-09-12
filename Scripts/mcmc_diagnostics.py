@@ -54,6 +54,10 @@ from Library.RiskEngineKimYi2025 import (  # noqa: E402
     _dist_loglike_idiosyncratic,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 # ----------------------------------------------------------------------------
 # Configuration (mirrors run_pmle_kimyi2025.py)
@@ -189,8 +193,8 @@ def report_summary(idata, var_names, label, out_path):
     summary = az.summary(idata, var_names=var_names, hdi_prob=0.95)
     cols = ["mean", "sd", "hdi_2.5%", "hdi_97.5%", "ess_bulk", "ess_tail", "r_hat"]
     cols = [c for c in cols if c in summary.columns]
-    print(f"\n=== {label} ===")
-    print(summary[cols].round(4).to_string())
+    _LOG.info(f"\n=== {label} ===")
+    _LOG.info(summary[cols].round(4).to_string())
     summary.to_csv(out_path)
     return summary
 
@@ -209,17 +213,17 @@ def flag_convergence_issues(summary, label):
         if r_hat > RHAT_THRESHOLD:
             issues.append(f"  {pname}: R-hat above {RHAT_THRESHOLD} ({r_hat:.4f})")
     if issues:
-        print(f"\n[!] Convergence warnings ({label}):")
+        _LOG.info(f"\n[!] Convergence warnings ({label}):")
         for line in issues:
-            print(line)
+            _LOG.info(line)
     else:
-        print(f"\n[OK] All chains converged in {label} (ESS >= {ESS_THRESHOLD}, R-hat <= {RHAT_THRESHOLD}).")
+        _LOG.info(f"\n[OK] All chains converged in {label} (ESS >= {ESS_THRESHOLD}, R-hat <= {RHAT_THRESHOLD}).")
 
 
 def report_correlation(nat_df, out_path):
     corr = nat_df.corr()
-    print("\n=== Posterior correlation matrix (natural parameter space) ===")
-    print(corr.round(3).to_string())
+    _LOG.info("\n=== Posterior correlation matrix (natural parameter space) ===")
+    _LOG.info(corr.round(3).to_string())
     corr.to_csv(out_path)
 
     # Flag high-correlation pairs.
@@ -231,11 +235,11 @@ def report_correlation(nat_df, out_path):
             if abs(c) >= CORR_THRESHOLD:
                 high_corr.append((cols[i], cols[j], c))
     if high_corr:
-        print(f"\n[!] Highly correlated posterior pairs (|corr| >= {CORR_THRESHOLD}):")
+        _LOG.info(f"\n[!] Highly correlated posterior pairs (|corr| >= {CORR_THRESHOLD}):")
         for a, b, c in high_corr:
-            print(f"  {a} <-> {b}: {c:+.3f}  (candidates for reparameterization)")
+            _LOG.info(f"  {a} <-> {b}: {c:+.3f}  (candidates for reparameterization)")
     else:
-        print(f"\n[OK] No posterior pairs exceed |corr| >= {CORR_THRESHOLD}.")
+        _LOG.info(f"\n[OK] No posterior pairs exceed |corr| >= {CORR_THRESHOLD}.")
 
 
 def save_trace_plots(idata, var_names, out_dir):
@@ -316,7 +320,7 @@ def main():
     out_dir = Path(args.out_dir) / f"{date}_{ticker.replace('^', '')}_L{lookback}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Sampling {ticker} {date} (lookback={lookback}): {args.n_draws} draws x 4 chains...")
+    _LOG.info(f"Sampling {ticker} {date} (lookback={lookback}): {args.n_draws} draws x 4 chains...")
     with model:
         rng = np.random.default_rng(np.uint64(args.seed))
         idata = pm.sample(
@@ -349,17 +353,17 @@ def main():
 
     # 4. Trace plots.
     save_trace_plots(idata, sample_vars, out_dir)
-    print(f"\nTrace plots saved to {out_dir / 'trace.png'}")
+    _LOG.info(f"\nTrace plots saved to {out_dir / 'trace.png'}")
 
     # 5. Pair plots.
     save_pair_plots(idata, sample_vars, out_dir)
-    print(f"Pair plots saved to {out_dir / 'pairs.png'}")
+    _LOG.info(f"Pair plots saved to {out_dir / 'pairs.png'}")
 
     # 6. Save full InferenceData for later re-analysis.
     idata.to_netcdf(out_dir / "idata.nc")
-    print(f"InferenceData saved to {out_dir / 'idata.nc'}")
+    _LOG.info(f"InferenceData saved to {out_dir / 'idata.nc'}")
 
-    print(f"\nAll diagnostics for {ticker} {date} saved to {out_dir}/")
+    _LOG.info(f"\nAll diagnostics for {ticker} {date} saved to {out_dir}/")
 
 
 if __name__ == "__main__":

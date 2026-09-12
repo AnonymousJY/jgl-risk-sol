@@ -36,6 +36,10 @@ from poc.shock_to_name import (name_shock, model_horizon,           # noqa: E402
                                systematic_es, es_ladder_compounded,
                                model_horizon_from_ladder, HORIZON_LADDER)
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 _DP = {"money": 4, "vega": 4, "corr": 4, "delta": 4}
 
 C = lambda v: ParametersConstant(np.array(float(v)))
@@ -696,47 +700,47 @@ def main():
     spot0 = np.full(len(NAMES), 100.)
     rij, ph = total_diffusion_corr(SYS_Q["sigma"])
 
-    print("=" * 74)
-    print("Worst-of autocallable :: %s" % " / ".join(NAMES))
-    print("=" * 74)
-    print("  %dy quarterly, autocall %.0f%%, coupon %.2f%%/q above %.0f%%, "
+    _LOG.info("=" * 74)
+    _LOG.info("Worst-of autocallable :: %s" % " / ".join(NAMES))
+    _LOG.info("=" * 74)
+    _LOG.info("  %dy quarterly, autocall %.0f%%, coupon %.2f%%/q above %.0f%%, "
           "protection %.0f%%, memory"
           % (a.periods / 4, 100 * a.autocall, 100 * a.coupon,
              100 * a.coupon_barrier, 100 * a.protection))
-    print("  %s paths, engine %s, parameter vintage %s"
+    _LOG.info("  %s paths, engine %s, parameter vintage %s"
           % (f"{a.paths:,}", a.engine, VINTAGE))
     if a.engine == "bsm":
-        print("  Priced under Black-Scholes at the model's own diffusion")
-        print("  parameters: phi_i is the volatility, R_ij the correlation,")
-        print("  both from the P-measure estimates. No option data, so no Q")
-        print("  jump block is calibrated and none is used.")
-    print()
+        _LOG.info("  Priced under Black-Scholes at the model's own diffusion")
+        _LOG.info("  parameters: phi_i is the volatility, R_ij the correlation,")
+        _LOG.info("  both from the P-measure estimates. No option data, so no Q")
+        _LOG.info("  jump block is calibrated and none is used.")
+    _LOG.info("")
     if win_note:
         beg, end, arm, nsys, counts = win_note
-        print("  Vintage AVERAGED over a window, read from the drawers -")
-        print("  computed, not transcribed.")
-        print("    window      %s .. %s" % (beg, end))
-        print("    systematic  ^SPX__%s  %d dates" % (arm, nsys))
+        _LOG.info("  Vintage AVERAGED over a window, read from the drawers -")
+        _LOG.info("  computed, not transcribed.")
+        _LOG.info("    window      %s .. %s" % (beg, end))
+        _LOG.info("    systematic  ^SPX__%s  %d dates" % (arm, nsys))
         for n in NAMES:
-            print("    %-11s %s__rolling__%s  %d dates"
+            _LOG.info("    %-11s %s__rolling__%s  %d dates"
                   % (n, n, arm, counts[n])
                   + ("   <- fewer than the systematic fit" if counts[n] < nsys
                      else ""))
     elif asof_note:
         sd, nd, arm = asof_note
-        print("  ONE valuation date, read from the drawers - not a transcribed")
-        print("  vintage, and not an average over a window.")
-        print("    systematic  ^SPX__%s  %s" % (arm, sd))
+        _LOG.info("  ONE valuation date, read from the drawers - not a transcribed")
+        _LOG.info("  vintage, and not an average over a window.")
+        _LOG.info("    systematic  ^SPX__%s  %s" % (arm, sd))
         for n in NAMES:
-            print("    %-11s %s__rolling__%s  %s"
+            _LOG.info("    %-11s %s__rolling__%s  %s"
                   % (n, n, arm, nd[n])
                   + ("   <- not the requested date" if nd[n] != sd else ""))
     else:
-        print("  Parameters: skew-tight arm on BOTH blocks, daily store rebuilt")
-        print("  2026-09-09, name fits conditioned on the same systematic drawer.")
-        print("  gfc = dates whose 252d window spans Lehman to the 2009-03-09")
-        print("  trough; covid = dates whose window holds the 2020-02-20/04-07")
-        print("  crash. alpha sits on its prior in every vintage - an assumption.")
+        _LOG.info("  Parameters: skew-tight arm on BOTH blocks, daily store rebuilt")
+        _LOG.info("  2026-09-09, name fits conditioned on the same systematic drawer.")
+        _LOG.info("  gfc = dates whose 252d window spans Lehman to the 2009-03-09")
+        _LOG.info("  trough; covid = dates whose window holds the 2020-02-20/04-07")
+        _LOG.info("  crash. alpha sits on its prior in every vintage - an assumption.")
 
     # The ES ladder has to carry every prescribed h as well as its own rungs,
     # since ES(h) is reported at the horizon the shock is actually applied over.
@@ -767,51 +771,51 @@ def main():
         d_unit.append(-(v_up - v_dn) / (2 * bump * spot0[i]))
     d_pct = np.array(d_pct)
     d_unit = np.array(d_unit)
-    print()
-    print("  name   beta   kappa   rho_iX   gamma    phi_i")
+    _LOG.info("")
+    _LOG.info("  name   beta   kappa   rho_iX   gamma    phi_i")
     for n, p in zip(NAMES, ph):
         d = IDIO[n]
-        print("  %-5s %6.4f %7.4f %8.4f %7.4f %8.4f"
+        _LOG.info("  %-5s %6.4f %7.4f %8.4f %7.4f %8.4f"
               % (n, d["dBETAI"], d["dKAPPAI"], d["dRHOIX"], d["dGAMMAI"], p))
-    print("  R_ij: %s" % ", ".join("%.4f" % v for v in rij))
-    print("  sigma %.4f  lambda %.2f  eta %.2f/%.2f"
+    _LOG.info("  R_ij: %s" % ", ".join("%.4f" % v for v in rij))
+    _LOG.info("  sigma %.4f  lambda %.2f  eta %.2f/%.2f"
           % (SYS_P["dSIGMA"], SYS_P["dLAMB"], SYS_P["dETA1"], SYS_P["dETA2"]))
     _set_precision(base, vega0, cega0, list(d_pct) + list(d_unit))
-    print()
-    print("  note %s   embedded put %s" % (_m(base), _m(put0)))
-    print("  vega  $ per +1 vol point:  %s"
+    _LOG.info("")
+    _LOG.info("  note %s   embedded put %s" % (_m(base), _m(put0)))
+    _LOG.info("  vega  $ per +1 vol point:  %s"
           % "  ".join("%s %s" % (n, _m(v, signed=True, kind="vega"))
                        for n, v in zip(NAMES, vega0)))
-    print("  corr  $ per +10 bps:      %s"
+    _LOG.info("  corr  $ per +10 bps:      %s"
           % "  ".join("%s %s" % (p, _m(v, signed=True, kind="corr"))
                        for p, v in zip(PAIRS, cega0)))
-    print("  issuer P&L per +1%% on one name: %s"
+    _LOG.info("  issuer P&L per +1%% on one name: %s"
           % ", ".join("%s %s" % (n, _m(d, signed=True, kind="delta"))
                        for n, d in zip(NAMES, d_pct)))
-    print("  issuer delta dV/dS (per unit spot, for hedging): %s"
+    _LOG.info("  issuer delta dV/dS (per unit spot, for hedging): %s"
           % ", ".join("%s %s" % (n, _m(d, signed=True, kind="delta"))
                        for n, d in zip(NAMES, d_unit)))
-    print("  The put is the same note with protection removed, less this one.")
-    print("  The issuer is SHORT the note and therefore LONG that put.")
-    print()
+    _LOG.info("  The put is the same note with protection removed, less this one.")
+    _LOG.info("  The issuer is SHORT the note and therefore LONG that put.")
+    _LOG.info("")
     if a.translate:
-        print("  x is the SYSTEMATIC shock, relative. Each name feels it through the")
-        print("  model's two-channel translation, so y_i differs by name.")
+        _LOG.info("  x is the SYSTEMATIC shock, relative. Each name feels it through the")
+        _LOG.info("  model's two-channel translation, so y_i differs by name.")
     else:
-        print("  Shocks are RELATIVE and applied UNCHANGED to all %d names:"
+        _LOG.info("  Shocks are RELATIVE and applied UNCHANGED to all %d names:"
               % len(NAMES))
-        print("  %+.0f%% means %s each fall %.0f%%."
+        _LOG.info("  %+.0f%% means %s each fall %.0f%%."
               % (100 * SHOCKS[0], ", ".join(NAMES), -100 * SHOCKS[0]))
-    print("  Shocks are INSTANTANEOUS - one Appendix B increment at the full")
-    print("  shock size, no holding period. y_i is what each name feels after")
-    print("  the model's systematic -> name translation.")
-    print("  EVERY greek column below is a DOLLAR amount at this notional,")
-    print("  not a parameter: cr_* is P&L per +10 bps of R_ij, NOT R_ij.")
-    print("  vega_i is the put's change for +%.0f vol point on THAT name's phi_i,"
+    _LOG.info("  Shocks are INSTANTANEOUS - one Appendix B increment at the full")
+    _LOG.info("  shock size, no holding period. y_i is what each name feels after")
+    _LOG.info("  the model's systematic -> name translation.")
+    _LOG.info("  EVERY greek column below is a DOLLAR amount at this notional,")
+    _LOG.info("  not a parameter: cr_* is P&L per +10 bps of R_ij, NOT R_ij.")
+    _LOG.info("  vega_i is the put's change for +%.0f vol point on THAT name's phi_i,"
           % (100 * a.vol_bump))
-    print("  the other two held; corr_k is +10 bps on THAT pair's R_ij, the")
-    print("  other two pairs held. dl_i is the issuer's P&L for a further")
-    print("  +1% on THAT name from the shocked spot, the other two held.")
+    _LOG.info("  the other two held; corr_k is +10 bps on THAT pair's R_ij, the")
+    _LOG.info("  other two pairs held. dl_i is the issuer's P&L for a further")
+    _LOG.info("  +1% on THAT name from the shocked spot, the other two held.")
     def _abbr(pair):
         i, j = pair.split("-")
         return (i[:3] + j[:3])[:6]
@@ -822,8 +826,8 @@ def main():
             + [("vg_" + n, 9) for n in NAMES]
             + [("cr_" + _abbr(p), 9) for p in PAIRS])
     hfmt = "  " + " ".join("%%%ds" % w for _, w in cols)
-    print(hfmt % tuple(h for h, _ in cols))
-    print("  " + "-" * (sum(w for _, w in cols) + len(cols) - 1))
+    _LOG.info(hfmt % tuple(h for h, _ in cols))
+    _LOG.info("  " + "-" * (sum(w for _, w in cols) + len(cols) - 1))
     # Collected before printing, because the heat map needs each column's
     # maximum and the rows are what produce it.
     ladder = []
@@ -872,11 +876,11 @@ def main():
                                               ("green",) if x > 0 else ("dim",)))
         yss = " ".join("%+7.1f%%" % (100 * r) for r in ys)
         if pv is None:
-            print("  %s %s   %s" % (xs, yss,
+            _LOG.info("  %s %s   %s" % (xs, yss,
                   _paint("-- y_i through -100%, outside range", "yellow")))
             continue
         vega, cega = greeks
-        print("  %s %s %13s %12s %s %s %s %s"
+        _LOG.info("  %s %s %13s %12s %s %s %s %s"
               % (xs, yss, _m(pv), _m(put),
                  _paint("%13s" % _m(pnl, signed=True), *_sign_color(pnl)),
                  " ".join(_paint("%9s" % _m(v, signed=True, kind="delta"),
@@ -894,47 +898,47 @@ def main():
     # once".
     es_rungs = tuple(a.es_horizons)
     lad = _cached_es_ladder(es_rungs, a)
-    print("\n  systematic expected-shortfall shocks")
-    print("  x is no longer prescribed: it is the model's own %.1f%% expected"
+    _LOG.info("\n  systematic expected-shortfall shocks")
+    _LOG.info("  x is no longer prescribed: it is the model's own %.1f%% expected"
           % (100 * (1 - a.es_alpha)))
-    print("  shortfall of the systematic factor over h days, and its %.1f%%"
+    _LOG.info("  shortfall of the systematic factor over h days, and its %.1f%%"
           % (100 * a.es_alpha))
-    print("  mirror on the up side. The h-day move is built by compounding")
-    print("  daily moves, 1 + X_h = prod_k (1 + r_k).")
-    print("  h sizes the SHOCK ONLY. The translation into y_i stays")
-    print("  instantaneous, as above - h is not a holding period here.")
+    _LOG.info("  mirror on the up side. The h-day move is built by compounding")
+    _LOG.info("  daily moves, 1 + X_h = prod_k (1 + r_k).")
+    _LOG.info("  h sizes the SHOCK ONLY. The translation into y_i stays")
+    _LOG.info("  instantaneous, as above - h is not a holding period here.")
     ecols = ([("h", 5), ("side", 6), ("ES(h)", 9)]
              + [("y_" + n, 8) for n in NAMES]
              + [("note", 13), ("put", 12), ("put P&L", 13)])
     efmt = "  " + " ".join("%%%ds" % w for _, w in ecols)
-    print(efmt % tuple(h for h, _ in ecols))
-    print("  " + "-" * (sum(w for _, w in ecols) + len(ecols) - 1))
+    _LOG.info(efmt % tuple(h for h, _ in ecols))
+    _LOG.info("  " + "-" * (sum(w for _, w in ecols) + len(ecols) - 1))
     for h in es_rungs:
         for side, esv in (("97.5%", lad[h][0]), ("2.5%", lad[h][1])):
             ys = np.array([name_shock(esv, SYS_P, IDIO[n], horizon_days=1)["y"]
                            for n in NAMES])
             if (ys <= -1.0).any():
-                print("  %4dd %6s %+8.2f%%   -- y_i through -100%%, outside range"
+                _LOG.info("  %4dd %6s %+8.2f%%   -- y_i through -100%%, outside range"
                       % (h, side, 100 * esv))
                 continue
             put, pv = put_value(spot0 * (1.0 + ys), spot0, a)
             pnl = put - put0
-            print("  %4dd %6s %+8.2f%% %s %13s %12s %s"
+            _LOG.info("  %4dd %6s %+8.2f%% %s %13s %12s %s"
                   % (h, side, 100 * esv,
                      " ".join("%+7.1f%%" % (100 * r) for r in ys),
                      _m(pv), _m(put),
                      _paint("%13s" % _m(pnl, signed=True), *_sign_color(pnl))))
 
-    print("\n  put P&L is the ISSUER's, who is long the put: positive in a selloff.")
-    print("  It is not the issuer's whole P&L - the note also carries the bond")
-    print("  and coupon legs - but it is the part the barrier creates, and the")
-    print("  part that cannot be rehedged through a gap.")
-    print("  The vega column sizes what a frozen surface is hiding: multiply it")
-    print("  by the vol points you expect the surface to add in that scenario.")
-    print("  Upside rows are unbounded by construction: the jump reaches name i")
-    print("  as exp(gamma_i Y) - 1, floored at -100% but with no ceiling, so a")
-    print("  large positive instantaneous shock compounds through gamma_i. Read")
-    print("  the deep up-shocks as the model speaking, not as scenarios.")
+    _LOG.info("\n  put P&L is the ISSUER's, who is long the put: positive in a selloff.")
+    _LOG.info("  It is not the issuer's whole P&L - the note also carries the bond")
+    _LOG.info("  and coupon legs - but it is the part the barrier creates, and the")
+    _LOG.info("  part that cannot be rehedged through a gap.")
+    _LOG.info("  The vega column sizes what a frozen surface is hiding: multiply it")
+    _LOG.info("  by the vol points you expect the surface to add in that scenario.")
+    _LOG.info("  Upside rows are unbounded by construction: the jump reaches name i")
+    _LOG.info("  as exp(gamma_i Y) - 1, floored at -100% but with no ceiling, so a")
+    _LOG.info("  large positive instantaneous shock compounds through gamma_i. Read")
+    _LOG.info("  the deep up-shocks as the model speaking, not as scenarios.")
 
 
 if __name__ == "__main__":

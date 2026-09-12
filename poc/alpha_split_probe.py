@@ -76,6 +76,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Library.DataAccess import get_aligned_price_panel            # noqa: E402
 from Library.StudyWindow import SYSTEMATIC_ID, BASE_DAYS          # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 def ar1_alpha(level, base_days=BASE_DAYS, detrend=True):
     """alpha = (1 - phi) * base_days from y_t = c + phi y_{t-1}, plus its se."""
@@ -122,29 +126,29 @@ def main():
     # rather than on its dynamics.
     rets = panel.pct_change().dropna(how="any")
 
-    print()
-    print("=" * 78)
-    print("alpha split probe :: AR(1) on the de-drifted cumulative return")
-    print("=" * 78)
-    print("  alpha = (1 - phi) * %d, so a LARGER alpha is FASTER reversion." % BASE_DAYS)
-    print("  Full-sample alpha_X from the systematic fit is 0.036 (half-life")
-    print("  19.3 years) - close enough to a unit root that 'the systematic")
-    print("  process reverts quickly' is not what the market series says, and")
-    print("  the direction of any difference is an open question, not a prior.")
-    print()
-    print("  %-8s %7s %10s %9s %11s %9s"
+    _LOG.info("")
+    _LOG.info("=" * 78)
+    _LOG.info("alpha split probe :: AR(1) on the de-drifted cumulative return")
+    _LOG.info("=" * 78)
+    _LOG.info("  alpha = (1 - phi) * %d, so a LARGER alpha is FASTER reversion." % BASE_DAYS)
+    _LOG.info("  Full-sample alpha_X from the systematic fit is 0.036 (half-life")
+    _LOG.info("  19.3 years) - close enough to a unit root that 'the systematic")
+    _LOG.info("  process reverts quickly' is not what the market series says, and")
+    _LOG.info("  the direction of any difference is an open question, not a prior.")
+    _LOG.info("")
+    _LOG.info("  %-8s %7s %10s %9s %11s %9s"
           % ("series", "n", "alpha", "se", "half-life", "phi"))
-    print("  " + "-" * 62)
+    _LOG.info("  " + "-" * 62)
 
     out = {}
     for sym in [SYSTEMATIC_ID] + names:
         if sym not in rets:
-            print("  %-8s  not in the panel" % sym)
+            _LOG.info("  %-8s  not in the panel" % sym)
             continue
         r = rets[sym].dropna()
         al, se, hl = ar1_alpha(np.cumsum(r.to_numpy()), detrend=a.detrend)
         out[sym] = (al, se)
-        print("  %-8s %7d %10.4f %9.4f %11s %9.6f"
+        _LOG.info("  %-8s %7d %10.4f %9.4f %11s %9.6f"
               % (sym, len(r), al, se,
                  ("%.1f yr" % hl) if np.isfinite(hl) else "inf",
                  1 - al / BASE_DAYS))
@@ -160,25 +164,25 @@ def main():
             null.append(v)
     null = np.array(null)
     if len(null):
-        print()
-        print("  NULL, %d simulated random walks of length %d - no reversion"
+        _LOG.info("")
+        _LOG.info("  NULL, %d simulated random walks of length %d - no reversion"
               % (len(null), n_obs))
-        print("  at all, put through this same estimator:")
-        print("     median %.3f   5%%-95%% [%.3f, %.3f]"
+        _LOG.info("  at all, put through this same estimator:")
+        _LOG.info("     median %.3f   5%%-95%% [%.3f, %.3f]"
               % (np.median(null), np.quantile(null, 0.05),
                  np.quantile(null, 0.95)))
-        print("  Anything inside that band is indistinguishable from a random")
-        print("  walk. The level above is bias; only the differences below are")
-        print("  worth reading.")
+        _LOG.info("  Anything inside that band is indistinguishable from a random")
+        _LOG.info("  walk. The level above is bias; only the differences below are")
+        _LOG.info("  worth reading.")
 
     sysal = out.get(SYSTEMATIC_ID, (np.nan, np.nan))
-    print()
-    print("  Each name against the systematic, in standard errors of the")
-    print("  difference. Inside about 2 and the restriction alpha_i = alpha_X")
-    print("  is not being contradicted by that name:")
-    print("  %-8s %11s %11s %9s   %s"
+    _LOG.info("")
+    _LOG.info("  Each name against the systematic, in standard errors of the")
+    _LOG.info("  difference. Inside about 2 and the restriction alpha_i = alpha_X")
+    _LOG.info("  is not being contradicted by that name:")
+    _LOG.info("  %-8s %11s %11s %9s   %s"
           % ("name", "alpha_i", "- alpha_X", "t", "reading"))
-    print("  " + "-" * 66)
+    _LOG.info("  " + "-" * 66)
     for sym in names:
         if sym not in out or not np.isfinite(sysal[0]):
             continue
@@ -193,19 +197,19 @@ def main():
             read = "reverts FASTER than the market"
         else:
             read = "reverts SLOWER than the market"
-        print("  %-8s %11.4f %11.4f %9.2f   %s"
+        _LOG.info("  %-8s %11.4f %11.4f %9.2f   %s"
               % (sym, out[sym][0], d, t, read))
 
     if a.rolling:
-        print()
-        print("  What a %d-day window sees. If this column is wide and"
+        _LOG.info("")
+        _LOG.info("  What a %d-day window sees. If this column is wide and"
               % a.lookback)
-        print("  unstable while the full-sample figure above is not, that is")
-        print("  the whole argument for estimating alpha_i once rather than")
-        print("  rolling it:")
-        print("  %-8s %10s %10s %10s %10s"
+        _LOG.info("  unstable while the full-sample figure above is not, that is")
+        _LOG.info("  the whole argument for estimating alpha_i once rather than")
+        _LOG.info("  rolling it:")
+        _LOG.info("  %-8s %10s %10s %10s %10s"
               % ("series", "median", "sd", "5%", "95%"))
-        print("  " + "-" * 52)
+        _LOG.info("  " + "-" * 52)
         for sym in [SYSTEMATIC_ID] + names:
             if sym not in rets:
                 continue
@@ -219,10 +223,10 @@ def main():
             if not vals:
                 continue
             v = np.array(vals)
-            print("  %-8s %10.3f %10.3f %10.3f %10.3f"
+            _LOG.info("  %-8s %10.3f %10.3f %10.3f %10.3f"
                   % (sym, np.median(v), v.std(ddof=1),
                      np.quantile(v, 0.05), np.quantile(v, 0.95)))
-    print()
+    _LOG.info("")
 
 
 if __name__ == "__main__":

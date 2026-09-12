@@ -60,6 +60,10 @@ from Library.RiskEngineKimYi2025 import (                          # noqa: E402
     pmle_kimyirisk_idiosyncratic,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYSTEMATIC_ID = "^SPX"
 SYSTEMATIC_PARAMS = ["dALPHA", "dSIGMA", "dPPROB", "dLAMB", "dETA1", "dETA2"]
 LOOKBACK = 252
@@ -143,9 +147,9 @@ def main():
     sys_date = a.sys_date or a.date
     shocks = [float(x) / 100.0 for x in a.shocks.split(",")]
 
-    print("=" * 74)
-    print("Shock translation :: %s" % a.name)
-    print("=" * 74)
+    _LOG.info("=" * 74)
+    _LOG.info("Shock translation :: %s" % a.name)
+    _LOG.info("=" * 74)
 
     if not pmle_params_exists(sys_date, SYSTEMATIC_ID):
         raise SystemExit(
@@ -155,16 +159,16 @@ def main():
     ss = get_pmle_params(sys_date, SYSTEMATIC_ID)
     sys_params = {k: float(ss[k]) for k in SYSTEMATIC_PARAMS}
 
-    print("  systematic window : %s" % sys_date)
-    print("    " + "  ".join("%s=%.4f" % (k[1:].lower(), v)
+    _LOG.info("  systematic window : %s" % sys_date)
+    _LOG.info("    " + "  ".join("%s=%.4f" % (k[1:].lower(), v)
                              for k, v in sys_params.items()))
     sd_inf = sys_params["dSIGMA"] / np.sqrt(2 * sys_params["dALPHA"])
-    print("    OU ceiling sd_inf = sigma/sqrt(2 alpha) = %.1f%%  "
+    _LOG.info("    OU ceiling sd_inf = sigma/sqrt(2 alpha) = %.1f%%  "
           "(shocks far beyond this are unreachable)" % (sd_inf * 100))
-    print("  name window       : %s  (252-day lookback)" % a.date)
+    _LOG.info("  name window       : %s  (252-day lookback)" % a.date)
     if sys_date != a.date:
-        print("    NOTE current-loadings / crisis-dynamics mode")
-    print()
+        _LOG.info("    NOTE current-loadings / crisis-dynamics mode")
+    _LOG.info("")
 
     # ---- returns -----------------------------------------------------------
     panel, _ = get_aligned_price_panel([SYSTEMATIC_ID, a.name],
@@ -175,7 +179,7 @@ def main():
         raise SystemExit("only %d returns available before %s; need %d"
                          % (len(upto), a.date, LOOKBACK))
     rv = upto[a.name].iloc[-LOOKBACK:].to_numpy()
-    print("  fitting %s on %s -> %s"
+    _LOG.info("  fitting %s on %s -> %s"
           % (a.name, upto.index[-LOOKBACK].date(), upto.index[-1].date()))
 
     res = pmle_kimyirisk_idiosyncratic(
@@ -188,33 +192,33 @@ def main():
     beta, kappa, rho, gamma = (val("dBETAI"), val("dKAPPAI"),
                                val("dRHOIX"), val("dGAMMAI"))
     b_i = beta + kappa * rho / sys_params["dSIGMA"]
-    print()
-    print("  beta_i = %.4f   kappa_i = %.4f   rho_iX = %.4f   gamma_i = %.4f"
+    _LOG.info("")
+    _LOG.info("  beta_i = %.4f   kappa_i = %.4f   rho_iX = %.4f   gamma_i = %.4f"
           % (beta, kappa, rho, gamma))
-    print("  b_i = beta_i + kappa_i rho_iX / sigma = %.4f" % b_i)
-    print()
+    _LOG.info("  b_i = beta_i + kappa_i rho_iX / sigma = %.4f" % b_i)
+    _LOG.info("")
 
     # ---- translate ---------------------------------------------------------
     sp = split_shock(shocks, sys_params, quantile=a.quantile)
-    print("  horizon labels: the point at which each shock is the %.1f%% "
+    _LOG.info("  horizon labels: the point at which each shock is the %.1f%% "
           "quantile" % (a.quantile * 100))
-    print()
-    print("  %8s %9s %11s %10s %8s %9s %10s"
+    _LOG.info("")
+    _LOG.info("  %8s %9s %11s %10s %8s %9s %10s"
           % ("shock", "horizon", "diffusion", "jump", "phi", "coeff", a.name))
-    print("  " + "-" * 70)
+    _LOG.info("  " + "-" * 70)
     for sh in shocks:
         if sh not in sp:
-            print("  %7.0f%%   beyond the OU ceiling - no horizon reaches it"
+            _LOG.info("  %7.0f%%   beyond the OU ceiling - no horizon reaches it"
                   % (sh * 100))
             continue
         h, D, J, phi = sp[sh]
         coeff = (1 - phi) * b_i + phi * gamma
         r = D * b_i + J * gamma
-        print("  %7.0f%% %8dd %10.2f%% %9.2f%% %8.3f %9.3f %9.2f%%"
+        _LOG.info("  %7.0f%% %8dd %10.2f%% %9.2f%% %8.3f %9.3f %9.2f%%"
               % (sh * 100, h, D * 100, J * 100, phi, coeff, r * 100))
-    print()
-    print("  r = b_i x diffusion + gamma_i x jump.  The split is a property of")
-    print("  the systematic parameters only, so it is shared across all names.")
+    _LOG.info("")
+    _LOG.info("  r = b_i x diffusion + gamma_i x jump.  The split is a property of")
+    _LOG.info("  the systematic parameters only, so it is shared across all names.")
 
 
 if __name__ == "__main__":

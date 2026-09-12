@@ -115,6 +115,10 @@ Two caveats the caller must not skip:
 
 import numpy as np
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 __all__ = ["diffusive_beta", "jump_share", "effective_beta",
            "conditional_moments"]
 
@@ -223,26 +227,26 @@ if __name__ == "__main__":
     dt = 1.0 / 252
     shocks = [-0.005, -0.01, -0.02, -0.03, -0.05, -0.10]
 
-    print("systematic: sigma=%.0f%%/yr (daily %.2f%%), lambda=%.0f/yr, "
+    _LOG.info("systematic: sigma=%.0f%%/yr (daily %.2f%%), lambda=%.0f/yr, "
           "mean down jump=%.1f%%"
           % (SYS["sigma"] * 100, SYS["sigma"] * np.sqrt(dt) * 100,
              SYS["lamb"], 100 / SYS["eta2"]))
-    print()
-    print("%-12s %8s %8s %8s %9s %9s %8s %9s"
+    _LOG.info("")
+    _LOG.info("%-12s %8s %8s %8s %9s %9s %8s %9s"
           % ("name", "shock", "P(jump)", "w(u)", "b_eff", "E[r_i]", "sd",
              "5% qtl"))
-    print("-" * 78)
+    _LOG.info("-" * 78)
     for nm, kw in NAMES.items():
         b_d = diffusive_beta(kw["betai"], kw["kappai"], kw["rhoix"],
                              SYS["sigma"])
-        print("%-12s b_diff = %.3f   b_jump = gamma_i = %.3f"
+        _LOG.info("%-12s b_diff = %.3f   b_jump = gamma_i = %.3f"
               % (nm.strip(), b_d, kw["gammai"]))
         for u in shocks:
             mean, sd, parts = conditional_moments(
                 u, sigma=SYS["sigma"], lamb=SYS["lamb"], pprob=SYS["pprob"],
                 eta1=SYS["eta1"], eta2=SYS["eta2"], dt=dt, **kw)
-            print("%-12s %7.1f%% %8.3f %8.3f %9.3f %8.2f%% %7.2f%% %8.2f%%"
+            _LOG.info("%-12s %7.1f%% %8.3f %8.3f %9.3f %8.2f%% %7.2f%% %8.2f%%"
                   % ("", u * 100, parts["P_jump"], parts["w"],
                      parts["b_eff"], mean * 100, sd * 100,
                      (mean - 1.645 * sd) * 100))
-        print()
+        _LOG.info("")

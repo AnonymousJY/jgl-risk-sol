@@ -51,6 +51,10 @@ from Library.RiskEngineKimYi2025 import (
     pmle_kimyirisk_idiosyncratic,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # The six common parameters carried from the systematic stage into the
 # idiosyncratic stage.
 SYSTEMATIC_PARAMS = ["dALPHA", "dSIGMA", "dPPROB", "dLAMB", "dETA1", "dETA2"]
@@ -182,8 +186,8 @@ if __name__ == "__main__":
         for idi_id in idiosyncratic_ids
         if not pmle_params_exists(dt, idi_id)
     ]
-    print(f"Systematic dates to estimate:   {len(set_to_valuate_systematic)}")
-    print(f"Idiosyncratic (date, id) pairs: {len(set_to_valuate_idiosyncratic)}")
+    _LOG.info(f"Systematic dates to estimate:   {len(set_to_valuate_systematic)}")
+    _LOG.info(f"Idiosyncratic (date, id) pairs: {len(set_to_valuate_idiosyncratic)}")
 
     # --- P-MLE systematic stage ---------------------------------------------
     if set_to_valuate_systematic:
@@ -205,7 +209,7 @@ if __name__ == "__main__":
                 path = save_pmle_params(
                     valuation_dt, sys_id, assemble_systematic_params(results)
                 )
-                print(f"  systematic  {valuation_dt} {sys_id}  -> {path}")
+                _LOG.info(f"  systematic  {valuation_dt} {sys_id}  -> {path}")
 
     # --- P-MLE idiosyncratic stage ------------------------------------------
     # Built after the systematic stage so every required systematic CSV exists
@@ -233,7 +237,7 @@ if __name__ == "__main__":
                     idi_id,
                     assemble_idiosyncratic_params(results, systematic_series),
                 )
-                print(f"  idiosyncratic {valuation_dt} {idi_id}  -> {path}")
+                _LOG.info(f"  idiosyncratic {valuation_dt} {idi_id}  -> {path}")
 
     elapsed_time = time.perf_counter() - beg_time
-    print(f"Time taken: {elapsed_time:.6f} seconds")
+    _LOG.info(f"Time taken: {elapsed_time:.6f} seconds")

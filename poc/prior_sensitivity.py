@@ -80,6 +80,10 @@ from Library.RiskEngineKimYi2025 import (                          # noqa: E402
     pmle_kimyirisk_systematic, SYSTEMATIC_PRIORS, prior_moments,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYSTEMATIC_ID = "^SPX"
 LOOKBACK = 252
 BASE_DAYS = 252
@@ -168,25 +172,25 @@ def main():
     dates = a.dates.split(",")
     arms = [k for k in ARMS if k in a.arms.split(",")] or list(ARMS)
 
-    print("=" * 78)
-    print("Prior sensitivity of the systematic block")
-    print("=" * 78)
+    _LOG.info("=" * 78)
+    _LOG.info("Prior sensitivity of the systematic block")
+    _LOG.info("=" * 78)
     for nm in arms:
         pr = dict(SYSTEMATIC_PRIORS); pr.update(ARMS[nm])
         bits = []
         for lbl, k in (("eta1", "eta1"), ("eta2", "eta2"), ("pprob", "pprob_rv")):
             m, s = prior_moments(pr[k])
             bits.append("%s~%.1f+-%.2f" % (lbl, m, s))
-        print("  %-18s %s" % (nm, "  ".join(bits)))
-    print()
+        _LOG.info("  %-18s %s" % (nm, "  ".join(bits)))
+    _LOG.info("")
 
     rows = []
     if a.full_sample:
-        print("  FULL-SAMPLE mode: each arm fits the whole series to that date")
-        print()
+        _LOG.info("  FULL-SAMPLE mode: each arm fits the whole series to that date")
+        _LOG.info("")
     for dt in dates:
         rv = returns_for(dt, full_sample=a.full_sample)
-        print("  %s: %d returns" % (dt, len(rv)))
+        _LOG.info("  %s: %d returns" % (dt, len(rv)))
         for nm in arms:
             t0 = time.perf_counter()
             res = pmle_kimyirisk_systematic(
@@ -202,21 +206,21 @@ def main():
                 row[out_k + "_ratio"] = post_sd / ps_
                 row[out_k + "_shift"] = (r.dMEAN - pm_) / ps_
             rows.append(row)
-            print("  fitted %s  %-18s %.0fs" % (dt, nm, row["secs"]))
+            _LOG.info("  fitted %s  %-18s %.0fs" % (dt, nm, row["secs"]))
 
     df = pd.DataFrame(rows)
     out = os.path.join(_REPO_ROOT, "poc", "prior_sensitivity.csv")
     df.to_csv(out, index=False)
 
-    print()
+    _LOG.info("")
     for dt in dates:
         d = df[df.date == dt]
-        print("-" * 78)
-        print("%s   posterior mean  [ratio = post sd / prior sd, "
+        _LOG.info("-" * 78)
+        _LOG.info("%s   posterior mean  [ratio = post sd / prior sd, "
               "shift = (post mean - prior mean) / prior sd ]" % dt)
-        print("  %-18s %18s %18s %14s" % ("arm", "dETA1", "dETA2", "dPPROB"))
+        _LOG.info("  %-18s %18s %18s %14s" % ("arm", "dETA1", "dETA2", "dPPROB"))
         for _, r in d.iterrows():
-            print("  %-18s %7.2f r%.2f s%+.1f %7.2f r%.2f s%+.1f %5.3f r%.2f s%+.1f"
+            _LOG.info("  %-18s %7.2f r%.2f s%+.1f %7.2f r%.2f s%+.1f %5.3f r%.2f s%+.1f"
                   % (r["arm"],
                      r["dETA1"], r["dETA1_ratio"], r["dETA1_shift"],
                      r["dETA2"], r["dETA2_ratio"], r["dETA2_shift"],
@@ -237,9 +241,9 @@ def main():
                 fsd = float(f["dPPROB_ratio"].iloc[0]) * (1.0 / math.sqrt(12))
                 mass = 0.5 * math.erfc((cap - ref) / (fsd * math.sqrt(2))) \
                     if fsd > 0 else float("nan")
-                print("  -> arm F (flat, pure likelihood) wants %.4f, "
+                _LOG.info("  -> arm F (flat, pure likelihood) wants %.4f, "
                       "with %.0f%% of its mass above %.2f" % (ref, 100 * mass, cap))
-                print("     arm E (capped) gives %.4f -> the cap moves it %+.3f  %s"
+                _LOG.info("     arm E (capped) gives %.4f -> the cap moves it %+.3f  %s"
                       % (m, m - ref,
                          "BINDING" if abs(m - ref) > 0.05 else "little effect"))
 
@@ -247,11 +251,11 @@ def main():
         if len(b):
             e1, e2 = float(b["dETA1"].iloc[0]), float(b["dETA2"].iloc[0])
             gap = abs(e1 - e2)
-            print("  -> arm B separation |eta1 - eta2| = %.2f   %s"
+            _LOG.info("  -> arm B separation |eta1 - eta2| = %.2f   %s"
                   % (gap, "DATA SEPARATES THEM" if gap > 8 else
                      "no separation - the asymmetry was prior"))
-    print("-" * 78)
-    print("\nWritten to %s" % out)
+    _LOG.info("-" * 78)
+    _LOG.info("\nWritten to %s" % out)
 
 
 def _exit_now(code=0):

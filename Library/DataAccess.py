@@ -37,6 +37,10 @@ import warnings
 
 import pandas as pd
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # --- repository layout -------------------------------------------------------
 # Library/DataAccess.py  ->  repo root is one level up from this file.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -246,16 +250,16 @@ def get_aligned_price_panel(symbols, reference=None, mode=None,
         }
 
     if verbose:
-        print("price panel aligned to %s: %d sessions, %s -> %s"
+        _LOG.info("price panel aligned to %s: %d sessions, %s -> %s"
               % (reference, len(calendar),
                  calendar[0].date(), calendar[-1].date()))
-        print("  %-8s %10s %8s %10s %10s  %s"
+        _LOG.info("  %-8s %10s %8s %10s %10s  %s"
               % ("symbol", "first obs", "filled", "pre-list", "unfilled",
                  "longest gap"))
         for sym in symbols:
             r = report[sym]
             flag = "  <-- CHECK" if r["unfilled_na"] else ""
-            print("  %-8s %10s %8d %10d %10d  %11d%s"
+            _LOG.info("  %-8s %10s %8d %10d %10d  %11d%s"
                   % (sym,
                      r["first_obs"].date() if r["first_obs"] is not None else "never",
                      r["filled"], r["leading_na"], r["unfilled_na"],

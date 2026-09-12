@@ -103,6 +103,10 @@ from Library.RiskEngineKimYi2025 import (                    # noqa: E402
     prior_moments, prior_ci_width,
 )
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # The idiosyncratic arm in force, set by main() from --idio-priors. Module
 # level so the forkserver children inherit it rather than needing it threaded
 # through every signature.
@@ -262,8 +266,8 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None,
                          rv.iloc[-LOOKBACK:].to_numpy()))
 
     for name, why in skipped:
-        print("  SKIP %-8s %s (need %d)" % (name, why, LOOKBACK))
-    print("  %d name(s) x %d date(s) requested -> %d fit(s) to run."
+        _LOG.info("  SKIP %-8s %s (need %d)" % (name, why, LOOKBACK))
+    _LOG.info("  %d name(s) x %d date(s) requested -> %d fit(s) to run."
           % (len(names), len(dates), len(args)))
     if not args:
         return
@@ -277,7 +281,7 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None,
                 cache[dt] = systematic_for(dt, sys_store, anchor)
             except Exception as exc:                          # noqa: BLE001
                 cache[dt] = None
-                print("    no systematic fit for %s (%s) - dates skipped"
+                _LOG.info("    no systematic fit for %s (%s) - dates skipped"
                       % (dt, type(exc).__name__))
         if cache[dt] is None:
             continue
@@ -295,7 +299,7 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None,
         manifest_written.add(drawer)
 
     workers = workers or default_workers()
-    print("  %d workers x 4 chains = %d concurrent samplers on %d cores"
+    _LOG.info("  %d workers x 4 chains = %d concurrent samplers on %d cores"
           % (workers, workers * 4, os.cpu_count() or 0))
 
     t0 = time.perf_counter()
@@ -321,9 +325,9 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None,
                         raise
                     except Exception as exc:                  # noqa: BLE001
                         failed += 1
-                        print("    FAILED  %-8s %s  %s: %s"
+                        _LOG.info("    FAILED  %-8s %s  %s: %s"
                               % (name, _f[fut][0][0],
-                                 type(exc).__name__, exc), flush=True)
+                                 type(exc).__name__, exc))
                         return
                     save_pmle_params(
                         dt, drawer,
@@ -331,31 +335,31 @@ def run(names, dates, sys_store, anchor, tag, priors, workers=None,
                     done += 1
                     if done % 10 == 0 or done == len(tasks):
                         el = time.perf_counter() - t0
-                        print("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
+                        _LOG.info("    %4d/%d  %.1fs elapsed, ~%.1fs remaining"
                               % (done, len(tasks), el,
-                                 el / done * (len(tasks) - done)), flush=True)
+                                 el / done * (len(tasks) - done)))
 
                 _drain(set(futures), _on_done, "fits")
             if start + chunk < len(tasks):
-                print("    -- pool recycled after %d fits --" % done, flush=True)
+                _LOG.info("    -- pool recycled after %d fits --" % done)
     except BrokenProcessPool:
-        print("\n  A worker died. Late in a long run this is usually memory")
-        print("  accumulating in a reused worker rather than a bug in the model.")
-        print("  %d fit(s) are safely on disk and a rerun skips them." % done)
-        print()
-        print("  Rerun the same command - it resumes. If it dies again, recycle")
-        print("  the pool more often or use fewer workers:")
-        print("    JGL_POOL_CHUNK=20 <same command>")
-        print("    <same command> --workers %d" % max(1, (workers or 2) // 2))
-        print()
-        print("  To confirm the OOM killer (dmesg needs root on Ubuntu):")
-        print("    sudo dmesg -T | grep -i 'killed process' | tail")
-        print("    journalctl -k --since '3 hours ago' | grep -i 'killed process'")
-        print("    grep -i 'killed process' /var/log/kern.log | tail")
+        _LOG.info("\n  A worker died. Late in a long run this is usually memory")
+        _LOG.info("  accumulating in a reused worker rather than a bug in the model.")
+        _LOG.info("  %d fit(s) are safely on disk and a rerun skips them." % done)
+        _LOG.info("")
+        _LOG.info("  Rerun the same command - it resumes. If it dies again, recycle")
+        _LOG.info("  the pool more often or use fewer workers:")
+        _LOG.info("    JGL_POOL_CHUNK=20 <same command>")
+        _LOG.info("    <same command> --workers %d" % max(1, (workers or 2) // 2))
+        _LOG.info("")
+        _LOG.info("  To confirm the OOM killer (dmesg needs root on Ubuntu):")
+        _LOG.info("    sudo dmesg -T | grep -i 'killed process' | tail")
+        _LOG.info("    journalctl -k --since '3 hours ago' | grep -i 'killed process'")
+        _LOG.info("    grep -i 'killed process' /var/log/kern.log | tail")
         raise SystemExit(1)
 
     if failed:
-        print("\n  %d fit(s) failed and were skipped; rerun to retry them."
+        _LOG.info("\n  %d fit(s) failed and were skipped; rerun to retry them."
               % failed)
 
 
@@ -402,11 +406,11 @@ def load_series(name, anchor, tag, priors):
 
 def report(name, df):
     """Same treatment the systematic report gives SPX, per name."""
-    print("\n" + "=" * 72)
-    print("%s :: %s to %s   (%d valuation dates)"
+    _LOG.info("\n" + "=" * 72)
+    _LOG.info("%s :: %s to %s   (%d valuation dates)"
           % (name, df.index.min().date(), df.index.max().date(), len(df)))
-    print("=" * 72)
-    print("  credible intervals: %.0f%% equal-tailed (%s)"
+    _LOG.info("=" * 72)
+    _LOG.info("  credible intervals: %.0f%% equal-tailed (%s)"
           % (100 * CI_PROB, CI_CONVENTION))
 
     # b_i is a FUNCTION of four parameters, so it belongs in the tables as a
@@ -417,34 +421,34 @@ def report(name, df):
         df["b_i"] = df["dBETAI"] + df["dKAPPAI"] * df["dRHOIX"] / df["dSIGMA"]
 
     cols = [c for c in IDIO_PARAMS + ["b_i"] if c in df]
-    print("\nDistribution across valuation dates:")
-    print(df[cols].describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]]
+    _LOG.info("\nDistribution across valuation dates:")
+    _LOG.info(df[cols].describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]]
             .round(4).to_string())
 
     if len(df) < 2:
-        print("\nStability - needs at least 2 valuation dates.")
+        _LOG.info("\nStability - needs at least 2 valuation dates.")
     else:
-        print("\nStability - coefficient of variation (sd / |mean|):")
+        _LOG.info("\nStability - coefficient of variation (sd / |mean|):")
         cv = (df[cols].std() / df[cols].mean().abs()).sort_values()
         for k, v in cv.items():
             note = "" if v < 0.25 else "   <-- varies a lot across windows"
-            print("   %-9s %6.3f%s" % (k, v, note))
-        print("\n   A low CV is evidence of identification only if the")
-        print("   parameter is identified. A prior-driven one is stable")
-        print("   because its prior is - read this with the table below.")
+            _LOG.info("   %-9s %6.3f%s" % (k, v, note))
+        _LOG.info("\n   A low CV is evidence of identification only if the")
+        _LOG.info("   parameter is identified. A prior-driven one is stable")
+        _LOG.info("   because its prior is - read this with the table below.")
 
     for stat in ("mean", "median"):
         t = getattr(df[cols].groupby(df.index.year), stat)().round(4)
         t.index = [str(i) for i in t.index]
-        print("\nBy year (%s):" % stat)
-        print(heat(t, decimals=4, color=COLOR))
-    print(heat_legend(color=COLOR))
+        _LOG.info("\nBy year (%s):" % stat)
+        _LOG.info(heat(t, decimals=4, color=COLOR))
+    _LOG.info(heat_legend(color=COLOR))
 
-    print("\nIdentification over time - share of valuation dates where the")
-    print("posterior is narrower than the prior (ratio < 0.70):")
-    print("  ratio = posterior %.0f%% width / PRIOR %.0f%% width, both"
+    _LOG.info("\nIdentification over time - share of valuation dates where the")
+    _LOG.info("posterior is narrower than the prior (ratio < 0.70):")
+    _LOG.info("  ratio = posterior %.0f%% width / PRIOR %.0f%% width, both"
           " equal-tailed," % (100 * CI_PROB, 100 * CI_PROB))
-    print("  so an unmoved posterior reads 1.00 whatever the prior's shape.")
+    _LOG.info("  so an unmoved posterior reads 1.00 whatever the prior's shape.")
     for k in IDIO_PARAMS:
         w = k + "_W"
         if w not in df:
@@ -458,15 +462,15 @@ def report(name, df):
         ratio = df[w] / pw
         shift = (df[k].median() - pmean) / psd if psd else float("nan")
         share = 100.0 * float((ratio < 0.70).mean())
-        print("   %-8s %-16s %5.1f%%   median ratio %.2f   shift %+.2f sd"
+        _LOG.info("   %-8s %-16s %5.1f%%   median ratio %.2f   shift %+.2f sd"
               % (k, label, share, ratio.median(), shift))
-    print("\n   0% means never identified at any date - that column is a")
-    print("   series of priors. A large |shift| is decisive evidence of data")
-    print("   dominance regardless of width: a prior cannot drag a posterior")
-    print("   several sd away from itself.")
+    _LOG.info("\n   0% means never identified at any date - that column is a")
+    _LOG.info("   series of priors. A large |shift| is decisive evidence of data")
+    _LOG.info("   dominance regardless of width: a prior cannot drag a posterior")
+    _LOG.info("   several sd away from itself.")
 
     if "dGAMMAI" in df:
-        print("\nGap loading dGAMMAI at known stress episodes:")
+        _LOG.info("\nGap loading dGAMMAI at known stress episodes:")
         for lab, (a, b_) in {
             "GFC 2008H2":   ("2008-07-01", "2008-12-31"),
             "Euro 2011":    ("2011-07-01", "2011-12-31"),
@@ -476,19 +480,19 @@ def report(name, df):
         }.items():
             wnd = df.loc[a:b_, "dGAMMAI"]
             if len(wnd):
-                print("   %-14s median %6.3f   (full-sample median %6.3f)"
+                _LOG.info("   %-14s median %6.3f   (full-sample median %6.3f)"
                       % (lab, wnd.median(), df["dGAMMAI"].median()))
-        print("\n   gamma_i enters the likelihood only as eta1/gamma_i and")
-        print("   eta2/gamma_i, so it is a jump scale RELATIVE to the")
-        print("   systematic eta, not an absolute one.")
+        _LOG.info("\n   gamma_i enters the likelihood only as eta1/gamma_i and")
+        _LOG.info("   eta2/gamma_i, so it is a jump scale RELATIVE to the")
+        _LOG.info("   systematic eta, not an absolute one.")
 
     if "b_i" in df and "dGAMMAI" in df:
         r = (df["dGAMMAI"] / df["b_i"]).median()
-        print("\n  gamma_i / b_i median %.3f - %s"
+        _LOG.info("\n  gamma_i / b_i median %.3f - %s"
               % (r, "gaps HARDER than ordinary days imply" if r > 1
                  else "gaps SOFTER than ordinary days imply"))
-        print("  This ratio crossing 1.0 across names is what a regression")
-        print("  beta cannot reproduce; see poc/product_curve.py.")
+        _LOG.info("  This ratio crossing 1.0 across names is what a regression")
+        _LOG.info("  beta cannot reproduce; see poc/product_curve.py.")
 
 
 def main():
@@ -556,32 +560,32 @@ def main():
     priors = PRIOR_SETS[a.priors]
     sys_store = store_id(a.priors, priors, LOOKBACK)
 
-    print("=" * 72)
-    print("Step 1b :: idiosyncratic parameters, conditional on the systematic fit")
-    print("=" * 72)
-    print("  names   : %s" % ", ".join(names))
-    print("  window  : %s -> %s every %d business days, %d-day lookback"
+    _LOG.info("=" * 72)
+    _LOG.info("Step 1b :: idiosyncratic parameters, conditional on the systematic fit")
+    _LOG.info("=" * 72)
+    _LOG.info("  names   : %s" % ", ".join(names))
+    _LOG.info("  window  : %s -> %s every %d business days, %d-day lookback"
           % (a.beg, a.end, a.step, LOOKBACK))
-    print("  anchor  : %s" % a.anchor)
-    print("  idio priors: %s" % a.idio_priors)
+    _LOG.info("  anchor  : %s" % a.anchor)
+    _LOG.info("  idio priors: %s" % a.idio_priors)
     if a.idio_priors != "paper":
-        print("    NON-DEFAULT - own drawer (%s). rhoix is not identified by"
+        _LOG.info("    NON-DEFAULT - own drawer (%s). rhoix is not identified by"
               % IDIO_STORE_SUFFIX[a.idio_priors])
-        print("    this likelihood at any prior, so read the rhoix posterior")
-        print("    as a check that it equals its prior, and watch what betai")
-        print("    and kappai do when it is free to move.")
+        _LOG.info("    this likelihood at any prior, so read the rhoix posterior")
+        _LOG.info("    as a check that it equals its prior, and watch what betai")
+        _LOG.info("    and kappai do when it is free to move.")
     if a.anchor == "hybrid":
-        print("    dSIGMA/dLAMB/dPPROB from the rolling fit in %s" % sys_store)
-        print("    dALPHA/dETA1/dETA2 from FULL_SAMPLE - a window cannot")
-        print("    identify them, so taking them from one asserts a prior")
-        print("    NOTE this is a composite; report it as such")
+        _LOG.info("    dSIGMA/dLAMB/dPPROB from the rolling fit in %s" % sys_store)
+        _LOG.info("    dALPHA/dETA1/dETA2 from FULL_SAMPLE - a window cannot")
+        _LOG.info("    identify them, so taking them from one asserts a prior")
+        _LOG.info("    NOTE this is a composite; report it as such")
     elif a.anchor == "rolling":
-        print("    all six from %s" % sys_store)
-        print("    NOTE dALPHA, dETA1 and dETA2 there are prior-driven and")
-        print("    pass into every name as if known exactly")
+        _LOG.info("    all six from %s" % sys_store)
+        _LOG.info("    NOTE dALPHA, dETA1 and dETA2 there are prior-driven and")
+        _LOG.info("    pass into every name as if known exactly")
     else:
-        print("    all six held at FULL_SAMPLE for every date - identified,")
-        print("    but the systematic state no longer moves with the regime")
+        _LOG.info("    all six held at FULL_SAMPLE for every date - identified,")
+        _LOG.info("    but the systematic state no longer moves with the regime")
 
     if not a.report_only:
         run(names, valuation_dates(a.beg, a.end, a.step),
@@ -595,28 +599,28 @@ def main():
             # is not there. Say WHICH drawer was empty, whether the systematic
             # fit it would need exists, and the command that fills it.
             drawer = name_store_id(name, a.anchor, a.priors, priors)
-            print("\n%s: nothing on disk in drawer %s" % (name, drawer))
+            _LOG.info("\n%s: nothing on disk in drawer %s" % (name, drawer))
             if a.anchor != "full":
                 have = len(available_pmle_dates(sys_store))
-                print("   systematic %s: %d date(s) %s"
+                _LOG.info("   systematic %s: %d date(s) %s"
                       % (sys_store, have,
                          "- run estimate_systematic.py first" if not have else "ready"))
-            print("   this run was --report-only, which never fits anything.")
-            print("   to create it:")
-            print("     ./run_bg.sh poc/estimate_idiosyncratic.py --names %s"
+            _LOG.info("   this run was --report-only, which never fits anything.")
+            _LOG.info("   to create it:")
+            _LOG.info("     ./run_bg.sh poc/estimate_idiosyncratic.py --names %s"
                   " --anchor %s --priors %s" % (name, a.anchor, a.priors))
             if a.anchor == "hybrid":
-                print("   NOTE --anchor hybrid takes dALPHA/dETA1/dETA2 from")
-                print("   FULL_SAMPLE, so --priors %s only selects sigma, lambda"
+                _LOG.info("   NOTE --anchor hybrid takes dALPHA/dETA1/dETA2 from")
+                _LOG.info("   FULL_SAMPLE, so --priors %s only selects sigma, lambda"
                       % a.priors)
-                print("   and pprob. For all six from that run, use --anchor rolling.")
+                _LOG.info("   and pprob. For all six from that run, use --anchor rolling.")
             continue
         report(name, df)
         out = os.path.join(_REPO_ROOT, "poc",
                            "idio_params_%s.csv"
                            % name_store_id(name, a.anchor, a.priors, priors))
         df.to_csv(out)
-        print("\n  written to %s" % os.path.relpath(out, _REPO_ROOT))
+        _LOG.info("\n  written to %s" % os.path.relpath(out, _REPO_ROOT))
 
 
 def _reap_forkserver():

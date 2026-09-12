@@ -47,6 +47,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Library.DataAccess import PMLE_DIR                        # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYS_PARAMS = ["dALPHA", "dSIGMA", "dPPROB", "dLAMB", "dETA1", "dETA2"]
 IDIO_PARAMS = ["dMUI", "dKAPPAI", "dGAMMAI", "dBETAI", "dRHOIX"]
 Z95 = 1.959963984540054
@@ -94,9 +98,9 @@ def drop_frozen_windows(df, params):
 
 def report(df, params, ess, gap_days):
     floor = 1.0 / np.sqrt(ess)
-    print("  %-9s %12s %12s %10s %10s   %s"
+    _LOG.info("  %-9s %12s %12s %10s %10s   %s"
           % ("param", "med |delta|", "post sd", "ratio", "floor", "verdict"))
-    print("  " + "-" * 76)
+    _LOG.info("  " + "-" * 76)
     step = df.index.to_series().diff().dt.days.to_numpy()[1:]
     for p in params:
         v = df[p].to_numpy(dtype=float)
@@ -114,7 +118,7 @@ def report(df, params, ess, gap_days):
             verdict = "marginal - run a seed study"
         else:
             verdict = "NOISE DOMINATED - more draws"
-        print("  %-9s %12.6f %12.6f %10.4f %10.4f   %s"
+        _LOG.info("  %-9s %12.6f %12.6f %10.4f %10.4f   %s"
               % (p, med, sd, ratio, floor, verdict))
 
 
@@ -142,10 +146,10 @@ def decompose(df, params, gap_days):
     SURVIVES differencing. That is the right quantity for this question: it is
     exactly the jitter a client would see in the series.
     """
-    print("  %-9s %9s %11s %11s %11s %9s   %s"
+    _LOG.info("  %-9s %9s %11s %11s %11s %9s   %s"
           % ("param", "rho_1", "noise sd", "signal sd", "post sd",
              "noise/sd", "reading"))
-    print("  " + "-" * 84)
+    _LOG.info("  " + "-" * 84)
     step = df.index.to_series().diff().dt.days.to_numpy()[1:]
     ok = step <= gap_days
     for p in params:
@@ -170,23 +174,23 @@ def decompose(df, params, gap_days):
             reading = "mixed"
         else:
             reading = "signal dominates"
-        print("  %-9s %9.3f %11.6f %11.6f %11.6f %9.4f   %s"
+        _LOG.info("  %-9s %9.3f %11.6f %11.6f %11.6f %9.4f   %s"
               % (p, rho1, noise_sd, sig_sd, post_sd,
                  noise_sd / post_sd if post_sd > 0 else float("nan"), reading))
 
 
 def spans(df, params):
     """How far each parameter actually travelled over the sample."""
-    print("  %-9s %12s %12s %12s   %s"
+    _LOG.info("  %-9s %12s %12s %12s   %s"
           % ("param", "min", "max", "range", "range / post sd"))
-    print("  " + "-" * 70)
+    _LOG.info("  " + "-" * 70)
     for p in params:
         v = df[p].to_numpy(dtype=float)
         lo, hi = df.get(p + "_CI_LOWER"), df.get(p + "_CI_UPPER")
         post_sd = float(np.median((hi.to_numpy(dtype=float)
                                    - lo.to_numpy(dtype=float)) / (2 * Z95)))
         rng = float(v.max() - v.min())
-        print("  %-9s %12.6f %12.6f %12.6f   %.2f"
+        _LOG.info("  %-9s %12.6f %12.6f %12.6f   %.2f"
               % (p, v.min(), v.max(), rng, rng / post_sd if post_sd else 0))
 
 
@@ -215,47 +219,47 @@ def main():
     gaps = df.index.to_series().diff().dt.days.dropna()
     consecutive = int((gaps <= a.max_gap).sum())
 
-    print()
-    print("=" * 78)
-    print("daily resolution check :: %s" % a.drawer)
-    print("=" * 78)
-    print("  dates            : %d   %s -> %s"
+    _LOG.info("")
+    _LOG.info("=" * 78)
+    _LOG.info("daily resolution check :: %s" % a.drawer)
+    _LOG.info("=" * 78)
+    _LOG.info("  dates            : %d   %s -> %s"
           % (len(df), df.index[0].date(), df.index[-1].date()))
-    print("  median step      : %.0f calendar day(s)" % gaps.median())
-    print("  consecutive pairs: %d (steps <= %d days)" % (consecutive, a.max_gap))
-    print("  frozen windows   : %d dropped (holiday repeats - identical window"
+    _LOG.info("  median step      : %.0f calendar day(s)" % gaps.median())
+    _LOG.info("  consecutive pairs: %d (steps <= %d days)" % (consecutive, a.max_gap))
+    _LOG.info("  frozen windows   : %d dropped (holiday repeats - identical window"
           % frozen)
-    print("                     and fixed SEED, so the fit is bit-identical)")
-    print("  assumed tail ess : %.0f  ->  noise floor %.4f sd"
+    _LOG.info("                     and fixed SEED, so the fit is bit-identical)")
+    _LOG.info("  assumed tail ess : %.0f  ->  noise floor %.4f sd"
           % (a.ess, 1.0 / np.sqrt(a.ess)))
-    print()
+    _LOG.info("")
 
     if consecutive < 20:
-        print("  This drawer is not daily - only %d consecutive pair(s). The"
+        _LOG.info("  This drawer is not daily - only %d consecutive pair(s). The"
               % consecutive)
-        print("  comparison below is between dates a month apart, which is not")
-        print("  the question. Point --drawer at a --step 1 run.")
-        print()
+        _LOG.info("  comparison below is between dates a month apart, which is not")
+        _LOG.info("  the question. Point --drawer at a --step 1 run.")
+        _LOG.info("")
 
     report(df, params, a.ess, a.max_gap)
-    print()
-    print("  ratio = median day-over-day move / posterior sd at one date.")
-    print("  floor = MCSE / sd ~= 1/sqrt(ess): movement the sampler invents.")
-    print("  Posterior sd is inferred from the 95%% interval assuming normality;")
-    print("  dLAMB and the etas are skewed, so treat this as a screen.")
-    print()
-    print("  -- increment decomposition (no seed study needed) --")
-    print()
+    _LOG.info("")
+    _LOG.info("  ratio = median day-over-day move / posterior sd at one date.")
+    _LOG.info("  floor = MCSE / sd ~= 1/sqrt(ess): movement the sampler invents.")
+    _LOG.info("  Posterior sd is inferred from the 95%% interval assuming normality;")
+    _LOG.info("  dLAMB and the etas are skewed, so treat this as a screen.")
+    _LOG.info("")
+    _LOG.info("  -- increment decomposition (no seed study needed) --")
+    _LOG.info("")
     decompose(df, params, a.max_gap)
-    print()
-    print("  -- how far each parameter actually travelled --")
-    print()
+    _LOG.info("")
+    _LOG.info("  -- how far each parameter actually travelled --")
+    _LOG.info("")
     spans(df, params)
-    print()
-    print("  A one-step increment near the noise floor does NOT mean the series")
-    print("  is noise: a slow signal accumulates while independent noise does")
-    print("  not. Read rho_1 and the range together, not med |delta| alone.")
-    print()
+    _LOG.info("")
+    _LOG.info("  A one-step increment near the noise floor does NOT mean the series")
+    _LOG.info("  is noise: a slow signal accumulates while independent noise does")
+    _LOG.info("  not. Read rho_1 and the range together, not med |delta| alone.")
+    _LOG.info("")
 
 
 if __name__ == "__main__":

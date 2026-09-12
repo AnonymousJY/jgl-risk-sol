@@ -2,6 +2,10 @@ import numpy as np
 from numpy.typing import NDArray
 from collections.abc import Callable
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 def max_iter_reached_msg(x: int) -> str:
     return f'Reached maxed iterations of {x} : may not have converged. The End!'
@@ -22,7 +26,7 @@ def bisection(
     b = upper_value
 
     if (a > b).any():
-        print('Lower value is larger than the upper value. The End!')
+        _LOG.info('Lower value is larger than the upper value. The End!')
         return initial_value
 
     c = 0.5 * (a + b)
@@ -31,7 +35,7 @@ def bisection(
     for i in range(max_iter):
 
         if is_verbose:
-            print(f'iter = {i + 1} ; '
+            _LOG.info(f'iter = {i + 1} ; '
                   f'a = {a.reshape(-1,)[0]:.4f} ; '
                   f'b = {b.reshape(-1,)[0]:.4f} ; '
                   f'c = {c.reshape(-1,)[0]:.4f} ; '
@@ -40,7 +44,7 @@ def bisection(
                   )
 
         if i == max_iter - 1:
-            print(max_iter_reached_msg(i + 1))
+            _LOG.info(max_iter_reached_msg(i + 1))
             break
 
         if np.array(np.abs(fc - target_value) < tolerance).all():
@@ -78,7 +82,7 @@ def newton_raphson(
         error = y_new - target_value
 
         if is_verbose:
-            print(f'iter = {i + 1} ; '
+            _LOG.info(f'iter = {i + 1} ; '
                   f'f_prime = {dydx.reshape(-1,)[0]:.4f} ; '
                   f'x_n = {x1.reshape(-1,)[0]:.4f} ; '
                   f'f(x_n) = {y_new.reshape(-1,)[0]:.4f} ; '
@@ -90,7 +94,7 @@ def newton_raphson(
             x0 = x1
             break
         elif i == max_iter:
-            print(max_iter_reached_msg(i))
+            _LOG.info(max_iter_reached_msg(i))
             break
         else:
             x0 = x1
@@ -123,7 +127,7 @@ if __name__=='__main__':
     true_price = pricer_obj.price(vol_true)
     true_vega = pricer_obj.vega(vol_true)
 
-    print(true_vega.reshape(-1,), true_price.reshape(-1,))
+    _LOG.info("%s %s", true_vega.reshape(-1,), true_price.reshape(-1,))
 
     vol_calib = newton_raphson(
         func=pricer_obj.price,
@@ -142,5 +146,5 @@ if __name__=='__main__':
     #     is_verbose=True
     # )
 
-    print(vol_true)
-    print(vol_calib.reshape(-1,))
+    _LOG.info(vol_true)
+    _LOG.info(vol_calib.reshape(-1,))

@@ -8,6 +8,10 @@ if str(_REPO_ROOT) not in _sys.path:
 from typing import List
 from collections import namedtuple
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 Portfolio = namedtuple(
     typename='Portfolio',
@@ -177,4 +181,4 @@ if __name__ == "__main__":
 
     portfolio_df = pd.DataFrame(portfolio_rows, columns=Portfolio._fields)
     path = write_snapshot(portfolio_df, "portfolio.csv", index=False)
-    print(f"{len(portfolio_df)} portfolio rows written to {path}")
+    _LOG.info(f"{len(portfolio_df)} portfolio rows written to {path}")

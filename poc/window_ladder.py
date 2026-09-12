@@ -39,6 +39,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Library.DataAccess import PMLE_DIR                          # noqa: E402
 from Library.PosteriorSummary import CI_PROB                     # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYS_PARAMS = ["dSIGMA", "dLAMB", "dPPROB", "dETA1", "dETA2", "dALPHA"]
 _MAP = {"dSIGMA": "sigma", "dALPHA": "alpha_rv", "dPPROB": "pprob_rv",
         "dLAMB": "lamb", "dETA1": "eta1", "dETA2": "eta2"}
@@ -96,13 +100,13 @@ def main():
         else:
             cells[lb] = df
     if missing:
-        print()
-        print("  NOT YET FITTED - run these first:")
+        _LOG.info("")
+        _LOG.info("  NOT YET FITTED - run these first:")
         for lb, drawer in missing:
-            print("    python poc/estimate_systematic.py --priors %s "
+            _LOG.info("    python poc/estimate_systematic.py --priors %s "
                   "--step 21%s" % (a.priors,
                                    "" if lb == 252 else " --lookback %d" % lb))
-            print("      (would write to %s)" % drawer)
+            _LOG.info("      (would write to %s)" % drawer)
     if not cells:
         raise SystemExit("no drawers to read")
     lbs = [lb for lb in lbs if lb in cells]
@@ -113,36 +117,36 @@ def main():
             common = df.index if common is None else common.intersection(df.index)
         cells = {lb: df.loc[common] for lb, df in cells.items()}
 
-    print()
-    print("=" * 74)
-    print("window ladder :: priors %s" % a.priors)
-    print("=" * 74)
+    _LOG.info("")
+    _LOG.info("=" * 74)
+    _LOG.info("window ladder :: priors %s" % a.priors)
+    _LOG.info("=" * 74)
     for lb in lbs:
         df = cells[lb]
-        print("  %4d days (%.1f yr)  %4d dates  %s -> %s"
+        _LOG.info("  %4d days (%.1f yr)  %4d dates  %s -> %s"
               % (lb, lb / 252.0, len(df), df.index.min().date(),
                  df.index.max().date()))
 
-    print()
-    print("  POSTERIOR MEAN")
-    print("  %-8s %11s %s" % ("param", "prior mean",
+    _LOG.info("")
+    _LOG.info("  POSTERIOR MEAN")
+    _LOG.info("  %-8s %11s %s" % ("param", "prior mean",
                               " ".join("%11s" % ("%d d" % lb) for lb in lbs)))
-    print("  " + "-" * (20 + 12 * len(lbs)))
+    _LOG.info("  " + "-" * (20 + 12 * len(lbs)))
     for k in SYS_PARAMS:
         pm_, _ = prior_moments(priors[_MAP[k]])
         row = " ".join("%11.4f" % cells[lb][k].mean()
                        if k in cells[lb] else "%11s" % "-" for lb in lbs)
-        print("  %-8s %11.4f %s" % (k, pm_, row))
+        _LOG.info("  %-8s %11.4f %s" % (k, pm_, row))
 
-    print()
-    print("  HOW MUCH THE DATA MOVED THE PRIOR")
-    print("  posterior %.0f%% width / prior %.0f%% width."
+    _LOG.info("")
+    _LOG.info("  HOW MUCH THE DATA MOVED THE PRIOR")
+    _LOG.info("  posterior %.0f%% width / prior %.0f%% width."
           % (100 * CI_PROB, 100 * CI_PROB))
-    print("  1.00 = the data said nothing.  below 0.70 = identified.")
-    print("  %-8s %10s %s   %s"
+    _LOG.info("  1.00 = the data said nothing.  below 0.70 = identified.")
+    _LOG.info("  %-8s %10s %s   %s"
           % ("param", "prior W",
              " ".join("%9s" % ("%d d" % lb) for lb in lbs), "reads as"))
-    print("  " + "-" * (22 + 10 * len(lbs) + 34))
+    _LOG.info("  " + "-" * (22 + 10 * len(lbs) + 34))
     for k in SYS_PARAMS:
         pw = prior_ci_width(priors[_MAP[k]], CI_PROB)
         if not pw:
@@ -158,19 +162,19 @@ def main():
             reads = "identified at every window here"
         else:
             reads = "identified from %d days (%.0f yr) on" % (first, first / 252.0)
-        print("  %-8s %10.4f %s   %s"
+        _LOG.info("  %-8s %10.4f %s   %s"
               % (k, pw, " ".join("%9.3f" % r for r in rs), reads))
 
     if len(lbs) > 1:
-        print()
-        print("  WHAT THE EXTRA YEARS BOUGHT")
-        print("  width at the longer window / width at %d days. %.2f is the"
+        _LOG.info("")
+        _LOG.info("  WHAT THE EXTRA YEARS BOUGHT")
+        _LOG.info("  width at the longer window / width at %d days. %.2f is the"
               % (lbs[0], np.sqrt(lbs[0] / lbs[-1])))
-        print("  most a purely statistical gain can give at the longest one.")
-        print("  %-8s %s" % ("param",
+        _LOG.info("  most a purely statistical gain can give at the longest one.")
+        _LOG.info("  %-8s %s" % ("param",
                              " ".join("%14s" % ("%d/%d" % (lb, lbs[0]))
                                       for lb in lbs[1:])))
-        print("  " + "-" * (10 + 15 * (len(lbs) - 1)))
+        _LOG.info("  " + "-" * (10 + 15 * (len(lbs) - 1)))
         for k in SYS_PARAMS:
             w0 = width(cells[lbs[0]], k)
             if w0 is None:
@@ -182,12 +186,12 @@ def main():
                 r = float(w.median()) / base if w is not None and base else np.nan
                 n_eff = 1.0 / r ** 2 if r and np.isfinite(r) else np.nan
                 row.append("%14s" % ("%.2f  (x%.1f)" % (r, n_eff)))
-            print("  %-8s %s" % (k, " ".join(row)))
-        print("  x is the effective sample multiple, 1/ratio^2 - how many")
-        print("  years' worth of information the longer window actually")
-        print("  delivered, against the %.1f it nominally contains."
+            _LOG.info("  %-8s %s" % (k, " ".join(row)))
+        _LOG.info("  x is the effective sample multiple, 1/ratio^2 - how many")
+        _LOG.info("  years' worth of information the longer window actually")
+        _LOG.info("  delivered, against the %.1f it nominally contains."
               % (lbs[-1] / lbs[0]))
-    print()
+    _LOG.info("")
 
 
 if __name__ == "__main__":

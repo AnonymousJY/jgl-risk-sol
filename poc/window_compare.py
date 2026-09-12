@@ -50,6 +50,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Library.DataAccess import PMLE_DIR                          # noqa: E402
 from Library.PosteriorSummary import CI_PROB                     # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYS_PARAMS = ["dALPHA", "dSIGMA", "dPPROB", "dLAMB", "dETA1", "dETA2"]
 _MAP = {"dSIGMA": "sigma", "dALPHA": "alpha_rv", "dPPROB": "pprob_rv",
         "dLAMB": "lamb", "dETA1": "eta1", "dETA2": "eta2"}
@@ -125,21 +129,21 @@ def main():
                a.lb_b, len(db), db.index.min().date(), db.index.max().date()))
     da, db = da.loc[common], db.loc[common]
 
-    print()
-    print("=" * 78)
-    print("comparison :: A = %s @ %d days   B = %s @ %d days"
+    _LOG.info("")
+    _LOG.info("=" * 78)
+    _LOG.info("comparison :: A = %s @ %d days   B = %s @ %d days"
           % (tag_a, a.lb_a, tag_b, a.lb_b))
-    print("=" * 78)
-    print("  %d shared valuation date(s)  %s -> %s"
+    _LOG.info("=" * 78)
+    _LOG.info("  %d shared valuation date(s)  %s -> %s"
           % (len(common), common.min().date(), common.max().date()))
-    print("  ratio = posterior %.0f%% width / prior %.0f%% width, both "
+    _LOG.info("  ratio = posterior %.0f%% width / prior %.0f%% width, both "
           "equal-tailed;" % (100 * CI_PROB, 100 * CI_PROB))
-    print("  1.00 means the posterior is the prior. Below 0.70 is identified.")
-    print()
-    print("  %-8s %9s %9s %9s %9s %8s %8s %8s   %s"
+    _LOG.info("  1.00 means the posterior is the prior. Below 0.70 is identified.")
+    _LOG.info("")
+    _LOG.info("  %-8s %9s %9s %9s %9s %8s %8s %8s   %s"
           % ("param", "mean A", "mean B", "width A", "width B", "ratio A",
              "ratio B", "W B/A", "verdict"))
-    print("  " + "-" * 100)
+    _LOG.info("  " + "-" * 100)
 
     for k in SYS_PARAMS:
         if k not in da or k not in db:
@@ -167,38 +171,38 @@ def main():
             verdict = "flat - no information at either length"
         else:
             verdict = "no material gain"
-        print("  %-8s %9.4f %9.4f %9.4f %9.4f %8.3f %8.3f %8.3f   %s"
+        _LOG.info("  %-8s %9.4f %9.4f %9.4f %9.4f %8.3f %8.3f %8.3f   %s"
               % (k, ma, mb, float(wa.median()), float(wb.median()),
                  ra, rb, shrink, verdict))
 
     if tag_a != tag_b:
-        print()
-        print("  A and B are DIFFERENT ARMS, so ratio A and ratio B are each")
-        print("  against their own prior and are not comparable to each other.")
-        print("  The comparable columns are width A against width B, which is")
-        print("  what the prior was doing to the posterior, and W B/A.")
-    print()
-    print("  A longer window buys sqrt(3) = 1.73 on a parameter the likelihood")
-    print("  already resolves, so width B/A near 0.58 is the most a purely")
-    print("  statistical gain can look like. Near 1.00 means the extra two")
-    print("  years told the sampler nothing it did not already have.")
-    print()
+        _LOG.info("")
+        _LOG.info("  A and B are DIFFERENT ARMS, so ratio A and ratio B are each")
+        _LOG.info("  against their own prior and are not comparable to each other.")
+        _LOG.info("  The comparable columns are width A against width B, which is")
+        _LOG.info("  what the prior was doing to the posterior, and W B/A.")
+    _LOG.info("")
+    _LOG.info("  A longer window buys sqrt(3) = 1.73 on a parameter the likelihood")
+    _LOG.info("  already resolves, so width B/A near 0.58 is the most a purely")
+    _LOG.info("  statistical gain can look like. Near 1.00 means the extra two")
+    _LOG.info("  years told the sampler nothing it did not already have.")
+    _LOG.info("")
 
-    print("  Series stability (sd of the posterior mean across the shared dates):")
-    print("  %-8s %11s %11s %8s" % ("param", "sd A", "sd B", "B/A"))
-    print("  " + "-" * 42)
+    _LOG.info("  Series stability (sd of the posterior mean across the shared dates):")
+    _LOG.info("  %-8s %11s %11s %8s" % ("param", "sd A", "sd B", "B/A"))
+    _LOG.info("  " + "-" * 42)
     for k in SYS_PARAMS:
         if k not in da or k not in db:
             continue
         sa, sb = float(da[k].std(ddof=1)), float(db[k].std(ddof=1))
-        print("  %-8s %11.5f %11.5f %8.3f"
+        _LOG.info("  %-8s %11.5f %11.5f %8.3f"
               % (k, sa, sb, sb / sa if sa else np.nan))
-    print()
-    print("  Confounding - correlation of each parameter's series with dSIGMA")
-    print("  and dLAMB, at the date level, inside each drawer:")
-    print("  %-8s %9s %9s %9s %9s" % ("param", "r sigma A", "r sigma B",
+    _LOG.info("")
+    _LOG.info("  Confounding - correlation of each parameter's series with dSIGMA")
+    _LOG.info("  and dLAMB, at the date level, inside each drawer:")
+    _LOG.info("  %-8s %9s %9s %9s %9s" % ("param", "r sigma A", "r sigma B",
                                       "r lamb A", "r lamb B"))
-    print("  " + "-" * 50)
+    _LOG.info("  " + "-" * 50)
     for k in SYS_PARAMS:
         if k in ("dSIGMA", "dLAMB") or k not in da or k not in db:
             continue
@@ -209,23 +213,23 @@ def main():
                                        d[ref].astype(float))[0, 1])
                      if ref in d and d[k].std() > 0 and d[ref].std() > 0
                      else float("nan"))
-        print("  %-8s %+9.3f %+9.3f %+9.3f %+9.3f" % (k, *r))
-    print()
-    print("  This is the test a parameter that starts MOVING under the longer")
-    print("  window has to pass. A posterior mean that wanders while its width")
-    print("  stays put is being pushed, not measured, and the usual thing")
-    print("  pushing it is the diffusion/jump split: sigma falls and lambda")
-    print("  rises as the window stops being one regime. A correlation with")
-    print("  dSIGMA that appears only in column B is that, not information.")
-    print("  The dates overlap heavily, so read the SIGN and the SIZE; there")
-    print("  are nothing like %d independent observations behind it." % len(common))
-    print()
-    print("  A 3-year window overlaps 755 of its 756 observations day to day, so")
-    print("  the series is smoother by construction. That is not a better")
-    print("  estimate of anything - it is the same crisis held in view three")
-    print("  times as long, which is exactly what the vintage contrast needs")
-    print("  NOT to happen. Read this column as a cost, not a gain.")
-    print()
+        _LOG.info("  %-8s %+9.3f %+9.3f %+9.3f %+9.3f" % (k, *r))
+    _LOG.info("")
+    _LOG.info("  This is the test a parameter that starts MOVING under the longer")
+    _LOG.info("  window has to pass. A posterior mean that wanders while its width")
+    _LOG.info("  stays put is being pushed, not measured, and the usual thing")
+    _LOG.info("  pushing it is the diffusion/jump split: sigma falls and lambda")
+    _LOG.info("  rises as the window stops being one regime. A correlation with")
+    _LOG.info("  dSIGMA that appears only in column B is that, not information.")
+    _LOG.info("  The dates overlap heavily, so read the SIGN and the SIZE; there")
+    _LOG.info("  are nothing like %d independent observations behind it." % len(common))
+    _LOG.info("")
+    _LOG.info("  A 3-year window overlaps 755 of its 756 observations day to day, so")
+    _LOG.info("  the series is smoother by construction. That is not a better")
+    _LOG.info("  estimate of anything - it is the same crisis held in view three")
+    _LOG.info("  times as long, which is exactly what the vintage contrast needs")
+    _LOG.info("  NOT to happen. Read this column as a cost, not a gain.")
+    _LOG.info("")
 
 
 if __name__ == "__main__":

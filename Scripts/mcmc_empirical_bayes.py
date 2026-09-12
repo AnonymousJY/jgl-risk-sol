@@ -53,6 +53,10 @@ from Library.DataAccess import (  # noqa: E402
 )
 from Library.RiskEngineKimYi2025 import _dist_loglike_idiosyncratic  # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 
 SYSTEMATIC_TICKER = "^SPX"
 DEFAULT_LOOKBACK = 252
@@ -179,8 +183,8 @@ def report_summary(idata, var_names, label, out_path):
     summary = az.summary(idata, var_names=var_names, hdi_prob=0.95)
     cols = ["mean", "sd", "hdi_2.5%", "hdi_97.5%", "ess_bulk", "ess_tail", "r_hat"]
     cols = [c for c in cols if c in summary.columns]
-    print(f"\n=== {label} ===")
-    print(summary[cols].round(4).to_string())
+    _LOG.info(f"\n=== {label} ===")
+    _LOG.info(summary[cols].round(4).to_string())
     summary.to_csv(out_path)
     return summary
 
@@ -198,11 +202,11 @@ def flag_convergence(summary, label, ess_threshold=400, rhat_threshold=1.01):
         if r_hat > rhat_threshold:
             issues.append(f"  {pname}: R-hat above {rhat_threshold} ({r_hat:.4f})")
     if issues:
-        print(f"\n[!] Convergence warnings ({label}):")
+        _LOG.info(f"\n[!] Convergence warnings ({label}):")
         for line in issues:
-            print(line)
+            _LOG.info(line)
     else:
-        print(f"\n[OK] Chains converged in {label}.")
+        _LOG.info(f"\n[OK] Chains converged in {label}.")
 
 
 def natural_sample_matrix(idata):
@@ -244,8 +248,8 @@ def print_prior_vs_posterior(prior_stats, hist_df, summary_natural, out_path):
             "post_ci_hi": post_row["hdi_97.5%"],
         })
     df = pd.DataFrame(rows).set_index("param")
-    print("\n=== Historical stats vs empirical-Bayes posterior (natural space) ===")
-    print(df.round(4).to_string())
+    _LOG.info("\n=== Historical stats vs empirical-Bayes posterior (natural space) ===")
+    _LOG.info(df.round(4).to_string())
     df.to_csv(out_path)
 
 
@@ -304,14 +308,14 @@ def main():
 
     # Historical stats
     hist_df = collect_historical_estimates(ticker, date, args.hist_days)
-    print(f"Historical dates used for priors: {list(hist_df.index)}")
-    print("Natural-space historical means:")
-    print(hist_df[["dMUI", "dKAPPAI", "dGAMMAI", "dBETAI", "dRHOIX"]].round(4).to_string())
+    _LOG.info(f"Historical dates used for priors: {list(hist_df.index)}")
+    _LOG.info("Natural-space historical means:")
+    _LOG.info(hist_df[["dMUI", "dKAPPAI", "dGAMMAI", "dBETAI", "dRHOIX"]].round(4).to_string())
 
     prior_stats = build_prior_stats(hist_df)
-    print("\nEmpirical-Bayes priors (sample-space):")
+    _LOG.info("\nEmpirical-Bayes priors (sample-space):")
     for k, (m, s) in prior_stats.items():
-        print(f"  {k}: Normal(mu={m:.4f}, sigma={s * args.prior_scale:.4f})")
+        _LOG.info(f"  {k}: Normal(mu={m:.4f}, sigma={s * args.prior_scale:.4f})")
 
     # Data
     price_ts = get_price_panel([SYSTEMATIC_TICKER, ticker])
@@ -344,7 +348,7 @@ def main():
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\nSampling {ticker} {date} (empirical-Bayes, H={args.hist_days}, "
+    _LOG.info(f"\nSampling {ticker} {date} (empirical-Bayes, H={args.hist_days}, "
           f"scale={args.prior_scale}, L={args.lookback}): {args.n_draws} draws x 4 chains...")
     with model:
         rng = np.random.default_rng(np.uint64(args.seed))
@@ -381,8 +385,8 @@ def main():
     # Correlation matrix in natural space
     nat_df = natural_sample_matrix(idata)
     corr = nat_df.corr()
-    print("\n=== Posterior correlation matrix (natural space, empirical-Bayes) ===")
-    print(corr.round(3).to_string())
+    _LOG.info("\n=== Posterior correlation matrix (natural space, empirical-Bayes) ===")
+    _LOG.info(corr.round(3).to_string())
     corr.to_csv(out_dir / "posterior_corr_natural.csv")
 
     # Plots
@@ -390,7 +394,7 @@ def main():
     save_pair_plots(idata, IDI_SAMPLE_VARS, out_dir)
 
     idata.to_netcdf(out_dir / "idata.nc")
-    print(f"\nOutputs saved to {out_dir}/")
+    _LOG.info(f"\nOutputs saved to {out_dir}/")
 
 
 if __name__ == "__main__":

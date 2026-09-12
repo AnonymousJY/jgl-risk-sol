@@ -40,6 +40,10 @@ from Library.OptionPricerKimYi2025 import kimyi_call
 from Library.OptionPricerBSM1973 import bsm_call_price
 from Library.RootFinder import bisection
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 # ---------- baseline calibration -------------------------------------------
 BASELINE_DATE = "20250409"
 p = get_pmle_params(BASELINE_DATE, "^SPX")
@@ -167,33 +171,33 @@ def _build_row(target, alpha, params, base_iv):
 
 
 def _print_table(title, rows):
-    print(f"\n=== {title} ===")
+    _LOG.info(f"\n=== {title} ===")
     hdr = (f"{'target dskew':>12s}  {'alpha':>8s}  "
            f"{'eta1':>8s}  {'eta2':>8s}  {'sigma':>7s}  "
            f"{'IV100':>6s}  {'dIV100':>7s}  {'skew':>6s}  {'dskew':>7s}")
-    print(hdr); print("-" * len(hdr))
+    _LOG.info(hdr); _LOG.info("-" * len(hdr))
     for r in rows:
-        print(f"{r['target']:+12.2f}  {r['alpha']:+8.4f}  "
+        _LOG.info(f"{r['target']:+12.2f}  {r['alpha']:+8.4f}  "
               f"{r['eta1']:8.3f}  {r['eta2']:8.3f}  {r['sigma']:7.4f}  "
               f"{r['iv100']:6.2f}  {r['div100']:+7.2f}  {r['skew']:6.2f}  {r['dskew']:+7.2f}")
 
 
 def main():
-    print(f"\nBaseline: SPX {BASELINE_DATE}   "
+    _LOG.info(f"\nBaseline: SPX {BASELINE_DATE}   "
           f"sigma={BASELINE['sigma']:.3f}  lamb={BASELINE['lamb']:.2f}  "
           f"eta1={BASELINE['eta1']:.2f}  eta2={BASELINE['eta2']:.2f}  p={BASELINE['pprob']:.2f}")
-    print(f"Option: S={S0}  T={T*365:.0f}d  r={R:.2%}  q={Q:.2%}")
+    _LOG.info(f"Option: S={S0}  T={T*365:.0f}d  r={R:.2%}  q={Q:.2%}")
 
     # baseline IV curve + skew
     base_iv = {m: bsm_iv(kimyi_call_price(BASELINE, m * S0), m * S0)
                for m in (0.90, 1.00, 1.10)}
     base_skew = (base_iv[0.90] - base_iv[1.10]) * 100
     target_atm = base_iv[1.00]
-    print(f"Baseline IVs (vol pts): IV90={base_iv[0.90]*100:.2f}  "
+    _LOG.info(f"Baseline IVs (vol pts): IV90={base_iv[0.90]*100:.2f}  "
           f"IV100={base_iv[1.00]*100:.2f}  IV110={base_iv[1.10]*100:.2f}  "
           f"skew={base_skew:+.2f}")
 
-    print("\nParameterization: eta1 -> eta1*(1+α),  eta2 -> eta2*(1-α)  "
+    _LOG.info("\nParameterization: eta1 -> eta1*(1+α),  eta2 -> eta2*(1-α)  "
           "(anti-symmetric; α=0 is baseline)")
 
     # --- raw: no ATM compensation -----------------------------------------

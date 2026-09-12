@@ -62,6 +62,10 @@ from poc.translate_shock import (                                      # noqa: E
 from poc.estimate_idiosyncratic import name_store_id, full_sample_series  # noqa: E402
 from poc.estimate_systematic import store_id, SYSTEMATIC_ID            # noqa: E402
 
+from Library.Logging import report as _report  # noqa: E402
+
+_LOG = _report(__name__)
+
 SYS_KEYS = ["dALPHA", "dSIGMA", "dPPROB", "dLAMB", "dETA1", "dETA2"]
 
 # Model h-day systematic ES(99.7%) under the FULL_SAMPLE anchor, from
@@ -115,20 +119,20 @@ def main():
             continue
         rows.append((nm, p))
     for nm in missing:
-        print("  no fits on disk for %s (drawer %s)"
+        _LOG.info("  no fits on disk for %s (drawer %s)"
               % (nm, name_store_id(nm, a.anchor, a.priors, priors)))
     if not rows:
         raise SystemExit("nothing to report - run poc/estimate_idiosyncratic.py first")
 
-    print("=" * 78)
-    print("What the Excel function would return   (anchor %s, priors %s)"
+    _LOG.info("=" * 78)
+    _LOG.info("What the Excel function would return   (anchor %s, priors %s)"
           % (a.anchor, a.priors))
-    print("=" * 78)
+    _LOG.info("=" * 78)
     hdr = "  %-7s %7s %7s" % ("name", "b_diff", "gamma")
     for lab in GRID_LABEL:
         hdr += " %8s" % lab
-    print(hdr + "     <- b_eff(u)")
-    print("  " + "-" * 74)
+    _LOG.info(hdr + "     <- b_eff(u)")
+    _LOG.info("  " + "-" * 74)
 
     summary = []
     for nm, p in rows:
@@ -141,14 +145,14 @@ def main():
                                    p["dPPROB"], p["dETA1"], p["dETA2"])
             beffs.append(be)
             line += " %8.3f" % be
-        print(line)
+        _LOG.info(line)
         summary.append(dict(name=nm, b_diff=bd, gamma=p["dGAMMAI"],
                             curv=beffs[-1] / beffs[0] if beffs[0] else np.nan,
                             ratio=p["dGAMMAI"] / bd if bd else np.nan,
                             date=p["date"]))
 
-    print("\n  the same rows as SHOCKED RETURNS (b_eff(u) * u):")
-    print("  " + "-" * 74)
+    _LOG.info("\n  the same rows as SHOCKED RETURNS (b_eff(u) * u):")
+    _LOG.info("  " + "-" * 74)
     for nm, p in rows:
         line = "  %-7s %15s" % (nm, "")
         for u in GRID:
@@ -157,66 +161,66 @@ def main():
                 p["dSIGMA"], p["dLAMB"], p["dPPROB"], p["dETA1"], p["dETA2"],
                 mui=p["dMUI"])
             line += " %7.1f%%" % (100 * m)
-        print(line)
-    print("  (conditional sd omitted above; it is large and reported below)")
+        _LOG.info(line)
+    _LOG.info("  (conditional sd omitted above; it is large and reported below)")
 
     df = pd.DataFrame(summary)
-    print("\n" + "=" * 78)
-    print("VERDICT")
-    print("=" * 78)
+    _LOG.info("\n" + "=" * 78)
+    _LOG.info("VERDICT")
+    _LOG.info("=" * 78)
 
     n = len(df)
     if n < 8:
-        print("\n  *** ONLY %d NAME(S). The statistics below cannot decide" % n)
-        print("      anything. Spearman rho on n=3 can only be +-1.0 or +-0.5,")
-        print("      and a CV over 3 points is noise. Worse, a sample drawn")
-        print("      from ONE SECTOR will show a tight ratio whatever the model")
-        print("      does, because those names share a business model. Use 15+")
-        print("      names across at least four sectors before reading test 3.")
+        _LOG.info("\n  *** ONLY %d NAME(S). The statistics below cannot decide" % n)
+        _LOG.info("      anything. Spearman rho on n=3 can only be +-1.0 or +-0.5,")
+        _LOG.info("      and a CV over 3 points is noise. Worse, a sample drawn")
+        _LOG.info("      from ONE SECTOR will show a tight ratio whatever the model")
+        _LOG.info("      does, because those names share a business model. Use 15+")
+        _LOG.info("      names across at least four sectors before reading test 3.")
 
     curv = df.curv.median()
-    print("\n1. CURVATURE  b_eff(-20%) / b_eff(-1%)")
-    print("   median %.3f   range %.3f - %.3f"
+    _LOG.info("\n1. CURVATURE  b_eff(-20%) / b_eff(-1%)")
+    _LOG.info("   median %.3f   range %.3f - %.3f"
           % (curv, df.curv.min(), df.curv.max()))
     if curv < 1.10:
-        print("   FAIL - near 1.0, so the multiplier barely moves with shock")
-        print("   size and the two-beta construction collapses to one beta.")
+        _LOG.info("   FAIL - near 1.0, so the multiplier barely moves with shock")
+        _LOG.info("   size and the two-beta construction collapses to one beta.")
     else:
-        print("   PASS - the multiplier moves %.0f%% between a 1%% and a 20%%"
+        _LOG.info("   PASS - the multiplier moves %.0f%% between a 1%% and a 20%%"
               % (100 * (curv - 1)))
-        print("   shock, which no single beta reproduces.")
+        _LOG.info("   shock, which no single beta reproduces.")
 
-    print("\n2. SPREAD  gamma_i vs b_diff")
-    print("   b_diff  median %.3f  range %.3f - %.3f"
+    _LOG.info("\n2. SPREAD  gamma_i vs b_diff")
+    _LOG.info("   b_diff  median %.3f  range %.3f - %.3f"
           % (df.b_diff.median(), df.b_diff.min(), df.b_diff.max()))
-    print("   gamma   median %.3f  range %.3f - %.3f"
+    _LOG.info("   gamma   median %.3f  range %.3f - %.3f"
           % (df.gamma.median(), df.gamma.min(), df.gamma.max()))
 
-    print("\n3. CROSS-SECTIONAL INFORMATION  gamma_i / b_diff   <- THE TEST")
+    _LOG.info("\n3. CROSS-SECTIONAL INFORMATION  gamma_i / b_diff   <- THE TEST")
     r = df.ratio.dropna()
-    print("   median %.3f   sd %.3f   CV %.3f   range %.3f - %.3f"
+    _LOG.info("   median %.3f   sd %.3f   CV %.3f   range %.3f - %.3f"
           % (r.median(), r.std(), r.std() / abs(r.mean()), r.min(), r.max()))
     cv = r.std() / abs(r.mean())
     if len(df) > 2:
         rho = df[["b_diff", "gamma"]].corr(method="spearman").iloc[0, 1]
-        print("   Spearman rank corr(b_diff, gamma) = %+.3f%s"
+        _LOG.info("   Spearman rank corr(b_diff, gamma) = %+.3f%s"
               % (rho, "   (meaningless at n=%d)" % len(df) if len(df) < 15 else ""))
     crossed = ((r > 1).any() and (r < 1).any())
     if crossed:
-        print("   PASS - the ratio CROSSES 1.0: some names gap harder than their")
-        print("   ordinary loading implies and others gap softer. An ordering")
-        print("   reversal cannot be reproduced by scaling beta by any constant.")
+        _LOG.info("   PASS - the ratio CROSSES 1.0: some names gap harder than their")
+        _LOG.info("   ordinary loading implies and others gap softer. An ordering")
+        _LOG.info("   reversal cannot be reproduced by scaling beta by any constant.")
     elif cv > 0.15:
-        print("   PASS - CV %.3f. The ratio varies enough across names that a"
+        _LOG.info("   PASS - CV %.3f. The ratio varies enough across names that a"
               % cv)
-        print("   single multiplier does not reproduce it.")
+        _LOG.info("   single multiplier does not reproduce it.")
     elif len(df) < 8:
-        print("   INCONCLUSIVE - CV %.3f, but see the sample warning above." % cv)
+        _LOG.info("   INCONCLUSIVE - CV %.3f, but see the sample warning above." % cv)
     else:
-        print("   FAIL - CV %.3f. gamma_i is close to a fixed multiple of" % cv)
-        print("   b_diff, so a client reproduces every number by multiplying")
-        print("   their own beta by %.2f. No product." % r.median())
-    print("""
+        _LOG.info("   FAIL - CV %.3f. gamma_i is close to a fixed multiple of" % cv)
+        _LOG.info("   b_diff, so a client reproduces every number by multiplying")
+        _LOG.info("   their own beta by %.2f. No product." % r.median())
+    _LOG.info("""
    What you need to see: a CV well above ~0.15 and a rank correlation
    materially below 1. That is names re-ordering between ordinary and gap
    conditions - something a regression beta cannot produce, and the only
@@ -225,7 +229,7 @@ def main():
     out = os.path.join(_REPO_ROOT, "poc", "product_curve_%s_%s.csv"
                        % (a.priors, a.anchor))
     df.to_csv(out, index=False)
-    print("\n  written to %s" % os.path.relpath(out, _REPO_ROOT))
+    _LOG.info("\n  written to %s" % os.path.relpath(out, _REPO_ROOT))
 
 
 if __name__ == "__main__":

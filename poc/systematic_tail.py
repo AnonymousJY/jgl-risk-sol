@@ -125,6 +125,25 @@ def model_prob(x, sg, lam, p, e1, e2, dt, lo=-0.999, hi=1.0, n=2_000_001):
     return float(np.sum(f[u <= x]) * du / tot)
 
 
+def _defs():
+    """Print what the four columns mean. The table is unreadable without it,
+    and a reader who has to ask is a reader who will guess."""
+    _LOG.info("")
+    _LOG.info("  X is the one-day systematic return, signed - a worse day is a")
+    _LOG.info("  more negative number. For a tail level a:")
+    _LOG.info("")
+    _LOG.info("    q lower    the a-quantile:  P(X <= q) = a")
+    _LOG.info("               at a = 0.025 this is the 2.5th percentile,")
+    _LOG.info("               i.e. the 97.5% VaR threshold")
+    _LOG.info("    ES lower   E[X | X <= q lower], the MEAN of that tail")
+    _LOG.info("               at a = 0.025, the average of the worst 2.5% of days")
+    _LOG.info("    q upper    the (1-a)-quantile:  P(X >= q) = a")
+    _LOG.info("    ES upper   E[X | X >= q upper], the average of the best a of days")
+    _LOG.info("")
+    _LOG.info("  q bounds the tail; ES averages inside it, so |ES| > |q| always.")
+    _LOG.info("")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -163,6 +182,7 @@ def main():
               % (r.skew(), r.kurtosis()))
 
     _LOG.info("\nEXPECTED SHORTFALL, empirical")
+    _defs()
     _LOG.info("  %-8s %12s %12s %7s    %12s %12s %7s"
               % ("level", "q lower", "ES lower", "n", "q upper", "ES upper", "n"))
     _LOG.info("  " + "-" * 80)
@@ -217,6 +237,7 @@ def main():
     _LOG.info("  daily diffusion sd %.4f%%   P(jump on a day) %.4f"
               % (100 * sg * np.sqrt(dt), lam * dt))
 
+    _defs()
     tail, mass = model_tail(sg, lam, p, e1, e2, dt, levels)
     _LOG.info("  grid mass %.9f  (must be 1.000000000)" % mass)
     _LOG.info("\n  %-8s %12s %12s    %12s %12s"

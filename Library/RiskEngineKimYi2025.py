@@ -1133,6 +1133,48 @@ IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO["rhoix_rv"] = (
 # vol above sigma and a correlation channel worth half the beta at once. Read
 # that as a cross-sectional result, not a fitting failure: the theorem's
 # condition is a statement about which names it applies to.
+# rho_iX at 0.90: Theorem 3.1's condition asserted hard, and beta_i let go.
+#
+# thm31 centres rho_iX at 0.55, the middle of the window where all four
+# restrictions hold. This one asserts that the name's liquidity innovation is
+# almost perfectly aligned with the market's, and accepts what that costs.
+#
+# WHAT IT BUYS. The theorem's threshold sigma beta_i/(2 kappa_i) falls to about
+# 0.38 at all three banks, so the condition holds with room to spare rather
+# than marginally. And b_diff RISES: holding phi_i, the correlation term
+# kappa_i rho_iX/sigma grows faster than beta_i must fall, so C goes from
+# 1.601 at rho 0.24 to 1.876 at 0.90 - 97% of the ceiling
+#
+#     b_diff -> phi_i / sigma   as rho_iX -> 1
+#
+# which is 1.940, 1.893 and 1.636 at C, BAC and JPM. That ceiling is set by
+# the data, not by any prior: it is what the name's total volatility permits
+# once all of it is declared systematic.
+#
+# WHAT IT COSTS. beta_i falls under 1 at every name - 0.861, 0.841, 0.740 -
+# so the "riskier than the market" claim can no longer be read off beta_i. It
+# has to be read off b_diff, which is where it belonged anyway: beta_i alone
+# understates the systematic loading whenever kappa_i rho_iX is material, and
+# at rho_iX = 0.90 it is the larger of the two terms. A reader who checks
+# beta_i and stops will conclude these banks are defensive, which is the
+# opposite of what b_diff 1.88 says.
+#
+# THE WIDTH IS FORCED, not chosen. rho_iX <= 1, so the widest uniform centred
+# at 0.90 is (0.80, 1.00) and its sd is 0.0572 against the 0.1155 every other
+# declared flat carries. Half the width is the boundary's doing and not extra
+# information, and the identification ratio will improve for that reason alone
+# - read rho_iX's ratio here against its own prior width, never against
+# thm31's. The upper end stops at 0.999 rather than 1.000 because the model
+# samples arctanh(2 rhoix_rv - 1), which diverges at exactly 1.
+IDIOSYNCRATIC_PRIORS_THM31_HIGH = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_THM31_HIGH["betai_rv"] = (
+    "Gamma", {"alpha": 3.0, "beta": 1.5})            # mean 2.000 sd 1.1547
+IDIOSYNCRATIC_PRIORS_THM31_HIGH["kappai_rv"] = (
+    "Gamma", {"alpha": 2.0, "beta": 2.0 / 0.3})      # mean 0.300 sd 0.2121
+IDIOSYNCRATIC_PRIORS_THM31_HIGH["rhoix_rv"] = (
+    "Uniform", {"lower": 0.9005, "upper": 0.9995})   # rho_iX U(0.801, 0.999)
+
+
 IDIOSYNCRATIC_PRIORS_THM31 = dict(IDIOSYNCRATIC_PRIORS)
 IDIOSYNCRATIC_PRIORS_THM31["betai_rv"] = (
     "Gamma", {"alpha": 3.0, "beta": 1.5})            # mean 2.000 sd 1.1547
@@ -1166,6 +1208,7 @@ IDIOSYNCRATIC_PRIOR_SETS = {
     "betai1-rhoix-zero": IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO,
     "econ": IDIOSYNCRATIC_PRIORS_ECON,
     "thm31": IDIOSYNCRATIC_PRIORS_THM31,
+    "thm31-high": IDIOSYNCRATIC_PRIORS_THM31_HIGH,
 }
 IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "flat-mu-rhoix": "__flatmurhoix",
@@ -1174,7 +1217,8 @@ IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "rhoix-zero": "__rhoixzero",
                      "betai1-rhoix-zero": "__b1rhoixzero",
                      "econ": "__econ",
-                     "thm31": "__thm31"}
+                     "thm31": "__thm31",
+                     "thm31-high": "__thm31high"}
 
 
 def pmle_kimyirisk_idiosyncratic(

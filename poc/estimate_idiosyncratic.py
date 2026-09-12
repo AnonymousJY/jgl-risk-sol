@@ -199,6 +199,34 @@ def name_store_id(name, anchor, tag, priors, lookback=None):
     return "%s__%s%s%s%s" % (name, anchor, suffix, idio, lb)
 
 
+# dPARAM name of each systematic prior key. One map, because two copies of it
+# is how a renamed key silently stops being anchored.
+_SYS_KEY = {"dALPHA": "alpha_rv", "dSIGMA": "sigma", "dPPROB": "pprob_rv",
+            "dLAMB": "lamb", "dETA1": "eta1", "dETA2": "eta2"}
+
+# Set in main() from the chosen systematic arm; consulted by systematic_for.
+# Resolved in the PARENT - run() builds the anchor cache before the pool exists
+# - so a module global is safe here, which it would not be inside a worker.
+HELD_SYSTEMATIC = ()
+
+
+def held_systematic(priors):
+    """The dPARAM names the chosen systematic arm pins with a Fixed spec.
+
+    --anchor hybrid replaces dALPHA, dETA1 and dETA2 with the full-sample
+    calibration because a window cannot identify them. That reasoning is about
+    what a window can SEE, and it is silently wrong for a parameter the arm has
+    already declared: alpha-pprob-fixed pins alpha at 0.75 and hybrid would
+    hand the sampler 0.036 instead, so the run would be conditioned on a
+    restriction nobody chose and the drawer would record it without comment.
+    """
+    from Library.RiskEngineKimYi2025 import SYSTEMATIC_PRIORS
+    pr = dict(SYSTEMATIC_PRIORS)
+    if priors:
+        pr.update(priors)
+    return tuple(p for p, k in _SYS_KEY.items() if pr[k][0] == "Fixed")
+
+
 def full_sample_series():
     """FULL_SAMPLE as the pd.Series assemble_idiosyncratic_params expects.
 
@@ -207,10 +235,8 @@ def full_sample_series():
     none - it would make the anchor look estimated at this date when it was not.
     """
     row = {}
-    key = {"dALPHA": "alpha_rv", "dSIGMA": "sigma", "dPPROB": "pprob_rv",
-           "dLAMB": "lamb", "dETA1": "eta1", "dETA2": "eta2"}
     for p in SYSTEMATIC_PARAMS:
-        v = float(FULL_SAMPLE[key[p]])
+        v = float(FULL_SAMPLE[_SYS_KEY[p]])
         row[p] = v
         row[p + "_CI_LOWER"] = v
         row[p + "_CI_UPPER"] = v
@@ -229,9 +255,12 @@ def systematic_for(dt, sys_store, anchor):
         return {p: float(s[p]) for p in SYSTEMATIC_PARAMS}, s
 
     # hybrid: window-identified from the window, the rest from the full sample
+    # - except anything the ARM pinned, which stays as the arm declared it.
     fs = full_sample_series()
     s = s.copy()
     for p in ("dALPHA", "dETA1", "dETA2"):
+        if p in HELD_SYSTEMATIC:
+            continue
         s[p] = fs[p]
         s[p + "_CI_LOWER"] = fs[p]
         s[p + "_CI_UPPER"] = fs[p]
@@ -602,7 +631,7 @@ def main():
                          "overwriting in place")
     a = ap.parse_args()
 
-    global COLOR, LOOKBACK, IDIO_TAG, IDIO_PRIORS_IN_FORCE
+    global COLOR, LOOKBACK, IDIO_TAG, IDIO_PRIORS_IN_FORCE, HELD_SYSTEMATIC
     COLOR = a.color
     IDIO_TAG = a.idio_priors
     IDIO_PRIORS_IN_FORCE = IDIOSYNCRATIC_PRIOR_SETS[a.idio_priors]
@@ -619,6 +648,7 @@ def main():
         names = [n.strip().upper() for n in a.names.split(",") if n.strip()]
 
     priors = PRIOR_SETS[a.priors]
+    HELD_SYSTEMATIC = held_systematic(priors)
     sys_store = store_id(a.priors, priors, LOOKBACK)
 
     if a.coverage:
@@ -632,6 +662,12 @@ def main():
     _LOG.info("  window  : %s -> %s every %d business days, %d-day lookback"
           % (a.beg, a.end, a.step, LOOKBACK))
     _LOG.info("  anchor  : %s" % a.anchor)
+    if HELD_SYSTEMATIC:
+        _LOG.info("    HELD by the arm, not by the anchor: %s"
+                  % ", ".join(sorted(HELD_SYSTEMATIC)))
+        _LOG.info("    These keep the value --priors %s declares. hybrid does"
+                  % a.priors)
+        _LOG.info("    NOT overwrite them with the full-sample calibration.")
     _LOG.info("  idio priors: %s" % a.idio_priors)
     if a.idio_priors != "paper":
         _LOG.info("    NON-DEFAULT - own drawer (%s). rhoix is not identified by"

@@ -563,6 +563,60 @@ SYSTEMATIC_PRIORS_ALPHA_PPROB_FLAT["pprob_rv"] = (
     "Beta", {"alpha": 1.0, "beta": 1.0})                # mean 0.500 sd 0.2887
 
 
+# ---------------------------------------------------------------------------
+# Held constant
+# ---------------------------------------------------------------------------
+# The values the study PINS rather than estimates, in one place so a reader can
+# disagree with them in one line and so no two files can drift apart.
+#
+# These are ASSERTIONS, not measurements, and two of the three are assertions
+# the sample disagrees with. That is the point of writing them here rather than
+# burying them in a prior: a restriction stated at full volume can be argued
+# with, and one carried in a posterior mean cannot.
+#
+#   FIXED_ALPHA_RV = 0.75   half-life ln2/0.75 = 0.92 years. Asserts that the
+#       systematic liquidity process forgets a shock inside a year. The full
+#       sample fits 0.036 - a half-life of 19.3 years, Psi near a random walk -
+#       and a flat prior on a 504-day window returns 0.4396 from a prior mean
+#       of 0.500, which is a tilt rather than a measurement. So 0.75 is above
+#       both. It is the economic view that liquidity mean-reverts fast, taken
+#       deliberately, and alpha_rv is Beta-supported on (0, 1) so 0.75 is near
+#       the fastest reversion this parameterisation can express at all.
+#
+#   FIXED_PPROB_RV = 0.25   pprob is P(UP jump), so this asserts P(down) = 0.75
+#       - three down jumps for every up one. The full sample fits 0.575, i.e.
+#       slightly more UP jumps, with the negative skew coming from size instead
+#       (mean up jump 1.27%, mean down 1.65%, jump skew -0.55). Under skew-tight
+#       the fitted by-year means run 0.484 to 0.602 and 85% of years sit above
+#       0.5. So this pin contradicts the sample at most dates, on purpose: it
+#       puts the skew in frequency AND size rather than size alone. Read the run
+#       for what eta1 and eta2 do to absorb it, and whether the fit to the
+#       window degrades - see poc/variance_check.py. Do not read pprob itself.
+#
+#   FIXED_RHOIX = 0.5   the name's liquidity innovation is half correlated with
+#       the systematic one. Near the paper's Beta(5, 2) prior mean of 0.4286,
+#       so this holds rho_iX roughly where the paper's prior put it rather than
+#       where an unidentified posterior happened to wander (0.26 to 0.29 at the
+#       three banks). Unlike a pin at zero it does NOT collapse b_diff to betai:
+#       b_diff = betai + kappai*rho_iX/sigma keeps its second term. What it does
+#       remove is the ridge - sigma*betai*kappai*rho_iX was two equations in
+#       four unknowns, and with rho_iX declared it is two in three.
+FIXED_ALPHA_RV = 0.75      # half-life 0.92 yr  (full sample: 0.036, 19.3 yr)
+FIXED_PPROB_RV = 0.25      # P(up); asserts P(down) = 0.75  (full sample: 0.575)
+FIXED_RHOIX = 0.5          # rho_iX ITSELF, on (-1, 1)
+
+# The model samples rhoix_rv on (0, 1) and reports rho_iX = 2*rhoix_rv - 1, so
+# the pin has to be written in the SAMPLED variable's units. Writing 0.5 into
+# rhoix_rv would assert rho_iX = 0, which is a different restriction entirely.
+FIXED_RHOIX_RV = 0.5 * (FIXED_RHOIX + 1.0)
+
+SYSTEMATIC_PRIORS_ALPHA_PPROB_FIXED = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_ALPHA_PPROB_FIXED["alpha_rv"] = (
+    "Fixed", {"value": FIXED_ALPHA_RV})
+SYSTEMATIC_PRIORS_ALPHA_PPROB_FIXED["pprob_rv"] = (
+    "Fixed", {"value": FIXED_PPROB_RV})
+
+
 SYSTEMATIC_PRIOR_SETS = {
     "paper":      None,                      # priors=None -> SYSTEMATIC_PRIORS
     "gaps":       SYSTEMATIC_PRIORS_GAPS,
@@ -577,6 +631,7 @@ SYSTEMATIC_PRIOR_SETS = {
     "pdown-flat":  SYSTEMATIC_PRIORS_PDOWN_FLAT,
     "pprob-flat":  SYSTEMATIC_PRIORS_PPROB_FLAT,
     "alpha-pprob-flat": SYSTEMATIC_PRIORS_ALPHA_PPROB_FLAT,
+    "alpha-pprob-fixed": SYSTEMATIC_PRIORS_ALPHA_PPROB_FIXED,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
@@ -589,7 +644,8 @@ STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
                 "pdown-tight": "__pdowntight",
                 "pdown-flat": "__pdownflat",
                 "pprob-flat": "__pprobflat",
-                "alpha-pprob-flat": "__alphapprobflat"}
+                "alpha-pprob-flat": "__alphapprobflat",
+                "alpha-pprob-fixed": "__alphapprobfixed"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.
@@ -599,8 +655,12 @@ STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
 # genuinely cannot identify a parameter the posterior sits on the prior, and
 # that is visible in the ratio - which is information, not a defect to conceal.
 #
-# The ("Fixed", {"value": x}) prior spec remains available in _build_prior for
-# cases where holding really is intended; nothing uses it by default.
+# That still stands for the arms above, and "paper" and the skew arms leave all
+# six free. What changed is that holding is no longer only a convenience: the
+# alpha-pprob-fixed arm holds alpha and pprob DELIBERATELY, as a declared
+# restriction, on the evidence that neither is identified at the study window.
+# The distinction that matters is not free-versus-held, it is whether a held
+# value is announced. See FIXED_ALPHA_RV above for the argument.
 
 
 def _build_prior(name, spec):
@@ -892,13 +952,32 @@ IDIOSYNCRATIC_PRIORS_RHOIX_FLAT = dict(IDIOSYNCRATIC_PRIORS)
 IDIOSYNCRATIC_PRIORS_RHOIX_FLAT["rhoix_rv"] = (
     "Uniform", {"lower": 0.0005, "upper": 0.9995})        # rhoix mean 0.000
 
+# rho_iX held at FIXED_RHOIX. The companion to alpha-pprob-fixed on the
+# systematic side. With rho_iX declared, sigma*betai*kappai*rho_iX stops being
+# two equations in four unknowns, so betai and kappai are no longer free to
+# slide against each other along a ridge - which is what made them individually
+# meaningless in the free arms even where their posteriors looked tidy.
+#
+# Read the refit against the free arm, not on its own. rho_iX moves from about
+# 0.28 at the banks to a declared 0.5, so kappai*rho_iX/sigma grows and betai
+# should give ground if the split was doing real work. If betai instead holds
+# near 1.31 and b_diff simply rises, the extra correlation is being added on
+# top of a loading the data had already fixed, and the shock table moves with
+# it - which is the number to look at, not the parameter.
+IDIOSYNCRATIC_PRIORS_RHOIX_FIXED = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_RHOIX_FIXED["rhoix_rv"] = (
+    "Fixed", {"value": FIXED_RHOIX_RV})
+
+
 IDIOSYNCRATIC_PRIOR_SETS = {
     "paper": None,                        # priors=None -> IDIOSYNCRATIC_PRIORS
     "rhoix-flat": IDIOSYNCRATIC_PRIORS_RHOIX_FLAT,
     "flat-mu-rhoix": IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX,
+    "rhoix-fixed": IDIOSYNCRATIC_PRIORS_RHOIX_FIXED,
 }
 IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
-                     "flat-mu-rhoix": "__flatmurhoix"}
+                     "flat-mu-rhoix": "__flatmurhoix",
+                     "rhoix-fixed": "__rhoixfixed"}
 
 
 def pmle_kimyirisk_idiosyncratic(

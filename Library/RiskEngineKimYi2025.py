@@ -1466,9 +1466,18 @@ class KimYiRiskEngine:
 
         dpsi[:, :, 1:] = psi[:, :, 1:] - psi[:, :, :-1]
 
-        drift_dt = np.tile(self.drift_dt[:, :, np.newaxis], (1, 1, n_sims))
-        drift_dt = np.tile(drift_dt[:, :, :, np.newaxis], (1, 1, 1, n_steps)).squeeze()
-        returns[:, :, 1:] = dpsi[:, :, 1:] + drift_dt
+        # The drift is one number PER ASSET, constant over paths and steps, so
+        # it only has to broadcast - materialising it at (n_assets, n_sims,
+        # n_steps) was allocating a full copy of the return array to add a
+        # scalar. The two np.tile calls did that and then squeezed, and
+        # squeeze() drops EVERY length-1 axis: at n_assets = 1 and n_steps = 1
+        # the result collapsed to (n_sims,), which then broadcast against the
+        # wrong axis of (1, n_sims, 1) and asked for an (n_sims, n_sims) array
+        # - 298 GiB at 200,000 paths. It only worked because every caller so
+        # far had n_steps > 1. Reshaping to (n_assets, 1, 1) is what the tiling
+        # was trying to express, is correct at every shape, and allocates
+        # nothing.
+        returns[:, :, 1:] = dpsi[:, :, 1:] + np.asarray(self.drift_dt).reshape(-1, 1, 1)
 
         return returns, psi, dpsi
 

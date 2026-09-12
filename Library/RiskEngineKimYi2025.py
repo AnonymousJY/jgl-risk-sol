@@ -1091,6 +1091,57 @@ IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO["rhoix_rv"] = (
 # and lets the split go where it is pushed. If both land mid-way, the ridge has
 # curvature we have not seen. Either way phi_i should not move - and if it does,
 # the invariance claim is wrong and that is worth more than the arm.
+# rho_iX placed where Theorem 3.1 requires it, rather than where a neutral
+# prior would leave it.
+#
+# THE THEOREM'S CONDITION. Section 3 notes that when rho_iX > sigma beta_i /
+# (2 kappa_i) with beta_i > 0, the model reproduces the negative cross-
+# sectional relation between expected returns and liquidity volatility that
+# Chordia et al. (2001) documented and Pereira and Zhang (2010) explained.
+# Rearranged it is a statement about the loading decomposition alone:
+#
+#     rho_iX > sigma beta_i / (2 kappa_i)   <=>   b_diff > 1.5 beta_i
+#
+# the correlation channel must be worth more than half the direct beta. At the
+# econ fits it is worth about a fifth: rho_iX 0.242 against thresholds of
+# 0.589, 0.589 and 0.604 at C, BAC and JPM. The theorem's condition FAILS at
+# all three, which is worth saying plainly because the paper cites it as a
+# structural explanation of a documented fact.
+#
+# WHY THIS IS THE BEST ARGUMENT FOR A PRIOR WE HAVE. rho_iX is unidentified
+# for a structural reason - the name's likelihood is univariate and sees only
+# phi_i - so the prior decides it and the only question is what decides the
+# prior. A neutral centre decides it by nothing. The theorem decides it by the
+# paper's own result plus a published stylised fact, and a referee can reject
+# the restriction by rejecting the citation rather than by guessing.
+#
+# WHERE THE WINDOW IS. Holding phi_i, which the data does pin, the condition
+# becomes kappa_i > phi_i / sqrt(8 rho^2 + 1). Solving on the phi_i curve at
+# the fitted kappa_i, all four restrictions - beta_i > 1, kappa_i > sigma,
+# rho_iX in (0,1] and the theorem - hold together only for rho_iX between
+# about 0.45 and 0.65 at C and BAC. Below it the theorem fails; above it
+# beta_i drops under 1. Centre 0.55, same width as the other declared flats.
+#
+# AND ONE NAME CANNOT GET THERE. beta_i > 1, kappa_i > sigma and the theorem
+# together force phi_i^2 > 2(sigma beta_i)^2 + kappa_i^2 > 3 sigma^2, so
+#
+#     phi_i > sqrt(3) sigma
+#
+# is necessary. C and BAC clear it at 1.94 and 1.89 times sigma; JPM does not,
+# at 1.64. No rho_iX rescues JPM - it is the safest of the three and simply
+# has not enough total volatility to carry a beta above one, an idiosyncratic
+# vol above sigma and a correlation channel worth half the beta at once. Read
+# that as a cross-sectional result, not a fitting failure: the theorem's
+# condition is a statement about which names it applies to.
+IDIOSYNCRATIC_PRIORS_THM31 = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_THM31["betai_rv"] = (
+    "Gamma", {"alpha": 3.0, "beta": 1.5})            # mean 2.000 sd 1.1547
+IDIOSYNCRATIC_PRIORS_THM31["kappai_rv"] = (
+    "Gamma", {"alpha": 2.0, "beta": 2.0 / 0.3})      # mean 0.300 sd 0.2121
+IDIOSYNCRATIC_PRIORS_THM31["rhoix_rv"] = (
+    "Uniform", {"lower": 0.675, "upper": 0.875})     # rho_iX U(0.35, 0.75)
+
+
 IDIOSYNCRATIC_PRIORS_ECON = dict(IDIOSYNCRATIC_PRIORS)
 IDIOSYNCRATIC_PRIORS_ECON["betai_rv"] = (
     "Gamma", {"alpha": 3.0, "beta": 1.5})            # mean 2.000 sd 1.1547
@@ -1114,6 +1165,7 @@ IDIOSYNCRATIC_PRIOR_SETS = {
     "rhoix-zero": IDIOSYNCRATIC_PRIORS_RHOIX_ZERO,
     "betai1-rhoix-zero": IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO,
     "econ": IDIOSYNCRATIC_PRIORS_ECON,
+    "thm31": IDIOSYNCRATIC_PRIORS_THM31,
 }
 IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "flat-mu-rhoix": "__flatmurhoix",
@@ -1121,7 +1173,8 @@ IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "rhoix-tight": "__rhoixtight",
                      "rhoix-zero": "__rhoixzero",
                      "betai1-rhoix-zero": "__b1rhoixzero",
-                     "econ": "__econ"}
+                     "econ": "__econ",
+                     "thm31": "__thm31"}
 
 
 def pmle_kimyirisk_idiosyncratic(

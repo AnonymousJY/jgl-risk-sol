@@ -89,9 +89,9 @@ def main():
     ap.add_argument("--shocks", default="-5,-10,-20,-30,-40",
                     help="prescribed SYSTEMATIC shocks, percent")
     ap.add_argument("--quantile", type=float, default=0.01)
-    ap.add_argument("--jump-response", choices=("linear", "exp"),
-                    default="linear",
-                    help="linear is gamma_i E[J|x], the convention Appendix "
+    ap.add_argument("--jump-response", choices=("power", "linear", "exp"),
+                    default="power",
+                    help="power is E[(1+J)^gamma_i - 1|x], the only form that keeps a name above -100% AND sends every name to zero when the factor does. linear is gamma_i E[J|x], the convention Appendix "
                          "B's transition densities were fitted under. exp is "
                          "E[exp(gamma_i Y)-1|x], the SDE's form; it adds "
                          "curvature the estimates do not contain and "

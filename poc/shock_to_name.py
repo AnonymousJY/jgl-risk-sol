@@ -350,6 +350,51 @@ def model_horizon(x, sys_params, alpha=0.025, ladder=HORIZON_LADDER):
 
 
 # ---------------------------------------------------------------------------
+def _jump_power_posterior_1d(g, x, sg, lam, p, e1, e2, dt, f):
+    """E[(1+J)^g - 1 | x] by quadrature, with the price floor built in.
+
+    THE TWO BOUNDARY CONDITIONS THIS EXISTS TO SATISFY, which the linear and
+    exponential responses both fail:
+
+        a name cannot fall more than 100%
+        if the systematic factor goes to zero, EVERY name goes to zero
+
+    The second is the sharp one. It has to hold for any gamma_i whatever,
+    because a market at zero is a market with no prices in it, and no loading
+    can rescue a name from that. Neither gamma_i J nor exp(gamma_i Y) - 1 does
+    it: the first gives -292% on C at a -99% shock and the second gives -95%.
+
+    WHERE THE POWER COMES FROM. Appendix B's transition density is additive in
+    the jump, so what it fits - call it J - is the RELATIVE jump exp(Y) - 1,
+    not the log jump Y. Then Y = log(1+J), and the name's jump, which the SDE
+    gives as exp(gamma_i Y) - 1, is
+
+        exp(gamma_i log(1+J)) - 1 = (1+J)^(gamma_i) - 1 .
+
+    So this is not a third candidate invented to satisfy a boundary condition.
+    It is what the paper's own SDE says once the fitted quantity is read as
+    what the likelihood actually fits. The exponential form in this file came
+    from feeding J into the SDE as though it were Y, which is the error.
+
+    At gamma_i = 1 it returns E[J|x] exactly, so the systematic factor still
+    reproduces itself. At J = -1 it returns -1 for every gamma_i > 0. It agrees
+    with gamma_i J to first order, so nothing near the data moves much.
+
+    Quadrature rather than closed form: the exponential tilt turned one
+    exponential rate into another and stayed analytic, but (1+J)^g does not,
+    so this integrates the posterior directly. Mass below J = -1 is real under
+    an ADED, negligible where the data is (P is order exp(-eta_2)), and mapped
+    to -1 here rather than to a complex number.
+    """
+    sd = sg * np.sqrt(dt)
+    v = np.arange(-2.0, 2.0, 1e-4) + 5e-5
+    fJ = np.where(v >= 0, p * e1 * np.exp(-e1 * np.clip(v, 0, None)),
+                  (1 - p) * e2 * np.exp(e2 * np.clip(v, None, 0)))
+    gv = np.power(np.clip(1.0 + v, 0.0, None), g) - 1.0
+    ker = norm.pdf((x - v) / sd) / sd
+    return float(lam * dt * np.sum(gv * fJ * ker) * 1e-4 / f)
+
+
 def _safe_mgf(G, xs, sg, lam, p, e1, e2, dt, f1):
     """E[exp(G Y) - 1 | x], or None where the MGF does not exist.
 
@@ -364,7 +409,7 @@ def _safe_mgf(G, xs, sg, lam, p, e1, e2, dt, f1):
 
 
 def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
-               aggregate="compound", jump_response="linear"):
+               aggregate="compound", jump_response="power"):
     """Translate a systematic shock x into name i's expected shock.
 
     Everything is in RELATIVE returns, because that is what Appendix B is in:
@@ -442,6 +487,7 @@ def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
         d0 = (1 - lam * dt) * norm.pdf(xs / sD) / sD
         EY2 = lam * dt * np.sum(gy * gy * fY * kr) * 2e-4 / (dj + d0)
         EJ_exp = _safe_mgf(G, xs, sg, lam, p, e1, e2, dt, f1)
+        EJ_pow = _jump_power_posterior_1d(G, xs, sg, lam, p, e1, e2, dt, f1)
     else:
         EY, pj, _, sD, EY2 = _jump_posterior_h(xs, sg, lam, p, e1, e2, al, T)
         try:
@@ -449,11 +495,16 @@ def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
                                      xs, sg, lam, p, e1, e2, al, T)
         except Exception:                                     # noqa: BLE001
             EJ_exp = None
+        EJ_pow = _posterior_mean(
+            lambda yy: np.power(np.clip(1.0 + yy, 0.0, None), G) - 1.0,
+            xs, sg, lam, p, e1, e2, al, T)
 
     # gamma_i was estimated as a LINEAR ratio of relative jumps - see the
     # docstring. EJ_exp is kept beside it so the two can be quoted together.
     EJ_lin = G * EY
-    if jump_response == "linear":
+    if jump_response == "power":
+        EJ = EJ_pow
+    elif jump_response == "linear":
         EJ = EJ_lin
     elif jump_response == "exp":
         if EJ_exp is None:
@@ -461,8 +512,8 @@ def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
                              "eta1=%.4f)" % (G, e1))
         EJ = EJ_exp
     else:
-        raise ValueError("jump_response must be 'linear' or 'exp', not %r"
-                         % (jump_response,))
+        raise ValueError("jump_response must be 'power', 'linear' or 'exp', "
+                         "not %r" % (jump_response,))
 
     ED = xs - EY
     drift = (m_i - al * psi_i) * T
@@ -485,7 +536,8 @@ def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
 
     return dict(y=y, y_step=y_step, x_step=xs, b_diff=b_diff, gamma=G,
                 b_eff=b_eff, EY=EY, EJ=EJ, ED=ED,
-                EJ_lin=EJ_lin, EJ_exp=EJ_exp, jump_response=jump_response,
+                EJ_lin=EJ_lin, EJ_exp=EJ_exp, EJ_pow=EJ_pow,
+                jump_response=jump_response,
                 p_jump=pj, drift=drift, sd=float(np.sqrt(var)),
                 sigma_h=sD, m_i=m_i, w=w)
 
@@ -571,9 +623,9 @@ def main():
                          "shock x horizon grid.")
     ap.add_argument("--psi", type=float, default=0.0,
                     help="the name's current filtered liquidity level")
-    ap.add_argument("--jump-response", choices=("linear", "exp"),
-                    default="linear",
-                    help="how the name answers a systematic jump. linear is "
+    ap.add_argument("--jump-response", choices=("power", "linear", "exp"),
+                    default="power",
+                    help="how the name answers a systematic jump. power is E[(1+J)^gamma_i - 1|x]: the SDE's exp(gamma_i Y)-1 with Y = log(1+J), since Appendix B fits the RELATIVE jump. It is the only form bounded at -100% that also sends the name to zero with the factor. linear is "
                          "gamma_i E[J|x], which is the convention the "
                          "parameters were ESTIMATED under - Appendix B's "
                          "transition densities are both additive in the jump. "

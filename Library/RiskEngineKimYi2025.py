@@ -1034,6 +1034,35 @@ IDIOSYNCRATIC_PRIORS_RHOIX_ZERO["rhoix_rv"] = (
     "Uniform", {"lower": 0.40, "upper": 0.60})     # rho_iX U(-0.20, +0.20)
 
 
+# betai centred at 1 AND rho_iX centred at 0. Two changes, deliberately together.
+#
+# WHY NOT ONE AT A TIME. betai's paper prior is Gamma(3, 1), mean 3.0, and the
+# three banks fit 1.26, 1.23 and 1.08 - a full prior sd below it at every date.
+# That gap is a confound for the rho_iX test: rhoix-zero predicts betai should
+# RISE to absorb the loading that kappai*rho_iX/sigma gives up, and a rise
+# toward a prior mean of 3.0 proves nothing, because the prior was pulling
+# that way regardless. Re-centre betai on 1.0 and the predicted rise to ~1.54
+# runs AGAINST its prior, where only the likelihood can produce it.
+#
+# Gamma(3, 3) is the paper prior RESCALED, not reshaped: same shape parameter,
+# so the same skew and the same coefficient of variation 0.577, with mean
+# 1.000, sd 0.5774 and 95% interval [0.206, 2.408] against Gamma(3, 1)'s
+# [0.619, 7.225]. Relative informativeness is held, which is the right notion
+# of "same prior" for a positive scale parameter - matching the absolute width
+# instead would need a shape below 1 and pile the prior against zero.
+#
+# The cost is that this arm differs from rhoix-tight in TWO places, so a
+# difference cannot be attributed to either alone. The companion run that
+# would fix that is betai Gamma(3, 3) with rho_iX still at 0.25. Worth doing
+# if the result is ambiguous; not worth an hour if betai lands near 1.54 and
+# b_i does not move, which is the outcome the structural argument predicts.
+IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO["betai_rv"] = (
+    "Gamma", {"alpha": 3.0, "beta": 3.0})          # mean 1.000 sd 0.5774
+IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO["rhoix_rv"] = (
+    "Uniform", {"lower": 0.40, "upper": 0.60})     # rho_iX U(-0.20, +0.20)
+
+
 IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT = dict(IDIOSYNCRATIC_PRIORS)
 IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT["rhoix_rv"] = (
     "Uniform", {"lower": 0.525, "upper": 0.725})   # rho_iX U(0.05, 0.45)
@@ -1046,12 +1075,14 @@ IDIOSYNCRATIC_PRIOR_SETS = {
     "rhoix-fixed": IDIOSYNCRATIC_PRIORS_RHOIX_FIXED,
     "rhoix-tight": IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT,
     "rhoix-zero": IDIOSYNCRATIC_PRIORS_RHOIX_ZERO,
+    "betai1-rhoix-zero": IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO,
 }
 IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "flat-mu-rhoix": "__flatmurhoix",
                      "rhoix-fixed": "__rhoixfixed",
                      "rhoix-tight": "__rhoixtight",
-                     "rhoix-zero": "__rhoixzero"}
+                     "rhoix-zero": "__rhoixzero",
+                     "betai1-rhoix-zero": "__b1rhoixzero"}
 
 
 def pmle_kimyirisk_idiosyncratic(

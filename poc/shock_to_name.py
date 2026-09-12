@@ -350,8 +350,21 @@ def model_horizon(x, sys_params, alpha=0.025, ladder=HORIZON_LADDER):
 
 
 # ---------------------------------------------------------------------------
+def _safe_mgf(G, xs, sg, lam, p, e1, e2, dt, f1):
+    """E[exp(G Y) - 1 | x], or None where the MGF does not exist.
+
+    The tilted integral needs G < eta1. Under the linear response that
+    restriction is irrelevant, so a name past it must still translate - it
+    just cannot report the exponential column beside its answer.
+    """
+    try:
+        return _jump_mgf_posterior_1d(G, xs, sg, lam, p, e1, e2, dt, f1)
+    except Exception:                                         # noqa: BLE001
+        return None
+
+
 def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
-               aggregate="compound"):
+               aggregate="compound", jump_response="linear"):
     """Translate a systematic shock x into name i's expected shock.
 
     Everything is in RELATIVE returns, because that is what Appendix B is in:
@@ -359,10 +372,31 @@ def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
 
         dPsi_i = -alpha Psi_i dt + phi_i dW~ + d(sum (exp(gamma_i Y_j) - 1))
 
-    carries the jump as exp(gamma_i Y) - 1, a relative jump. So the ONE-DAY
-    translation is a sum in relative-return units and nothing is logged:
+    carries the jump as a relative jump.
 
-        y_d = (m_i - alpha Psi_i) dt + b_diff E[D | x_d] + E[exp(gamma_i Y) - 1 | x_d]
+    WHICH JUMP RESPONSE, AND WHY IT IS NOT THE SDE'S. The SDE above is not what
+    the parameters were fitted under. Appendix B's transition density convolves
+    the Gaussian with an ADDITIVE double exponential - it is Kou's log-price
+    density, cited to his Footnote 7 - so what the systematic likelihood fits
+    is the relative jump exp(Y)-1 carried under the label Y, and what the
+    idiosyncratic likelihood fits, through its rate eta/gamma_i, is gamma_i
+    TIMES that same quantity. Both densities linearise, consistently, and at
+    gamma_i = 1 with phi_i = sigma they are the same expression - which is the
+    statement the paper makes directly when it sets beta_inf = gamma_inf = 1.
+
+    So gamma_i is a LINEAR ratio of relative jumps. Applying exp(gamma_i Y) - 1
+    to it adds curvature the estimate never contained, and the tell is that the
+    systematic factor fails to reproduce itself: feed gamma_i = 1, b_diff = 1,
+    m_i = 0 through the exponential form and a -5% shock comes back -4.89%,
+    short by exactly E[exp(Y)-1 | x] - E[Y | x], the Jensen term the likelihood
+    dropped. Under the linear form it returns -5.00% by construction. Run
+    --selfcheck to see both.
+
+        y_d = (m_i - alpha Psi_i) dt + b_diff E[D | x_d] + gamma_i E[J | x_d]
+
+    jump_response="exp" restores E[exp(gamma_i Y) - 1 | x_d] for comparison. It
+    is the SDE's form and it is the wrong one to pair with these parameters;
+    it also understates the downside, by 7% at -5% on C and more further out.
 
     A HORIZON move is not that formula with T in place of dt - Appendix B's
     increment is one period. An h-day move is h daily moves COMPOUNDED, the
@@ -407,11 +441,28 @@ def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
         dj = lam * dt * np.sum(fY * kr) * 2e-4
         d0 = (1 - lam * dt) * norm.pdf(xs / sD) / sD
         EY2 = lam * dt * np.sum(gy * gy * fY * kr) * 2e-4 / (dj + d0)
-        EJ = _jump_mgf_posterior_1d(G, xs, sg, lam, p, e1, e2, dt, f1)
+        EJ_exp = _safe_mgf(G, xs, sg, lam, p, e1, e2, dt, f1)
     else:
         EY, pj, _, sD, EY2 = _jump_posterior_h(xs, sg, lam, p, e1, e2, al, T)
-        EJ = _posterior_mean(lambda yy: np.exp(G * yy) - 1.0,
-                             xs, sg, lam, p, e1, e2, al, T)
+        try:
+            EJ_exp = _posterior_mean(lambda yy: np.exp(G * yy) - 1.0,
+                                     xs, sg, lam, p, e1, e2, al, T)
+        except Exception:                                     # noqa: BLE001
+            EJ_exp = None
+
+    # gamma_i was estimated as a LINEAR ratio of relative jumps - see the
+    # docstring. EJ_exp is kept beside it so the two can be quoted together.
+    EJ_lin = G * EY
+    if jump_response == "linear":
+        EJ = EJ_lin
+    elif jump_response == "exp":
+        if EJ_exp is None:
+            raise ValueError("exp response needs gamma_i < eta1 (gamma_i=%.4f, "
+                             "eta1=%.4f)" % (G, e1))
+        EJ = EJ_exp
+    else:
+        raise ValueError("jump_response must be 'linear' or 'exp', not %r"
+                         % (jump_response,))
 
     ED = xs - EY
     drift = (m_i - al * psi_i) * T
@@ -434,6 +485,7 @@ def name_shock(x, sys_params, idio_params, horizon_days=1, psi_i=0.0,
 
     return dict(y=y, y_step=y_step, x_step=xs, b_diff=b_diff, gamma=G,
                 b_eff=b_eff, EY=EY, EJ=EJ, ED=ED,
+                EJ_lin=EJ_lin, EJ_exp=EJ_exp, jump_response=jump_response,
                 p_jump=pj, drift=drift, sd=float(np.sqrt(var)),
                 sigma_h=sD, m_i=m_i, w=w)
 
@@ -448,6 +500,59 @@ def _load(name, date, drawer=None):
     s = get_pmle_params(dt, d)
     return ({k: float(s[k]) for k in SYS_KEYS},
             {k: float(s[k]) for k in IDIO_KEYS}, dt)
+
+
+def selfcheck(name, date, drawer, shocks):
+    """Does the translation reproduce the systematic factor from itself?
+
+    Appendix B sets beta_inf = gamma_inf = 1 and mu_inf = kappa_inf = 0 for the
+    systematic component, so putting those through the name translation must
+    return the systematic shock unchanged. It is the one property the
+    translation has to have that does not depend on any estimate being right.
+
+    b_diff = beta + kappa rho / sigma = 1 needs beta = 1 and kappa = 0, and
+    m_i = mu + (sigma beta)^2/2 - sigma beta kappa rho = 0 then needs
+    mu = -(sigma)^2/2. Psi is zero. Everything else is the fitted systematic
+    row, so the posterior split is the real one at a real date.
+    """
+    sysp, _, used = _load(name, date, drawer)
+    sg = sysp["dSIGMA"]
+    idio = {"dBETAI": 1.0, "dKAPPAI": 0.0, "dRHOIX": 0.0,
+            "dGAMMAI": 1.0, "dMUI": -0.5 * sg * sg}
+
+    _LOG.info("=" * 74)
+    _LOG.info("self-consistency :: the systematic factor through its own translation")
+    _LOG.info("%s   %s   (drawer %s)" % (name, used, drawer or name))
+    _LOG.info("=" * 74)
+    _LOG.info("  beta=1 kappa=0 rho=0 gamma=1 mu=-sigma^2/2  ->  b_diff 1.0000, m_i 0.0000")
+    _LOG.info("")
+    _LOG.info("      x      linear        err        exp        err")
+    _LOG.info("  " + "-" * 54)
+    worst = 0.0
+    for x in shocks:
+        rl = name_shock(x, sysp, idio, 1, 0.0, jump_response="linear")
+        try:
+            re_ = name_shock(x, sysp, idio, 1, 0.0, jump_response="exp")
+            ye, ee = re_["y"], re_["y"] - x
+        except Exception:                                     # noqa: BLE001
+            ye = ee = float("nan")
+        el = rl["y"] - x
+        worst = max(worst, abs(el))
+        _LOG.info("  %6.1f%%  %8.3f%%  %+8.4f%%  %8.3f%%  %+8.4f%%"
+                  % (100 * x, 100 * rl["y"], 100 * el, 100 * ye, 100 * ee))
+    _LOG.info("")
+    _LOG.info("  The linear column must be zero to rounding. It is by")
+    _LOG.info("  construction: E[D|x] + E[J|x] = x is an identity, so with")
+    _LOG.info("  b_diff = gamma = 1 the two channels re-assemble the shock.")
+    _LOG.info("  The exp column is the Jensen term E[exp(Y)-1|x] - E[Y|x] that")
+    _LOG.info("  Appendix B's transition density drops - always positive, so")
+    _LOG.info("  the exponential response always understates a downside move.")
+    _LOG.info("")
+    _LOG.info("  worst linear residual: %.2e" % worst)
+    if worst > 1e-9:
+        _LOG.info("  FAIL - the linear response is not reproducing the factor.")
+    else:
+        _LOG.info("  PASS")
 
 
 def main():
@@ -466,7 +571,26 @@ def main():
                          "shock x horizon grid.")
     ap.add_argument("--psi", type=float, default=0.0,
                     help="the name's current filtered liquidity level")
+    ap.add_argument("--jump-response", choices=("linear", "exp"),
+                    default="linear",
+                    help="how the name answers a systematic jump. linear is "
+                         "gamma_i E[J|x], which is the convention the "
+                         "parameters were ESTIMATED under - Appendix B's "
+                         "transition densities are both additive in the jump. "
+                         "exp is E[exp(gamma_i Y)-1|x], the SDE's form; it "
+                         "adds curvature the estimate does not contain and "
+                         "fails --selfcheck.")
+    ap.add_argument("--selfcheck", action="store_true",
+                    help="translate the SYSTEMATIC factor through its own "
+                         "parameters (gamma_i = b_diff = 1, m_i = 0). The "
+                         "answer must be the shock itself. Prints the residual "
+                         "under both responses and exits.")
     a = ap.parse_args()
+
+    if a.selfcheck:
+        selfcheck(a.name, a.date, a.drawer,
+                  [float(v) / 100.0 for v in a.shocks.split(",")])
+        return
 
     sysp, idio, used = _load(a.name, a.date, a.drawer)
     xs = [float(v) / 100.0 for v in a.shocks.split(",")]
@@ -477,7 +601,9 @@ def main():
     _LOG.info("=" * 74)
     _LOG.info("  systematic  " + "  ".join("%s %.4f" % (k[1:].lower(), sysp[k]) for k in SYS_KEYS))
     _LOG.info("  name        " + "  ".join("%s %.4f" % (k[1:].lower(), idio[k]) for k in IDIO_KEYS))
-    r0 = name_shock(xs[0], sysp, idio, hs[0], a.psi)
+    r0 = name_shock(xs[0], sysp, idio, hs[0], a.psi,
+                    jump_response=a.jump_response)
+    _LOG.info("  jump response: %s" % a.jump_response)
     _LOG.info("\n  b_diff = beta + kappa*rho/sigma = %.4f      gamma_i = %.4f"
           % (r0["b_diff"], r0["gamma"]))
     _LOG.info("  m_i = %.4f" % r0["m_i"])
@@ -488,7 +614,8 @@ def main():
         _LOG.info("\n      x     P(jump|x)    E[Y|x]     E[D|x]    b_eff        y_i    sd(y|x)")
         _LOG.info("  " + "-" * 70)
         for x in xs:
-            r = name_shock(x, sysp, idio, h, a.psi)
+            r = name_shock(x, sysp, idio, h, a.psi,
+                           jump_response=a.jump_response)
             _LOG.info("  %6.1f%%    %7.4f  %8.3f%%  %8.3f%%  %7.3f  %8.2f%%  %7.2f%%"
                   % (100 * x, r["p_jump"], 100 * r["EY"], 100 * r["ED"],
                      r["b_eff"], 100 * r["y"], 100 * r["sd"]))
@@ -499,7 +626,8 @@ def main():
     sig = []
     for i, h in enumerate(hs):
         for j, x in enumerate(xs):
-            r = name_shock(x, sysp, idio, h, a.psi)
+            r = name_shock(x, sysp, idio, h, a.psi,
+                           jump_response=a.jump_response)
             for k in grids:
                 grids[k][i, j] = r[k]
         sig.append(r["sigma_h"])

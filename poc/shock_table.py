@@ -89,6 +89,16 @@ def main():
     ap.add_argument("--shocks", default="-5,-10,-20,-30,-40",
                     help="prescribed SYSTEMATIC shocks, percent")
     ap.add_argument("--quantile", type=float, default=0.01)
+    ap.add_argument("--jump-response", choices=("linear", "exp"),
+                    default="linear",
+                    help="linear is gamma_i E[J|x], the convention Appendix "
+                         "B's transition densities were fitted under. exp is "
+                         "E[exp(gamma_i Y)-1|x], the SDE's form; it adds "
+                         "curvature the estimates do not contain and "
+                         "understates the downside. Run shock_to_name.py "
+                         "--selfcheck to see it on the systematic factor.")
+    ap.add_argument("--compare-response", action="store_true",
+                    help="show both responses side by side")
     a = ap.parse_args()
 
     from Library.RiskEngineKimYi2025 import SYSTEMATIC_PRIOR_SETS
@@ -155,7 +165,18 @@ def main():
                 h = 1
             cells = []
             for nm, (dt, sysp, idio, _) in rows.items():
-                r = name_shock(x, sysp, idio, horizon_days=h)
+                r = name_shock(x, sysp, idio, horizon_days=h,
+                               jump_response=a.jump_response)
+                if a.compare_response:
+                    other = "exp" if a.jump_response == "linear" else "linear"
+                    try:
+                        r2 = name_shock(x, sysp, idio, horizon_days=h,
+                                        jump_response=other)
+                        cells.append("%16s" % ("%+7.1f%% /%+6.1f%%"
+                                               % (100 * r["y"], 100 * r2["y"])))
+                        continue
+                    except Exception:                         # noqa: BLE001
+                        pass
                 cells.append("%16s" % ("%+7.1f%% +-%4.1f"
                                        % (100 * r["y"], 100 * r["sd"])))
             _LOG.info("  %+8.1f%% %7dd   %s" % (100 * x, h, "  ".join(cells)))
@@ -163,6 +184,13 @@ def main():
         _LOG.info("  Each cell is the name's equivalent move, +- one sd of the")
         _LOG.info("  dispersion around it. horizon is where that SPX shock is the")
         _LOG.info("  %.0f%% tail under these systematic parameters." % (100 * a.quantile))
+        _LOG.info("  jump response: %s" % a.jump_response)
+        if a.compare_response:
+            other = "exp" if a.jump_response == "linear" else "linear"
+            _LOG.info("  Cells are %s / %s. The gap between them is the Jensen"
+                      % (a.jump_response, other))
+            _LOG.info("  term Appendix B's transition density drops. It is")
+            _LOG.info("  always positive, so exp always reads the smaller loss.")
 
     if len(arms) > 1:
         _LOG.info("")

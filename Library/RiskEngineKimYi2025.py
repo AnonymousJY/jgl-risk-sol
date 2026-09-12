@@ -617,6 +617,23 @@ SYSTEMATIC_PRIORS_ALPHA_PPROB_FIXED["pprob_rv"] = (
     "Fixed", {"value": FIXED_PPROB_RV})
 
 
+# Flat, centred where asked, tight, and IDENTICAL on the two jump decays, so
+# any separation between eta1 and eta2 is data and not prior - every other arm
+# centres them at 50 and 25 and gets the asymmetry back out. eta is a decay
+# RATE, so eta2 < eta1 means down jumps are the BIGGER ones. Widths are set to
+# skew-tight's own sds (0.1118, 0.1105, 12.50) so only the centres move; the
+# eta support is a mean jump of 1.33% to 4.00%, holding every value the rolling
+# arms have fitted. alpha's support excludes the full-sample 0.036 and pprob's
+# excludes 0.5, so an edge pile at 0.55 or at 0.45 is the tell, not an estimate.
+SYSTEMATIC_PRIORS_ALPHA_PPROB_ETA_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_ALPHA_PPROB_ETA_FLAT.update({
+    "alpha_rv": ("Uniform", {"lower": 0.55, "upper": 0.95}),  # mean .750 sd .1155
+    "pprob_rv": ("Uniform", {"lower": 0.05, "upper": 0.45}),  # mean .250 sd .1155
+    "eta1":     ("Uniform", {"lower": 25.0, "upper": 75.0}),  # mean 50.0 sd 14.43
+    "eta2":     ("Uniform", {"lower": 25.0, "upper": 75.0}),  # mean 50.0 sd 14.43
+})
+
+
 SYSTEMATIC_PRIOR_SETS = {
     "paper":      None,                      # priors=None -> SYSTEMATIC_PRIORS
     "gaps":       SYSTEMATIC_PRIORS_GAPS,
@@ -632,6 +649,7 @@ SYSTEMATIC_PRIOR_SETS = {
     "pprob-flat":  SYSTEMATIC_PRIORS_PPROB_FLAT,
     "alpha-pprob-flat": SYSTEMATIC_PRIORS_ALPHA_PPROB_FLAT,
     "alpha-pprob-fixed": SYSTEMATIC_PRIORS_ALPHA_PPROB_FIXED,
+    "alpha-pprob-eta-flat": SYSTEMATIC_PRIORS_ALPHA_PPROB_ETA_FLAT,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
@@ -645,7 +663,8 @@ STORE_SUFFIX = {"paper": "", "gaps": "__gaps", "asym": "__asym",
                 "pdown-flat": "__pdownflat",
                 "pprob-flat": "__pprobflat",
                 "alpha-pprob-flat": "__alphapprobflat",
-                "alpha-pprob-fixed": "__alphapprobfixed"}
+                "alpha-pprob-fixed": "__alphapprobfixed",
+                "alpha-pprob-eta-flat": "__apetaflat"}
 
 # NOTE. An earlier design HELD alpha, eta1 and eta2 at their full-sample values
 # on the grounds that a 252-day window cannot identify them. That was withdrawn.

@@ -26,6 +26,7 @@ about its sign.
 """
 import argparse
 import glob
+import io
 import os
 import sys
 import time
@@ -45,7 +46,7 @@ from Library.StatisticsMC import (                                   # noqa: E40
     StatisticsMCQuantile, StatisticsMCConditionalQuantile,
 )
 from Library.TableHeatmap import (                                   # noqa: E402
-    render as heat, legend as heat_legend,
+    render as heat, legend as heat_legend, to_html, to_eml,
 )
 from poc.estimate_systematic import store_id                         # noqa: E402
 
@@ -59,6 +60,30 @@ SEED = 20240114
 COLS = ["dALPHA", "dSIGMA", "dPPROB", "dLAMB", "dETA1", "dETA2"]
 
 _LOG = _report(__name__)
+
+# --html / --eml capture. Every line the run prints is kept here, with the
+# tables rendered a SECOND time with colour forced on, so the mail carries the
+# shading even when the terminal copy is plain because stdout is piped.
+_CAP = None
+
+
+def _emit(line):
+    _LOG.info(line)
+    if _CAP is not None:
+        _CAP.append(line)
+
+
+def _emit_table(df, **kw):
+    kw.pop("color", None)
+    _LOG.info(heat(df, color=COLOR, **kw))
+    if _CAP is not None:
+        _CAP.append(heat(df, color=True, **kw))
+
+
+def _emit_legend():
+    _LOG.info(heat_legend(color=COLOR))
+    if _CAP is not None:
+        _CAP.append(heat_legend(color=True))
 
 
 def simulate(row, dt, horizon, paths, seed):
@@ -142,8 +167,16 @@ def main():
                     help="force heat shading on (default: on for a terminal)")
     ap.add_argument("--no-color", dest="color", action="store_false",
                     help="plain numbers, no shading")
+    ap.add_argument("--html", default=None, metavar="PATH",
+                    help="also write the whole run as an HTML document that "
+                         "keeps the shading in Outlook")
+    ap.add_argument("--eml", default=None, metavar="PATH",
+                    help="also write it as a message file Outlook can open")
     a = ap.parse_args()
     COLOR = a.color
+    global _CAP
+    if a.html or a.eml:
+        _CAP = []
 
     levels = [float(v) for v in a.levels.split(",") if v.strip()]
     dt = 1.0 / BASE_DAYS
@@ -167,23 +200,25 @@ def main():
     n_dates = df.groupby("year").size()
     par = df.groupby("year")[COLS].mean()
 
-    _LOG.info("=" * 78)
-    _LOG.info("EXPECTED SHORTFALL BY SIMULATION, AGAINST THE REALISED TAIL")
-    _LOG.info("%s   drawer %s" % (SYSTEMATIC_ID, drawer))
-    _LOG.info("realised %s -> %s, %d trading days"
+    title = ("%s one-day tail, simulated vs realised, %d-%d"
+             % (SYSTEMATIC_ID, r.index.min().year, r.index.max().year))
+    _emit("=" * 78)
+    _emit("EXPECTED SHORTFALL BY SIMULATION, AGAINST THE REALISED TAIL")
+    _emit("%s   drawer %s" % (SYSTEMATIC_ID, drawer))
+    _emit("realised %s -> %s, %d trading days"
               % (r.index.min().date(), r.index.max().date(), len(r)))
-    _LOG.info("%s paths per year   horizon %d day(s)   seed %d"
+    _emit("%s paths per year   horizon %d day(s)   seed %d"
               % ("{:,}".format(a.paths), a.horizon, a.seed))
-    _LOG.info("=" * 78)
-    _LOG.info("")
-    _LOG.info("  Every ES and quantile below is SIGNED and in percent: a")
-    _LOG.info("  down-side ES of -7.617 is a day of -7.617%. Shading is on")
-    _LOG.info("  |v|, so the severest cell is the darkest either way.")
+    _emit("=" * 78)
+    _emit("")
+    _emit("  Every ES and quantile below is SIGNED and in percent: a")
+    _emit("  down-side ES of -7.617 is a day of -7.617%. Shading is on")
+    _emit("  |v|, so the severest cell is the darkest either way.")
 
-    _LOG.info("\nRealised daily returns, pooled")
-    _LOG.info("  mean %+.4f%%   sd %.4f%%   annualised sd %.2f%%"
+    _emit("\nRealised daily returns, pooled")
+    _emit("  mean %+.4f%%   sd %.4f%%   annualised sd %.2f%%"
               % (100 * r.mean(), 100 * r.std(), 100 * r.std() * np.sqrt(BASE_DAYS)))
-    _LOG.info("  skew %+.3f   excess kurtosis %+.2f" % (r.skew(), r.kurtosis()))
+    _emit("  skew %+.3f   excess kurtosis %+.2f" % (r.skew(), r.kurtosis()))
     t = pd.DataFrame(index=["%.3f" % lv for lv in levels])
     sizes = []
     for lv, i in zip(levels, t.index):
@@ -192,42 +227,42 @@ def main():
         t.loc[i, "qDown"], t.loc[i, "ESdown"] = 100 * qd, 100 * ed
         t.loc[i, "qUp"], t.loc[i, "ESup"] = 100 * qu, 100 * eu
         sizes.append("%.3f: %d" % (lv, nd))
-    _LOG.info(heat(t, decimals=3, color=COLOR, abs_shade=True))
-    _LOG.info("  tail sizes (days each side)   %s" % "   ".join(sizes))
-    _LOG.info("  q is the ORDER STATISTIC - the m-th worst day itself, not an")
-    _LOG.info("  interpolated quantile - so it is a day that actually happened.")
+    _emit_table(t, decimals=3, abs_shade=True)
+    _emit("  tail sizes (days each side)   %s" % "   ".join(sizes))
+    _emit("  q is the ORDER STATISTIC - the m-th worst day itself, not an")
+    _emit("  interpolated quantile - so it is a day that actually happened.")
 
-    _LOG.info("\nTen worst and ten best days")
-    _LOG.info("  %-12s %9s     %-12s %9s" % ("date", "worst", "date", "best"))
+    _emit("\nTen worst and ten best days")
+    _emit("  %-12s %9s     %-12s %9s" % ("date", "worst", "date", "best"))
     for (dw, vw), (db, vb) in zip(r.nsmallest(10).items(), r.nlargest(10).items()):
-        _LOG.info("  %-12s %8.3f%%     %-12s %8.3f%%"
+        _emit("  %-12s %8.3f%%     %-12s %8.3f%%"
                   % (dw.date(), 100 * vw, db.date(), 100 * vb))
 
-    _LOG.info("\nHow often has a move of at least this size happened?")
-    _LOG.info("  %-9s %10s %10s %14s"
+    _emit("\nHow often has a move of at least this size happened?")
+    _emit("  %-9s %10s %10s %14s"
               % ("size", "down days", "up days", "1 in N days"))
     for x in (0.02, 0.03, 0.05, 0.07, 0.10, 0.15, 0.20):
         nd, nu = int((r <= -x).sum()), int((r >= x).sum())
         tot = nd + nu
-        _LOG.info("  %8.0f%% %10d %10d %14s"
+        _emit("  %8.0f%% %10d %10d %14s"
                   % (100 * x, nd, nu, ("%d" % (len(r) / tot)) if tot else "never"))
 
-    _LOG.info("\nParameters simulated (mean of that year's valuation dates)")
+    _emit("\nParameters simulated (mean of that year's valuation dates)")
     t = par.copy()
     t.columns = ["alpha", "sigma", "pprob", "lamb", "eta1", "eta2"]
     t.insert(0, "nDates", n_dates.reindex(par.index).values.astype(float))
     t.index = [str(i) for i in t.index]
-    _LOG.info(heat(t, decimals=4, color=COLOR))
-    _LOG.info(heat_legend(color=COLOR))
+    _emit_table(t, decimals=4)
+    _emit_legend()
 
     t0 = time.time()
     sim = {y: simulate(p, dt, a.horizon, a.paths, a.seed)
            for y, p in par.iterrows()}
-    _LOG.info("\n  simulated %d x %s paths in %.1f s"
+    _emit("\n  simulated %d x %s paths in %.1f s"
               % (len(par), "{:,}".format(a.paths), time.time() - t0))
     if a.horizon > 1:
-        _LOG.info("  horizon > 1: the realised columns are still ONE-DAY and")
-        _LOG.info("  are not comparable. Read the simulated side only.")
+        _emit("  horizon > 1: the realised columns are still ONE-DAY and")
+        _emit("  are not comparable. Read the simulated side only.")
 
     # ---- simulated against realised, by year ---------------------------
     for lv in levels:
@@ -249,8 +284,8 @@ def main():
                 t.loc[i, "ratioDn"] = t.loc[i, "ratioUp"] = np.nan
         t = t[["simESdn", "seDn", "realESdn", "ratioDn",
                "simESup", "seUp", "realESup", "ratioUp"]]
-        _LOG.info("\nLEVEL %.3f   simulated vs realised, by year" % lv)
-        _LOG.info(heat(t, decimals=3, color=COLOR, abs_shade=True))
+        _emit("\nLEVEL %.3f   simulated vs realised, by year" % lv)
+        _emit_table(t, decimals=3, abs_shade=True)
         # How many realised days actually sit in a one-year tail at this
         # level. At 252 days a year, level 0.005 gives round(1.26) = 1, which
         # es() floors at 2 - so the realised column is the mean of the two
@@ -261,25 +296,36 @@ def main():
         yrs = [y for y in par.index if y in ry]
         ns = [int(len(ry[y]) * lv) for y in yrs]
         eff = [n / float(len(ry[y])) for y, n in zip(yrs, ns)]
-        _LOG.info("  realised tail: %d-%d days per year (simulated: %s paths). "
+        _emit("  realised tail: %d-%d days per year (simulated: %s paths). "
                   % (min(ns), max(ns), "{:,}".format(max(int(round(lv * a.paths)), 2))))
         if min(ns) < 5:
-            _LOG.info("  TOO FEW to mean much. int() truncation puts the")
-            _LOG.info("  realised columns at an effective level of %.4f-%.4f,"
+            _emit("  TOO FEW to mean much. int() truncation puts the")
+            _emit("  realised columns at an effective level of %.4f-%.4f,"
                       % (min(eff), max(eff)))
-            _LOG.info("  not %.3f, and a year with an empty tail is blank."
+            _emit("  not %.3f, and a year with an empty tail is blank."
                       % lv)
         m = t.mean(numeric_only=True)
-        _LOG.info("  mean   simESdn %.3f  realESdn %.3f  ratio %.2f"
+        _emit("  mean   simESdn %.3f  realESdn %.3f  ratio %.2f"
                   "   |   simESup %.3f  realESup %.3f  ratio %.2f"
                   % (m["simESdn"], m["realESdn"], m["ratioDn"],
                      m["simESup"], m["realESup"], m["ratioUp"]))
-        _LOG.info("  worst  simESdn %.3f (%s)  realESdn %.3f (%s)"
+        _emit("  worst  simESdn %.3f (%s)  realESdn %.3f (%s)"
                   % (t["simESdn"].min(), t["simESdn"].idxmin(),
                      t["realESdn"].min(), t["realESdn"].idxmin()))
-        _LOG.info("  ratio = simulated / realised. Above 1 the fit is more")
-        _LOG.info("  severe than the year turned out; below 1 it is milder.")
-    _LOG.info(heat_legend(color=COLOR))
+        _emit("  ratio = simulated / realised. Above 1 the fit is more")
+        _emit("  severe than the year turned out; below 1 it is milder.")
+    _emit_legend()
+    _emit("")
+
+    if a.html:
+        with io.open(a.html, "w", encoding="utf-8") as fh:
+            fh.write(to_html(_CAP, title=title))
+        _LOG.info("  wrote %s" % a.html)
+    if a.eml:
+        with open(a.eml, "wb") as fh:
+            fh.write(to_eml(_CAP, subject=title))
+        _LOG.info("  wrote %s  (open it in Outlook, then Forward to edit "
+                  "and send)" % a.eml)
     _LOG.info("")
 
 

@@ -991,15 +991,40 @@ IDIOSYNCRATIC_PRIORS_RHOIX_FIXED["rhoix_rv"] = (
     "Fixed", {"value": FIXED_RHOIX_RV})
 
 
+# rho_iX flat and TIGHT, centred at 0.25 on its own reported scale.
+#
+# WATCH THE SCALE. The model samples rhoix_rv on (0, 1) and reports
+# rho_iX = 2*rhoix_rv - 1 on (-1, 1), so a prior written for the reported
+# quantity has to be halved and shifted before it goes in here, and its sd
+# doubles on the way back out. Uniform(0.525, 0.725) on rhoix_rv IS
+# Uniform(0.05, 0.45) on rho_iX: mean 0.25, sd 0.1155, 95% width 0.38 - the
+# same width as the alpha and pprob flats in alpha-pprob-eta-flat, so all
+# three declared centres in this study carry identical informativeness.
+#
+# WHY DECLARE IT AT ALL. rho_iX is not identified at any window length and the
+# reason is structural rather than a matter of sample size: it enters the
+# likelihood only inside the product sigma*betai*kappai*rho_iX, two equations
+# in four unknowns. At the three banks its posterior came back 13-15% WIDER
+# than its prior. A prior this tight is therefore not a claim to have measured
+# anything - it is the restriction stated where a reader can see it, instead of
+# left loose and carried into b_diff and every equivalent shock as though it
+# had been estimated.
+IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT["rhoix_rv"] = (
+    "Uniform", {"lower": 0.525, "upper": 0.725})   # rho_iX U(0.05, 0.45)
+
+
 IDIOSYNCRATIC_PRIOR_SETS = {
     "paper": None,                        # priors=None -> IDIOSYNCRATIC_PRIORS
     "rhoix-flat": IDIOSYNCRATIC_PRIORS_RHOIX_FLAT,
     "flat-mu-rhoix": IDIOSYNCRATIC_PRIORS_FLAT_MU_RHOIX,
     "rhoix-fixed": IDIOSYNCRATIC_PRIORS_RHOIX_FIXED,
+    "rhoix-tight": IDIOSYNCRATIC_PRIORS_RHOIX_TIGHT,
 }
 IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "flat-mu-rhoix": "__flatmurhoix",
-                     "rhoix-fixed": "__rhoixfixed"}
+                     "rhoix-fixed": "__rhoixfixed",
+                     "rhoix-tight": "__rhoixtight"}
 
 
 def pmle_kimyirisk_idiosyncratic(

@@ -15,10 +15,10 @@ carries sampling error, so se = sd(tail)/sqrt(a*N) is printed; from a year of
 ~252 realised days the same tail is ~6 observations, so its count is printed
 instead and its third decimal means nothing.
 
-ES COLUMNS ARE MAGNITUDES, not signed returns - a down-side ES of 7.617 is a
-day of -7.617%. Two reasons: the heat ramp encodes magnitude, so signed losses
-would shade the worst year LIGHTEST; and it puts the down and up columns on
-one scale, which is the asymmetry question read straight off the row.
+Every ES and quantile is SIGNED and in percent: a down-side ES of -7.617 is a
+day of -7.617%. The heat ramp shades on |v| (render's abs_shade), so the
+severest year is still the darkest cell without the number having to lie
+about its sign.
 
     python poc/systematic_tail_mc.py
     python poc/systematic_tail_mc.py --paths 1000000
@@ -84,13 +84,14 @@ def simulate(row, dt, horizon, paths, seed):
 
 
 def es(x, level, lower=True):
-    """(quantile, ES, se, n) as MAGNITUDES, via Library.StatisticsMC.
+    """(quantile, ES, se, n), SIGNED, via Library.StatisticsMC.
 
     The house gatherers do the work: StatisticsMCConditionalQuantile for the
-    ES, StatisticsMCQuantile for the quantile. Both are fed the NEGATED sample
-    for the upper tail, which turns the gatherer's lower-tail ES into the
-    upper one - and since it already returns a positive magnitude, the two
-    sides come back on one scale.
+    ES, StatisticsMCQuantile for the quantile. The gatherer is fed the NEGATED
+    sample for the upper tail, which turns its lower-tail ES into the upper
+    one. It returns a positive magnitude either way, so the lower tail's sign
+    is put back here: a down-side ES is a negative return and is reported as
+    one.
 
     The tail is the gatherers' own int(n * level): TRUNCATED, and with no
     floor. So n is returned too, and 173 realised days at level 0.005 give an
@@ -112,6 +113,8 @@ def es(x, level, lower=True):
     g = StatisticsMCConditionalQuantile(level)
     g.dump_result(s.reshape(-1, 1))
     e = float(np.asarray(g.get_result_so_far()).item())
+    if lower:
+        e = -e                       # the gatherer returns +magnitude
 
     q = StatisticsMCQuantile(level if lower else 1.0 - level)
     q.dump_result(v.reshape(-1, 1))
@@ -119,7 +122,7 @@ def es(x, level, lower=True):
 
     tail = np.sort(s)[:m]
     se = float(tail.std(ddof=1) / np.sqrt(m)) if m > 1 else float("nan")
-    return (-qv if lower else qv), e, se, m
+    return qv, e, se, m
 
 
 def main():
@@ -173,8 +176,9 @@ def main():
               % ("{:,}".format(a.paths), a.horizon, a.seed))
     _LOG.info("=" * 78)
     _LOG.info("")
-    _LOG.info("  Every ES and quantile below is in PERCENT and as a MAGNITUDE:")
-    _LOG.info("  a down-side ES of 7.617 is a day of -7.617%.")
+    _LOG.info("  Every ES and quantile below is SIGNED and in percent: a")
+    _LOG.info("  down-side ES of -7.617 is a day of -7.617%. Shading is on")
+    _LOG.info("  |v|, so the severest cell is the darkest either way.")
 
     _LOG.info("\nRealised daily returns, pooled")
     _LOG.info("  mean %+.4f%%   sd %.4f%%   annualised sd %.2f%%"
@@ -188,7 +192,7 @@ def main():
         t.loc[i, "qDown"], t.loc[i, "ESdown"] = 100 * qd, 100 * ed
         t.loc[i, "qUp"], t.loc[i, "ESup"] = 100 * qu, 100 * eu
         sizes.append("%.3f: %d" % (lv, nd))
-    _LOG.info(heat(t, decimals=3, color=COLOR))
+    _LOG.info(heat(t, decimals=3, color=COLOR, abs_shade=True))
     _LOG.info("  tail sizes (days each side)   %s" % "   ".join(sizes))
     _LOG.info("  q is the ORDER STATISTIC - the m-th worst day itself, not an")
     _LOG.info("  interpolated quantile - so it is a day that actually happened.")
@@ -246,7 +250,7 @@ def main():
         t = t[["simESdn", "seDn", "realESdn", "ratioDn",
                "simESup", "seUp", "realESup", "ratioUp"]]
         _LOG.info("\nLEVEL %.3f   simulated vs realised, by year" % lv)
-        _LOG.info(heat(t, decimals=3, color=COLOR))
+        _LOG.info(heat(t, decimals=3, color=COLOR, abs_shade=True))
         # How many realised days actually sit in a one-year tail at this
         # level. At 252 days a year, level 0.005 gives round(1.26) = 1, which
         # es() floors at 2 - so the realised column is the mean of the two
@@ -271,8 +275,8 @@ def main():
                   % (m["simESdn"], m["realESdn"], m["ratioDn"],
                      m["simESup"], m["realESup"], m["ratioUp"]))
         _LOG.info("  worst  simESdn %.3f (%s)  realESdn %.3f (%s)"
-                  % (t["simESdn"].max(), t["simESdn"].idxmax(),
-                     t["realESdn"].max(), t["realESdn"].idxmax()))
+                  % (t["simESdn"].min(), t["simESdn"].idxmin(),
+                     t["realESdn"].min(), t["realESdn"].idxmin()))
         _LOG.info("  ratio = simulated / realised. Above 1 the fit is more")
         _LOG.info("  severe than the year turned out; below 1 it is milder.")
     _LOG.info(heat_legend(color=COLOR))

@@ -12,6 +12,11 @@ scale would paint every column flat except one.
 Truecolor (24-bit) escapes, which VS Code's terminal and every modern emulator
 support. Honours NO_COLOR, and turns itself off when stdout is not a tty so
 piping to a file or a pager stays clean.
+
+render(abs_shade=True) shades on |v| while printing the signed value, for
+tables whose columns are negative by construction - a down-side expected
+shortfall, say. Default off: a signed parameter shades by its position on the
+number line, which is what dMUI and dRHOIX want.
 """
 
 import os
@@ -61,14 +66,25 @@ def _cell(text, t, on):
             % (bg[0], bg[1], bg[2], fg[0], fg[1], fg[2], text))
 
 
-def render(df, decimals=4, index_label="", color=None, index_width=6):
-    """Heat-shaded table. Colour is per-column; the layout is unchanged."""
+def render(df, decimals=4, index_label="", color=None, index_width=6,
+           abs_shade=False):
+    """Heat-shaded table. Colour is per-column; the layout is unchanged.
+
+    abs_shade shades on |v| while still PRINTING the signed value. Off by
+    default, because a column like dMUI or dRHOIX carries real information in
+    its sign and should shade by position on the number line. Turn it on for
+    a column whose sign is fixed by what it measures rather than by the data -
+    a down-side expected shortfall is negative by construction, so shading it
+    signed would paint the worst year lightest and the mildest year darkest,
+    exactly backwards.
+    """
     on = enabled(color)
     cols = list(df.columns)
     width = {c: max(len(str(c)), decimals + 6) + 2 for c in cols}
 
-    lo = {c: float(df[c].min()) for c in cols}
-    hi = {c: float(df[c].max()) for c in cols}
+    src = df.abs() if abs_shade else df
+    lo = {c: float(src[c].min()) for c in cols}
+    hi = {c: float(src[c].max()) for c in cols}
 
     out = [" " * index_width + "".join(str(c).rjust(width[c]) for c in cols)]
     for idx, row in df.iterrows():
@@ -76,7 +92,7 @@ def render(df, decimals=4, index_label="", color=None, index_width=6):
         for c in cols:
             v = float(row[c])
             span = hi[c] - lo[c]
-            t = 0.5 if span == 0 else (v - lo[c]) / span
+            t = 0.5 if span == 0 else ((abs(v) if abs_shade else v) - lo[c]) / span
             line += _cell(("%.*f" % (decimals, v)).rjust(width[c]), t, on)
         out.append(line)
     return "\n".join(out)

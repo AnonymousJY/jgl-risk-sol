@@ -115,6 +115,32 @@ def model_tail(sg, lam, p, e1, e2, dt, levels, lo=-0.60, hi=0.60, n=2_000_001):
     return out, mass
 
 
+def model_tail_fast(sg, lam, p, e1, e2, dt, levels, u, du):
+    """model_tail on a PRE-BUILT grid, so a 245-date loop builds it once.
+
+    Same integration, coarser by default (200k points over +-0.8 rather than
+    2M over +-0.6): spacing 8e-6 is still a thousand points inside one daily
+    diffusion sd at the calmest window in the sample, and the 0.5% quantile
+    moves by under a basis point against the fine grid. The wider span is for
+    the crisis windows, where sigma reaches 0.26 and lambda 40 and a +-0.6
+    window starts to clip mass.
+    """
+    f = kou_density(u, sg, lam, p, e1, e2, dt)
+    tot = float(np.sum(f) * du)
+    cdf = np.cumsum(f) * du / tot
+    out = {}
+    for a in levels:
+        ql = float(np.interp(a, cdf, u))
+        m = u <= ql
+        wl = float(np.sum(f[m]) * du)
+        out[("lower", a)] = (ql, float(np.sum(u[m] * f[m]) * du / max(wl, 1e-300)))
+        qh = float(np.interp(1.0 - a, cdf, u))
+        m = u >= qh
+        wh = float(np.sum(f[m]) * du)
+        out[("upper", a)] = (qh, float(np.sum(u[m] * f[m]) * du / max(wh, 1e-300)))
+    return out
+
+
 def model_prob(x, sg, lam, p, e1, e2, dt, lo=-0.999, hi=1.0, n=2_000_001):
     """P(one-day move <= x) under the fitted density. The number that says
     whether a prescribed shock is a scenario or an extrapolation."""
@@ -155,6 +181,13 @@ def main():
     ap.add_argument("--priors", default="alpha-pprob-eta-flat",
                     help="systematic arm whose fit to compare against")
     ap.add_argument("--lookback", type=int, default=504)
+    ap.add_argument("--by-year", action="store_true",
+                    help="also report the tail YEAR BY YEAR, empirically and "
+                         "per valuation date, instead of only pooled. The "
+                         "pooled number blends 2008 with 2017 and is neither "
+                         "a typical year nor a severe one.")
+    ap.add_argument("--grid", type=int, default=200_001,
+                    help="points for the per-date integration under --by-year")
     ap.add_argument("--no-model", action="store_true",
                     help="empirical only; skips loading the fitted drawer")
     a = ap.parse_args()
@@ -209,6 +242,26 @@ def main():
         _LOG.info("  %8.0f%% %10d %10d %14s"
                   % (100 * x, nd, nu, ("%d" % (len(r) / tot)) if tot else "never"))
 
+    if a.by_year:
+        _LOG.info("\nEMPIRICAL, BY YEAR")
+        _LOG.info("  A year holds ~252 days, so the 2.5%% tail is ~6 of them and")
+        _LOG.info("  the ES is a mean of six numbers. Read the spread ACROSS")
+        _LOG.info("  years, not any single year's third decimal.")
+        _LOG.info("")
+        _LOG.info("  %-6s %5s %8s %9s %9s %9s %9s %9s %9s"
+                  % ("year", "n", "sd", "q2.5", "ES2.5", "q97.5", "ES97.5",
+                     "worst", "best"))
+        _LOG.info("  " + "-" * 82)
+        for yr, g in r.groupby(r.index.year):
+            if len(g) < 40:
+                continue
+            ql, el, _ = es(g.values, 0.025, lower=True)
+            qh, eh, _ = es(g.values, 0.025, lower=False)
+            _LOG.info("  %-6d %5d %7.3f%% %8.3f%% %8.3f%% %8.3f%% %8.3f%% "
+                      "%8.3f%% %8.3f%%"
+                      % (yr, len(g), 100 * g.std(), 100 * ql, 100 * el,
+                         100 * qh, 100 * eh, 100 * g.min(), 100 * g.max()))
+
     if a.no_model:
         return
 
@@ -255,6 +308,59 @@ def main():
         pr = model_prob(x, sg, lam, p, e1, e2, dt)
         _LOG.info("  %8.0f%% %16.3e %18s"
                   % (100 * x, pr, ("%.3g" % (1.0 / pr)) if pr > 0 else "never"))
+    if a.by_year:
+        _LOG.info("\n" + "=" * 74)
+        _LOG.info("MODEL-IMPLIED, PER VALUATION DATE (%d dates)" % len(df))
+        _LOG.info("  The medians above are a TYPICAL window. These are every")
+        _LOG.info("  window's own implied tail, so the max row is the severest")
+        _LOG.info("  the fitted series ever implies - which is the number a")
+        _LOG.info("  through-the-cycle ladder should be set against, not the")
+        _LOG.info("  median one.")
+        u = np.linspace(-0.8, 0.8, int(a.grid))
+        du = u[1] - u[0]
+        d = df.copy()
+        d["dt"] = pd.to_datetime(d["dtVALUATION_DATE"])
+        d = d.sort_values("dt")
+        rows = []
+        for _, row in d.iterrows():
+            t = model_tail_fast(float(row["dSIGMA"]), float(row["dLAMB"]),
+                                float(row["dPPROB"]), float(row["dETA1"]),
+                                float(row["dETA2"]), dt, levels, u, du)
+            rec = {"dt": row["dt"], "year": row["dt"].year}
+            for lv in levels:
+                rec["ESdn_%g" % lv] = t[("lower", lv)][1]
+                rec["ESup_%g" % lv] = t[("upper", lv)][1]
+            rows.append(rec)
+        md = pd.DataFrame(rows)
+
+        for lv in levels:
+            cdn, cup = "ESdn_%g" % lv, "ESup_%g" % lv
+            _LOG.info("\n  level %.3f - distribution of the implied ES across dates"
+                      % lv)
+            _LOG.info("      %-10s %9s %9s %9s %9s %9s"
+                      % ("", "min", "25%", "median", "75%", "max"))
+            for lab, col in (("ES down", cdn), ("ES up", cup)):
+                q = md[col].quantile([0, .25, .5, .75, 1.0]).values
+                _LOG.info("      %-10s %8.3f%% %8.3f%% %8.3f%% %8.3f%% %8.3f%%"
+                          % (lab, 100 * q[0], 100 * q[1], 100 * q[2],
+                             100 * q[3], 100 * q[4]))
+            w = md.loc[md[cdn].idxmin()]
+            _LOG.info("      severest down window: %s   ES %.3f%%"
+                      % (w["dt"].date(), 100 * w[cdn]))
+
+        _LOG.info("\n  By year (mean of that year's valuation dates):")
+        hdr = "  %-6s" % "year"
+        for lv in levels:
+            hdr += " %11s %11s" % ("ESdn %.3f" % lv, "ESup %.3f" % lv)
+        _LOG.info(hdr)
+        _LOG.info("  " + "-" * (8 + 24 * len(levels)))
+        for yr, g in md.groupby("year"):
+            line = "  %-6d" % yr
+            for lv in levels:
+                line += " %10.3f%% %10.3f%%" % (100 * g["ESdn_%g" % lv].mean(),
+                                                100 * g["ESup_%g" % lv].mean())
+            _LOG.info(line)
+
     _LOG.info("")
     _LOG.info("  Read the last column against the empirical one above. Where the")
     _LOG.info("  model says 1 in 10^6 days and the sample holds three of them,")

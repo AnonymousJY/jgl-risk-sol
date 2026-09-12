@@ -119,10 +119,10 @@ def _conv_stack(sg, lam, p, e1, e2, al, T):
                   (1 - p) * q2 * np.exp(q2 * np.clip(Y, None, 0)))
     fY /= fY.sum() * 2e-4
     lamT = lam * T
-    # Cap raised from 40: the tail probabilities in systematic_tail run out
-    # to multi-year horizons where lambda*T ~ 26, and truncating the jump
-    # count at 40 there loses ~0.3% of the mass - which is three times the
-    # tail probability being solved for.
+    # Cap raised from 40: the tail probabilities run out to multi-year
+    # horizons where lambda*T ~ 26, and truncating the jump count at 40
+    # there loses ~0.3% of the mass - which is three times the tail
+    # probability being solved for.
     nmax = min(80, int(max(6, poisson.ppf(1 - 1e-12, lamT) + 3)))
     conv = fY.copy(); dens = {1: conv}
     for n in range(2, nmax + 1):

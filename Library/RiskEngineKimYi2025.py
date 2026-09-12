@@ -1175,6 +1175,62 @@ IDIOSYNCRATIC_PRIORS_THM31_HIGH["rhoix_rv"] = (
     "Uniform", {"lower": 0.9005, "upper": 0.9995})   # rho_iX U(0.801, 0.999)
 
 
+# rho_iX at 0.55 again, but TWICE AS WIDE. A width experiment, not a level one.
+#
+# thm31 and this arm assert the same centre. The only difference is the sd:
+#
+#     arm          rho_iX support   sd       95% ETI width
+#     econ         (0.05, 0.45)     0.1155   0.38
+#     thm31        (0.35, 0.75)     0.1155   0.38
+#     thm31-wide   (0.15, 0.95)     0.2309   0.76      <- this one
+#     thm31-high   (0.801, 0.999)   0.0572   0.19
+#
+# WHY. Every arm so far has returned an identification ratio of exactly 1.000
+# on rho_iX: posterior 95% width equal to prior 95% width, to four decimals,
+# at every year. That is consistent with a flat likelihood, but it is ALSO
+# consistent with a likelihood whose curvature is simply smaller than a
+# 0.38-wide prior can resolve. Doubling the prior width separates the two and
+# the prediction is arithmetic:
+#
+#     flat likelihood   ->  posterior width 0.76, ratio 1.000
+#     any curvature     ->  posterior width < 0.76, ratio < 1.000
+#
+# A ratio of 1.000 at 0.38 and again at 0.76 is as close to a proof of
+# non-identification as this design gets - the posterior tracked the prior
+# across a doubling. Anything below 1.000 means rho_iX was weakly identified
+# all along and the earlier arms were too tight to show it.
+#
+# SECOND THING IT BUYS. The support straddles Theorem 3.1's threshold. At these
+# names sigma beta_i/(2 kappa_i) lands around 0.38 to 0.60, and econ put that
+# threshold at its own upper edge while thm31-high put it far below the lower
+# edge - in both cases the PRIOR decided whether the theorem holds. Here both
+# sides carry real prior mass for the first time, so if the likelihood has an
+# opinion about which side the name sits on, this is the arm where it can
+# express it.
+#
+# THIRD, AND THE ONE TO WATCH. phi_i rose a systematic +3.3% to +3.8% at every
+# one of the twenty years going econ -> thm31-high, larger than the 1% to 2%
+# the earlier arms showed, and phi_i is supposed to be pinned by the
+# likelihood. The budget identity says why it could move at all:
+#
+#     phi_i^2 = sigma^2 b_diff^2 + kappa_i^2 (1 - rho_iX^2)
+#
+# and 1 - rho_iX^2 collapses from 0.94 at rho 0.25 to 0.19 at 0.90, so kappa_i
+# stops contributing and b_diff has to absorb the difference. This arm's centre
+# sits between econ and thm31-high while its width exceeds both. If phi_i's
+# drift tracks the CENTRE it will land near thm31's; if it tracks the WIDTH it
+# will overshoot both. That distinguishes a real boundary effect from the
+# sampler running into arctanh's divergence at rhoix_rv -> 1.
+IDIOSYNCRATIC_PRIORS_THM31_WIDE = dict(IDIOSYNCRATIC_PRIORS)
+IDIOSYNCRATIC_PRIORS_THM31_WIDE["betai_rv"] = (
+    "Gamma", {"alpha": 3.0, "beta": 1.5})            # mean 2.000 sd 1.1547
+IDIOSYNCRATIC_PRIORS_THM31_WIDE["kappai_rv"] = (
+    "Gamma", {"alpha": 2.0, "beta": 2.0 / 0.3})      # mean 0.300 sd 0.2121
+IDIOSYNCRATIC_PRIORS_THM31_WIDE["rhoix_rv"] = (
+    "Uniform", {"lower": 0.575, "upper": 0.975})     # rho_iX U(0.15, 0.95)
+#                                                    # mean 0.550 sd 0.2309
+
+
 IDIOSYNCRATIC_PRIORS_THM31 = dict(IDIOSYNCRATIC_PRIORS)
 IDIOSYNCRATIC_PRIORS_THM31["betai_rv"] = (
     "Gamma", {"alpha": 3.0, "beta": 1.5})            # mean 2.000 sd 1.1547
@@ -1208,6 +1264,7 @@ IDIOSYNCRATIC_PRIOR_SETS = {
     "betai1-rhoix-zero": IDIOSYNCRATIC_PRIORS_BETAI1_RHOIX_ZERO,
     "econ": IDIOSYNCRATIC_PRIORS_ECON,
     "thm31": IDIOSYNCRATIC_PRIORS_THM31,
+    "thm31-wide": IDIOSYNCRATIC_PRIORS_THM31_WIDE,
     "thm31-high": IDIOSYNCRATIC_PRIORS_THM31_HIGH,
 }
 IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
@@ -1218,6 +1275,7 @@ IDIO_STORE_SUFFIX = {"paper": "", "rhoix-flat": "__rhoixflat",
                      "betai1-rhoix-zero": "__b1rhoixzero",
                      "econ": "__econ",
                      "thm31": "__thm31",
+                     "thm31-wide": "__thm31wide",
                      "thm31-high": "__thm31high"}
 
 

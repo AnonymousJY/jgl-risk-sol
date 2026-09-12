@@ -622,15 +622,18 @@ SYSTEMATIC_PRIORS_ALPHA_PPROB_FIXED["pprob_rv"] = (
 # centres them at 50 and 25 and gets the asymmetry back out. eta is a decay
 # RATE, so eta2 < eta1 means down jumps are the BIGGER ones. Widths are set to
 # skew-tight's own sds (0.1118, 0.1105, 12.50) so only the centres move; the
-# eta support is a mean jump of 1.33% to 4.00%, holding every value the rolling
-# arms have fitted. alpha's support excludes the full-sample 0.036 and pprob's
+# eta centre moved from 50 to 25 at essentially the same width, which is the
+# test: the run at centre 50 returned 48.8 and 51.4, i.e. both etas sat ON the
+# prior mean, so either they are prior-driven or the likelihood happens to
+# agree. Same width, different centre separates those. Track the new centre and
+# they are the prior; stay near 50 and the data has a level after all. alpha's support excludes the full-sample 0.036 and pprob's
 # excludes 0.5, so an edge pile at 0.55 or at 0.45 is the tell, not an estimate.
 SYSTEMATIC_PRIORS_ALPHA_PPROB_ETA_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
 SYSTEMATIC_PRIORS_ALPHA_PPROB_ETA_FLAT.update({
     "alpha_rv": ("Uniform", {"lower": 0.55, "upper": 0.95}),  # mean .750 sd .1155
     "pprob_rv": ("Uniform", {"lower": 0.05, "upper": 0.45}),  # mean .250 sd .1155
-    "eta1":     ("Uniform", {"lower": 25.0, "upper": 75.0}),  # mean 50.0 sd 14.43
-    "eta2":     ("Uniform", {"lower": 25.0, "upper": 75.0}),  # mean 50.0 sd 14.43
+    "eta1":     ("Uniform", {"lower": 1.0, "upper": 49.0}),   # mean 25.0 sd 13.86
+    "eta2":     ("Uniform", {"lower": 1.0, "upper": 49.0}),   # mean 25.0 sd 13.86
 })
 
 

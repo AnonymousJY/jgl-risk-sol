@@ -61,8 +61,17 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 import multiprocessing
-multiprocessing.set_start_method(
-    os.environ.get("JGL_MP_START", "forkserver"), force=True)
+# forkserver where it exists, spawn where it does not. fork() in a process
+# that has already started threads is unsafe - Python 3.12+ warns and 3.14
+# changes the Linux default - and PyMC with a numba backend does start
+# threads; the failure mode is a hang that looks like slow sampling.
+#
+# The old form asked for "forkserver" unconditionally, which raises
+# ValueError on Windows, where get_all_start_methods() is ["spawn"] alone.
+# Library.Parallel picks what the platform actually has. JGL_MP_START still
+# overrides, and is now warned about rather than obeyed if unavailable.
+from Library.Parallel import set_start_method as _set_start_method  # noqa: E402
+MP_START = _set_start_method()
 from concurrent.futures import (                            # noqa: E402
     ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED,
 )
@@ -633,14 +642,13 @@ def _reap_forkserver():
     exactly like the original hang and was the fix trading one symptom for
     another. Kill it explicitly instead; it holds no state we need.
     """
-    try:
-        from multiprocessing import forkserver
-        pid = getattr(forkserver._forkserver, "_forkserver_pid", None)
-        if pid:
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-    except Exception:                                            # noqa: BLE001
-        pass                       # never let cleanup stop the exit
+    # Library.Parallel.reap_forkserver returns immediately when the start
+    # method is not forkserver, so this is a no-op under spawn and on
+    # Windows - where signal.SIGKILL does not exist and the old bare
+    # `except Exception` was swallowing an AttributeError to get the same
+    # result by accident.
+    from Library.Parallel import reap_forkserver
+    reap_forkserver()
 
 
 def _exit_now(code=0):

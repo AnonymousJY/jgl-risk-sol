@@ -154,14 +154,17 @@ def main():
               % (100 * r.mean(), 100 * r.std(), 100 * r.std() * np.sqrt(BASE_DAYS)))
     _LOG.info("  skew %+.3f   excess kurtosis %+.2f" % (r.skew(), r.kurtosis()))
     t = pd.DataFrame(index=["%.3f" % lv for lv in levels])
+    sizes = []
     for lv, i in zip(levels, t.index):
         qd, ed, _, nd = es(r.values, lv, True)
         qu, eu, _, nu = es(r.values, lv, False)
-        t.loc[i, "qDown"], t.loc[i, "ESdown"], t.loc[i, "nDown"] = \
-            -100 * qd, -100 * ed, nd
-        t.loc[i, "qUp"], t.loc[i, "ESup"], t.loc[i, "nUp"] = \
-            100 * qu, 100 * eu, nu
+        t.loc[i, "qDown"], t.loc[i, "ESdown"] = -100 * qd, -100 * ed
+        t.loc[i, "qUp"], t.loc[i, "ESup"] = 100 * qu, 100 * eu
+        sizes.append("%.3f: %d" % (lv, nd))
     _LOG.info(heat(t, decimals=3, color=COLOR))
+    _LOG.info("  tail sizes (days each side)   %s" % "   ".join(sizes))
+    _LOG.info("  q is the ORDER STATISTIC - the m-th worst day itself, not an")
+    _LOG.info("  interpolated quantile - so it is a day that actually happened.")
 
     _LOG.info("\nTen worst and ten best days")
     _LOG.info("  %-12s %9s     %-12s %9s" % ("date", "worst", "date", "best"))
@@ -217,6 +220,25 @@ def main():
                "simESup", "seUp", "realESup", "ratioUp"]]
         _LOG.info("\nLEVEL %.3f   simulated vs realised, by year" % lv)
         _LOG.info(heat(t, decimals=3, color=COLOR))
+        # How many realised days actually sit in a one-year tail at this
+        # level. At 252 days a year, level 0.005 gives round(1.26) = 1, which
+        # es() floors at 2 - so the realised column is the mean of the two
+        # worst days of the year AND its effective level is 2/252 = 0.79%,
+        # not 0.5%. It is being compared against a simulated column that is
+        # genuinely at 0.5%, so the ratio is overstated. Say so rather than
+        # let the column be read as if it meant what its header says.
+        ns = [es(ry[y], lv, True)[3] for y in par.index
+              if y in ry and len(ry[y]) >= 20]
+        eff = [n / float(len(ry[y])) for y, n in
+               zip([y for y in par.index if y in ry and len(ry[y]) >= 20], ns)]
+        _LOG.info("  realised tail: %d-%d days per year (simulated: %s paths). "
+                  % (min(ns), max(ns), "{:,}".format(max(int(round(lv * a.paths)), 2))))
+        if min(ns) < 5:
+            _LOG.info("  TOO FEW to mean much, and the 2-day floor puts the")
+            _LOG.info("  realised columns at an effective level of %.3f-%.3f,"
+                      % (min(eff), max(eff)))
+            _LOG.info("  not %.3f - so realESdn reads mild and ratioDn high."
+                      % lv)
         m = t.mean(numeric_only=True)
         _LOG.info("  mean   simESdn %.3f  realESdn %.3f  ratio %.2f"
                   "   |   simESup %.3f  realESup %.3f  ratio %.2f"

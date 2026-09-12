@@ -15,9 +15,14 @@ carries sampling error, so se = sd(tail)/sqrt(a*N) is printed; from a year of
 ~252 realised days the same tail is ~6 observations, so its count is printed
 instead and its third decimal means nothing.
 
+ES COLUMNS ARE MAGNITUDES, not signed returns - a down-side ES of 7.617 is a
+day of -7.617%. Two reasons: the heat ramp encodes magnitude, so signed losses
+would shade the worst year LIGHTEST; and it puts the down and up columns on
+one scale, which is the asymmetry question read straight off the row.
+
     python poc/systematic_tail_mc.py
     python poc/systematic_tail_mc.py --paths 1000000
-    python poc/systematic_tail_mc.py --horizon 10
+    python poc/systematic_tail_mc.py --horizon 10 --no-color
 """
 import argparse
 import glob
@@ -36,7 +41,14 @@ from Library.Parameters import ParametersConstant                    # noqa: E40
 from Library.Random import RandomMT19937                             # noqa: E402
 from Library.RiskEngineKimYi2025 import (KimYiRiskEngine,            # noqa: E402
                                          SYSTEMATIC_PRIOR_SETS)
+from Library.TableHeatmap import (                                   # noqa: E402
+    render as heat, legend as heat_legend,
+)
 from poc.estimate_systematic import store_id                         # noqa: E402
+
+# Heat shading: on for a terminal, off when piped or NO_COLOR is set.
+# --no-color / --color override. Same convention as the PMLE scripts.
+COLOR = None
 
 SYSTEMATIC_ID = "^SPX"
 BASE_DAYS = 252
@@ -84,6 +96,7 @@ def es(x, level, lower=True):
 
 
 def main():
+    global COLOR
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -95,7 +108,12 @@ def main():
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--beg", default="20070101")
     ap.add_argument("--end", default="20261231")
+    ap.add_argument("--color", dest="color", action="store_true", default=None,
+                    help="force heat shading on (default: on for a terminal)")
+    ap.add_argument("--no-color", dest="color", action="store_false",
+                    help="plain numbers, no shading")
     a = ap.parse_args()
+    COLOR = a.color
 
     levels = [float(v) for v in a.levels.split(",") if v.strip()]
     dt = 1.0 / BASE_DAYS
@@ -127,19 +145,23 @@ def main():
     _LOG.info("%s paths per year   horizon %d day(s)   seed %d"
               % ("{:,}".format(a.paths), a.horizon, a.seed))
     _LOG.info("=" * 78)
+    _LOG.info("")
+    _LOG.info("  Every ES and quantile below is in PERCENT and as a MAGNITUDE:")
+    _LOG.info("  a down-side ES of 7.617 is a day of -7.617%.")
 
     _LOG.info("\nRealised daily returns, pooled")
     _LOG.info("  mean %+.4f%%   sd %.4f%%   annualised sd %.2f%%"
               % (100 * r.mean(), 100 * r.std(), 100 * r.std() * np.sqrt(BASE_DAYS)))
     _LOG.info("  skew %+.3f   excess kurtosis %+.2f" % (r.skew(), r.kurtosis()))
-    _LOG.info("  %-8s %12s %12s %7s    %12s %12s %7s"
-              % ("level", "q down", "ES down", "n", "q up", "ES up", "n"))
-    _LOG.info("  " + "-" * 80)
-    for lv in levels:
+    t = pd.DataFrame(index=["%.3f" % lv for lv in levels])
+    for lv, i in zip(levels, t.index):
         qd, ed, _, nd = es(r.values, lv, True)
         qu, eu, _, nu = es(r.values, lv, False)
-        _LOG.info("  %-8.3f %11.3f%% %11.3f%% %7d    %11.3f%% %11.3f%% %7d"
-                  % (lv, 100 * qd, 100 * ed, nd, 100 * qu, 100 * eu, nu))
+        t.loc[i, "qDown"], t.loc[i, "ESdown"], t.loc[i, "nDown"] = \
+            -100 * qd, -100 * ed, nd
+        t.loc[i, "qUp"], t.loc[i, "ESup"], t.loc[i, "nUp"] = \
+            100 * qu, 100 * eu, nu
+    _LOG.info(heat(t, decimals=3, color=COLOR))
 
     _LOG.info("\nTen worst and ten best days")
     _LOG.info("  %-12s %9s     %-12s %9s" % ("date", "worst", "date", "best"))
@@ -157,13 +179,12 @@ def main():
                   % (100 * x, nd, nu, ("%d" % (len(r) / tot)) if tot else "never"))
 
     _LOG.info("\nParameters simulated (mean of that year's valuation dates)")
-    _LOG.info("  %-6s %5s %8s %8s %8s %8s %8s %8s"
-              % ("year", "n", "alpha", "sigma", "pprob", "lamb", "eta1", "eta2"))
-    _LOG.info("  " + "-" * 64)
-    for y, p in par.iterrows():
-        _LOG.info("  %-6d %5d %8.4f %8.4f %8.4f %8.4f %8.4f %8.4f"
-                  % (y, n_dates[y], p["dALPHA"], p["dSIGMA"], p["dPPROB"],
-                     p["dLAMB"], p["dETA1"], p["dETA2"]))
+    t = par.copy()
+    t.columns = ["alpha", "sigma", "pprob", "lamb", "eta1", "eta2"]
+    t.insert(0, "nDates", n_dates.reindex(par.index).values.astype(float))
+    t.index = [str(i) for i in t.index]
+    _LOG.info(heat(t, decimals=4, color=COLOR))
+    _LOG.info(heat_legend(color=COLOR))
 
     t0 = time.time()
     sim = {y: simulate(p, dt, a.horizon, a.paths, a.seed)
@@ -176,41 +197,37 @@ def main():
 
     # ---- simulated against realised, by year ---------------------------
     for lv in levels:
-        _LOG.info("\nLEVEL %.3f   simulated vs realised, by year" % lv)
-        _LOG.info("  %-6s %10s %7s %10s %6s %6s   %9s %7s %9s %6s"
-                  % ("year", "sim ESdn", "se", "real ESdn", "n", "ratio",
-                     "sim ESup", "se", "real ESup", "n"))
-        _LOG.info("  " + "-" * 92)
-        acc = []
-        for y in par.index:
+        t = pd.DataFrame(index=[str(y) for y in par.index])
+        for y, i in zip(par.index, t.index):
             _, sd_, sdse, _ = es(sim[y], lv, True)
             _, su, suse, _ = es(sim[y], lv, False)
+            t.loc[i, "simESdn"], t.loc[i, "seDn"] = -100 * sd_, 100 * sdse
+            t.loc[i, "simESup"], t.loc[i, "seUp"] = 100 * su, 100 * suse
             if y in ry and len(ry[y]) >= 20:
-                _, rd, _, rnd = es(ry[y], lv, True)
-                _, ru, _, rnu = es(ry[y], lv, False)
-                acc.append((sd_, rd, su, ru))
-                _LOG.info("  %-6d %9.3f%% %6.3f%% %9.3f%% %6d %6.2f   %8.3f%% "
-                          "%6.3f%% %8.3f%% %6d"
-                          % (y, 100 * sd_, 100 * sdse, 100 * rd, rnd,
-                             sd_ / rd, 100 * su, 100 * suse, 100 * ru, rnu))
+                _, rd, _, _ = es(ry[y], lv, True)
+                _, ru, _, _ = es(ry[y], lv, False)
+                t.loc[i, "realESdn"] = -100 * rd
+                t.loc[i, "realESup"] = 100 * ru
+                t.loc[i, "ratioDn"] = sd_ / rd
+                t.loc[i, "ratioUp"] = su / ru
             else:
-                _LOG.info("  %-6d %9.3f%% %6.3f%% %9s %6s %6s   %8.3f%% "
-                          "%6.3f%% %9s %6s"
-                          % (y, 100 * sd_, 100 * sdse, "-", "-", "-",
-                             100 * su, 100 * suse, "-", "-"))
-        if acc:
-            A = np.array(acc)
-            _LOG.info("  " + "-" * 92)
-            _LOG.info("  %-6s %9.3f%% %7s %9.3f%% %6s %6.2f   %8.3f%% %7s "
-                      "%8.3f%%"
-                      % ("mean", 100 * A[:, 0].mean(), "",
-                         100 * A[:, 1].mean(), "",
-                         A[:, 0].mean() / A[:, 1].mean(),
-                         100 * A[:, 2].mean(), "", 100 * A[:, 3].mean()))
-            _LOG.info("  %-6s %9.3f%% %7s %9.3f%%"
-                      % ("worst", 100 * A[:, 0].min(), "", 100 * A[:, 1].min()))
-            _LOG.info("  ratio = simulated / realised. Above 1 the fit is more")
-            _LOG.info("  severe than the year turned out; below 1 it is milder.")
+                t.loc[i, "realESdn"] = t.loc[i, "realESup"] = np.nan
+                t.loc[i, "ratioDn"] = t.loc[i, "ratioUp"] = np.nan
+        t = t[["simESdn", "seDn", "realESdn", "ratioDn",
+               "simESup", "seUp", "realESup", "ratioUp"]]
+        _LOG.info("\nLEVEL %.3f   simulated vs realised, by year" % lv)
+        _LOG.info(heat(t, decimals=3, color=COLOR))
+        m = t.mean(numeric_only=True)
+        _LOG.info("  mean   simESdn %.3f  realESdn %.3f  ratio %.2f"
+                  "   |   simESup %.3f  realESup %.3f  ratio %.2f"
+                  % (m["simESdn"], m["realESdn"], m["ratioDn"],
+                     m["simESup"], m["realESup"], m["ratioUp"]))
+        _LOG.info("  worst  simESdn %.3f (%s)  realESdn %.3f (%s)"
+                  % (t["simESdn"].max(), t["simESdn"].idxmax(),
+                     t["realESdn"].max(), t["realESdn"].idxmax()))
+        _LOG.info("  ratio = simulated / realised. Above 1 the fit is more")
+        _LOG.info("  severe than the year turned out; below 1 it is milder.")
+    _LOG.info(heat_legend(color=COLOR))
     _LOG.info("")
 
 

@@ -504,6 +504,54 @@ def report(name, df):
         _LOG.info("  beta cannot reproduce; see poc/product_curve.py.")
 
 
+def coverage(names, lookbacks=(252, 504, 756), beg=None, end=None, step=21):
+    """Print what each name's history can support, per window length.
+
+    Runs before any fit and needs no drawer, which is the point: the question
+    "can this name support a two-year window" was previously answerable only
+    by starting a fit and reading the panel report before it got going, and
+    --report-only short-circuited before even that.
+    """
+    from Library.StudyWindow import name_coverage, STRESS_EVENTS
+
+    panel, _ = get_aligned_price_panel([SYSTEMATIC_ID] + list(names),
+                                       reference=SYSTEMATIC_ID)
+    rets = panel.pct_change().dropna(how="all")
+    _LOG.info("")
+    _LOG.info("  COVERAGE - what each name's own history supports")
+    _LOG.info("  %-8s %6s %12s %12s %8s %10s   %s"
+              % ("name", "window", "first obs", "first est.", "dates",
+                 "baseline", "verdict"))
+    _LOG.info("  " + "-" * 86)
+    for nm in names:
+        if nm not in rets:
+            _LOG.info("  %-8s  not in the price panel" % nm)
+            continue
+        have = rets[nm].dropna()
+        for r in name_coverage(have, lookbacks, beg, end, step):
+            if r["short"]:
+                _LOG.info("  %-8s %6d %12s %12s %8s %10s   too short (%d returns)"
+                          % (nm, r["lookback"], have.index.min().date(), "-",
+                             "-", "-", len(have)))
+                continue
+            if r["baseline"] == 0:
+                v = "NO BASELINE - every window holds a crisis"
+            elif r["baseline"] < 10:
+                v = "thin baseline"
+            else:
+                v = "ok"
+            _LOG.info("  %-8s %6d %12s %12s %8d %10d   %s"
+                      % (nm, r["lookback"], have.index.min().date(),
+                         r["first"].date(), r["n"], r["baseline"], v))
+    _LOG.info("")
+    _LOG.info("  baseline = valuation dates whose trailing window contains NONE")
+    _LOG.info("  of %s." % ", ".join(STRESS_EVENTS))
+    _LOG.info("  That is the column to read. Every stress result here is a")
+    _LOG.info("  CONTRAST against calm, so a name with many dates and no")
+    _LOG.info("  baseline cannot support one - and the total looks healthy in")
+    _LOG.info("  exactly that case.")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -541,6 +589,10 @@ def main():
                          "systematic drawer of the same window."
                          % BASE_LOOKBACK)
     ap.add_argument("--report-only", action="store_true")
+    ap.add_argument("--coverage", action="store_true",
+                    help="print what each name's history supports at 252, 504 "
+                         "and 756 days, then exit. Needs no drawer and no "
+                         "fit - run it BEFORE choosing a window.")
     ap.add_argument("--color", dest="color", action="store_true", default=None,
                     help="force heat shading on (default: on for a terminal)")
     ap.add_argument("--no-color", dest="color", action="store_false",
@@ -568,6 +620,10 @@ def main():
 
     priors = PRIOR_SETS[a.priors]
     sys_store = store_id(a.priors, priors, LOOKBACK)
+
+    if a.coverage:
+        coverage(names, beg=a.beg, end=a.end, step=a.step)
+        return
 
     _LOG.info("=" * 72)
     _LOG.info("Step 1b :: idiosyncratic parameters, conditional on the systematic fit")
@@ -623,6 +679,14 @@ def main():
                 _LOG.info("   FULL_SAMPLE, so --priors %s only selects sigma, lambda"
                       % a.priors)
                 _LOG.info("   and pprob. For all six from that run, use --anchor rolling.")
+            # Before it is fitted is exactly when the window is still a
+            # choice, so answer that here rather than leaving it to be found
+            # out afterwards.
+            try:
+                coverage([name], beg=a.beg, end=a.end, step=a.step)
+            except Exception as exc:                          # noqa: BLE001
+                _LOG.info("   coverage unavailable: %s: %s"
+                          % (type(exc).__name__, exc))
             continue
         report(name, df)
         out = os.path.join(_REPO_ROOT, "poc",

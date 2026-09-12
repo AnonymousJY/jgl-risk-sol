@@ -55,6 +55,65 @@ BASE_DAYS = 252
 SEED = np.uint64(20240114)
 
 
+# Representative dates for the episodes the stress work uses. One date each,
+# because what matters is whether the episode falls INSIDE a trailing window,
+# not its exact span.
+STRESS_EVENTS = {
+    "GFC":     "2008-10-15",
+    "Euro":    "2011-08-08",
+    "Covid":   "2020-03-16",
+    "FTX":     "2022-11-09",
+    "SVB":     "2023-03-13",
+    "Tariffs": "2025-04-07",
+}
+
+
+def name_coverage(returns, lookbacks=(252, 504, 756), beg=None, end=None,
+                  step=21, events=None):
+    """What a name's history can support at each window length.
+
+    Ask this BEFORE choosing a window, not after. The window that best
+    identifies the SYSTEMATIC parameters is chosen on ^SPX, which has fifty
+    years of history; a name listed in 2021 has four, and the two answers are
+    not the same. COIN is the case that made this function exist - at 504 days
+    its first estimable date already has the FTX collapse inside its trailing
+    window, so there is no date at which it is observed outside a crisis until
+    FTX rolls out in late 2024.
+
+    BASELINE COUNT IS THE NUMBER THAT MATTERS, not the total. Every stress
+    result in this study is a CONTRAST - a parameter in stress against the
+    same parameter in calm - so a name with plenty of valuation dates and zero
+    of them outside a crisis window cannot support one. The total looks
+    healthy in exactly the case that is unusable.
+
+    `returns` is the name's own return Series, already dropna'd.
+    """
+    events = STRESS_EVENTS if events is None else events
+    ev = [pd.to_datetime(v) for v in events.values()]
+    dates = [pd.to_datetime(d, format=DATE_FMT)
+             for d in valuation_dates(beg or BEG, end or END, step)]
+    idx = returns.index
+    rows = []
+    for lb in lookbacks:
+        if len(returns) < lb:
+            rows.append(dict(lookback=lb, first=None, n=0, baseline=0,
+                             short=True))
+            continue
+        first_ok = idx[lb - 1]
+        usable = [d for d in dates if d >= first_ok]
+        baseline = 0
+        for d in usable:
+            upto = idx[idx <= d]
+            if len(upto) < lb:
+                continue
+            lo = upto[-lb]                      # first day inside the window
+            if not any(lo <= e <= d for e in ev):
+                baseline += 1
+        rows.append(dict(lookback=lb, first=first_ok, n=len(usable),
+                         baseline=baseline, short=False))
+    return rows
+
+
 def valuation_dates(beg, end, step):
     days = pd.bdate_range(pd.to_datetime(beg, format=DATE_FMT),
                           pd.to_datetime(end, format=DATE_FMT))

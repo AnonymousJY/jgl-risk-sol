@@ -71,6 +71,51 @@ def load_row(drawer, date=None):
         {k: float(s[k]) for k in IDIO_KEYS}
 
 
+# ---------------------------------------------------------------------------
+# The calibrated ladder.
+# ---------------------------------------------------------------------------
+# Five rungs, each carrying TWO anchors that were derived without reference to
+# each other: one from the realised SPX record 2007-01-03 to 2026-09-10 (4,953
+# days), one from the fitted model simulated at 1,000,000 paths per year
+# (poc/systematic_tail_mc.py).
+#
+#   +/-x   what it is                 realised anchor        model anchor
+#   -----  ------------------------   --------------------   -------------------
+#     2%   routine bad day            1 in 12 days           -
+#     4%   severe day, average year   pooled ES(2.5%) -3.93  20-yr mean sim
+#                                                            ES(2.5%) -3.90
+#     7%   severe day, crisis year    pooled ES(0.5%) -6.53  worst-year sim
+#                                                            ES(2.5%) -6.96
+#    10%   crisis extreme             1 in 1,651 days        worst-year sim
+#                                                            ES(1%)   -9.85
+#    12%   the ceiling                worst day    -11.98    worst-year sim
+#                                                            ES(0.5%) -12.10
+#
+# THE CEILING IS THE RESULT. The model's severest through-the-cycle 0.5% ES is
+# -12.096% from the 2009 window; the worst day the sample contains is -11.984%
+# on 2020-03-16. They agree to 0.112pp - 0.9% - and the 2009 window ends in
+# 2009, eleven years before that day happened. Two independent routes to the
+# same ceiling is what justifies stopping there. Above it, +/-15% and +/-20%
+# exceed both anchors and have never occurred in twenty years: prescribe them
+# as labelled reverse-stress, not as rungs.
+#
+# SYMMETRIC, DELIBERATELY. The realised down/up ES ratio FALLS toward one as
+# the tail is cut further out - 1.075 at 2.5%, 1.033 at 1%, 1.002 at 0.5% -
+# and in the three crisis years it shows no down-skew at all: 0.994 in 2008,
+# 0.941 in 2009, 1.051 in 2020. The fitted model asserts 1.275 on average and
+# never drops below 1.055, but that comes from pprob, whose prior support
+# under alpha-pprob-eta-flat is U(0.05, 0.45) and CANNOT reach 0.5. The
+# asymmetry is prior, not data, so the ladder does not inherit it.
+#
+# SET THROUGH THE CYCLE, NOT OFF THE CURRENT WINDOW. Simulated ES(2.5%) runs
+# -2.363 in 2014 to -6.961 in 2009, a factor of 2.95, and it LAGS: its
+# correlation with the realised ES of the same year is 0.389, with the
+# previous year 0.780, with the mean of the two previous years 0.820. A
+# 504-day window is a two-year trailing average, so a ladder anchored on the
+# current fit is procyclical. The rungs above use worst-year figures.
+LADDER = (-12.0, -10.0, -7.0, -4.0, -2.0, 2.0, 4.0, 7.0, 10.0, 12.0)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -88,6 +133,12 @@ def main():
                     help="YYYYMMDD; default is the drawer's last date")
     ap.add_argument("--shocks", default="-5,-10,-20,-30,-40",
                     help="prescribed SYSTEMATIC shocks, percent")
+    ap.add_argument("--ladder", action="store_true",
+                    help="use the calibrated ladder instead of --shocks: "
+                         "+/-2, 4, 7, 10, 12 percent. Every rung carries two "
+                         "anchors derived without reference to each other - "
+                         "one from the realised SPX record 2007-2026, one "
+                         "from the fitted model - see LADDER below")
     ap.add_argument("--quantile", type=float, default=0.01)
     ap.add_argument("--jump-response", choices=("power", "linear", "exp"),
                     default="power",
@@ -106,7 +157,10 @@ def main():
     from poc.shock_to_name import name_shock, model_horizon
 
     names = [n.strip().upper() for n in a.names.split(",") if n.strip()]
-    shocks = [float(s) / 100.0 for s in a.shocks.split(",") if s.strip()]
+    if a.ladder:
+        shocks = [x / 100.0 for x in LADDER]
+    else:
+        shocks = [float(s) / 100.0 for s in a.shocks.split(",") if s.strip()]
     arms = ([x.strip() for x in a.compare_idio.split(",")]
             if a.compare_idio else [a.idio_priors])
     from Library.RiskEngineKimYi2025 import IDIOSYNCRATIC_PRIOR_SETS

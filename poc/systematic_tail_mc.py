@@ -1,7 +1,7 @@
 """Expected shortfall by simulation, from each year's estimated parameters.
 
 Paths come from KimYiRiskEngine.random - the repo's own simulator, the same
-one the VaR run uses. One simulation per year at that year's median fitted
+one the VaR run uses. One simulation per year at that year's MEAN fitted
 parameters, then the ES straight off the sample.
 
 ES at level a averages the worst round(a*N) of N paths, so it carries sampling
@@ -91,7 +91,7 @@ def main():
     df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
     df["year"] = pd.to_datetime(df["dtVALUATION_DATE"]).dt.year
     n_dates = df.groupby("year").size()
-    par = df.groupby("year")[COLS].median()
+    par = df.groupby("year")[COLS].mean()
 
     _LOG.info("=" * 78)
     _LOG.info("EXPECTED SHORTFALL BY SIMULATION :: %s" % drawer)
@@ -99,7 +99,7 @@ def main():
               % ("{:,}".format(a.paths), a.horizon, a.seed))
     _LOG.info("=" * 78)
 
-    _LOG.info("\nParameters simulated (median of that year's valuation dates)")
+    _LOG.info("\nParameters simulated (mean of that year's valuation dates)")
     _LOG.info("  %-6s %5s %8s %8s %8s %8s %8s %8s"
               % ("year", "n", "alpha", "sigma", "pprob", "lamb", "eta1", "eta2"))
     _LOG.info("  " + "-" * 64)
@@ -130,8 +130,8 @@ def main():
         d = np.array([out[y][lv][0][1] for y in par.index])
         u = np.array([out[y][lv][1][1] for y in par.index])
         _LOG.info("  " + "-" * 68)
-        _LOG.info("  %-6s %9.3f%% %8s %9.3f%%" % ("median", 100 * np.median(d),
-                                                  "", 100 * np.median(u)))
+        _LOG.info("  %-6s %9.3f%% %8s %9.3f%%" % ("mean", 100 * d.mean(),
+                                                  "", 100 * u.mean()))
         _LOG.info("  %-6s %9.3f%% %8s %9.3f%%   (%d / %d)"
                   % ("worst", 100 * d.min(), "", 100 * u.max(),
                      par.index[int(d.argmin())], par.index[int(u.argmax())]))

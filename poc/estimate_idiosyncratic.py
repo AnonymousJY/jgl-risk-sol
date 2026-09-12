@@ -475,8 +475,27 @@ def report(name, df):
         _LOG.info("   parameter is identified. A prior-driven one is stable")
         _LOG.info("   because its prior is - read this with the table below.")
 
+    # The by-year table carries each parameter's own 95% width beside it, the
+    # way the systematic one does. A level without its width is not readable:
+    # dGAMMAI doubling in 2009 means one thing if the interval halved with it
+    # and quite another if the interval stood still, and only the second
+    # column separates a measurement from a posterior wandering inside its
+    # prior. Kept out of describe() and the CV list above, which rank levels.
+    #
+    # dRHOIX_W is already on the REPORTED scale - the stored interval is the
+    # tanh-transformed one - so it is comparable with the doubled prior width
+    # the ratio table below uses, and must not be doubled again here.
+    year_cols = []
+    for c in IDIO_PARAMS:
+        if c in df:
+            year_cols.append(c)
+            if c + "_W" in df:
+                year_cols.append(c + "_W")
+    if "b_i" in df:
+        year_cols.append("b_i")           # derived, so no width of its own
+
     for stat in ("mean", "median"):
-        t = getattr(df[cols].groupby(df.index.year), stat)().round(4)
+        t = getattr(df[year_cols].groupby(df.index.year), stat)().round(4)
         t.index = [str(i) for i in t.index]
         _LOG.info("\nBy year (%s):" % stat)
         _LOG.info(heat(t, decimals=4, color=COLOR))

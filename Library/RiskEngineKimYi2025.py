@@ -1744,7 +1744,13 @@ class KimYiLogLikeJoint:
         self.kperp = pt.as_tensor(kperp)
         self.gammai = pt.as_tensor(gammai)
         self.bi = pt.as_tensor(bi)
-        self.u = pt.as_tensor(np.asarray(u_series, dtype=float).reshape((-1, 1)))
+        # pt.as_tensor FIRST, then reshape. CustomDist hands this in as a
+        # TensorVariable, not a numpy array, and np.asarray() on one raises
+        # "setting an array element with a sequence" - at logp evaluation,
+        # not at model build, so every fit failed in 7 seconds with no
+        # sampling attempted. The standalone check passed because it fed a
+        # real numpy array and never took this path.
+        self.u = pt.as_tensor(u_series).reshape((-1, 1))
         self.alpha = pt.as_tensor(alpha)
         self.sigma = pt.as_tensor(sigma)
         self.pprob = pt.as_tensor(pprob)

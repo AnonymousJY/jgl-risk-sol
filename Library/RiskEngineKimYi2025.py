@@ -916,7 +916,7 @@ def pmle_kimyirisk_systematic(
 # only through two scalars:
 #
 #     _variance() = (sigma*betai)^2 + 2*sigma*betai*kappai*rhoix + kappai^2
-#     _drift()    = mui + 0.5*(sigma*betai)^2 - sigma*betai*kappai*rhoix
+#     _drift()    = mui + 0.5*(sigma*betai)^2 + sigma*betai*kappai*rhoix
 #
 # Two equations, four unknowns - mui, betai, kappai, rhoix - and rhoix appears
 # ONLY inside the product sigma*betai*kappai*rhoix. The idiosyncratic
@@ -1528,7 +1528,11 @@ class KimYiRiskEngine:
         betai_dt = np.array([x.integral(np.array(0.), np.array(1.)) for x in betai]).reshape((-1, 1))
         rhoix_dt = np.array([x.integral(np.array(0.), np.array(1.)) for x in rhoix]).reshape((-1, 1))
         kappai_dt = np.array([x.integral(np.array(0.), np.array(1.)) for x in kappai]).reshape((-1, 1))
-        self._drift_dt = (mui_dt + .5 * (sigma_dt * betai_dt)**2 - sigma_dt * betai_dt * kappai_dt * rhoix_dt) * end_dt
+        # Cross term is PLUS - see KimYiLogLike._drift() for the derivation and
+        # the confirmations. This line and that one must always carry the same
+        # sign: est_liquidity_process() subtracts the drift, random() adds it
+        # back, and that round trip is the identity only while they agree.
+        self._drift_dt = (mui_dt + .5 * (sigma_dt * betai_dt)**2 + sigma_dt * betai_dt * kappai_dt * rhoix_dt) * end_dt
 
     @property
     def variance_dt(self) -> NDArray[np.float64]:
@@ -1660,9 +1664,41 @@ class KimYiLogLike:
         return pt.log(g_x)
 
     def _drift(self) -> pt.TensorVariable:
+        # THE CROSS TERM IS PLUS. Theorem 3.1 as printed in draft 7 carries a
+        # minus and this line followed it. The error is a single sign in the
+        # proof (Appendix A, p.40): d2g/dLdI is simplified to +nu S/(LI), while
+        # the general implicit-function-theorem expression on the same line -
+        # which is itself correct - evaluates to -nu S/(LI). The denominator
+        # (dD/dS)^3 = -D^3/S^3 is negative because 3 is the ONLY odd power in
+        # the expression, so the two minuses in d2g/dL2 and d2g/dI2 cancel and
+        # hide it. Pairing -nu S/(LI) with d<L,I> = -L I sigma beta xi rho dt,
+        # which is also negative, gives a POSITIVE contribution to the drift.
+        #
+        # Three confirmations, any one sufficient:
+        #   (i)   log S = nu log I + Psi - log k is a LINEAR combination, so
+        #         drift(d log S) cannot contain rhoix at all. That forces the
+        #         cross term in m_i to be exactly half the cross term in
+        #         phi_i^2 WITH THE SAME SIGN - and _variance() below carries
+        #         +2 sigma betai kappai rhoix.
+        #   (ii)  direct Monte Carlo on E[S_T]/S_0 = exp(m T).
+        #   (iii) poc/verify_proof_31.py, components 5, 16 and 18.
+        #
+        # KEEP THIS IN STEP WITH the drift_dt setter in KimYiDistribution.
+        # est_liquidity_process() SUBTRACTS the drift and random() ADDS it
+        # back, so the two are exact inverses and every simulated path is
+        # invariant to the convention - but only while both carry the same
+        # sign. Flipping one alone shifts every simulated return by
+        # 2 sigma betai kappai rhoix.
+        #
+        # Effect of this change on the fits: mui enters the likelihood ONLY
+        # here, additively, with an unconstrained prior, so the flip is an
+        # exact reparameterisation (mui, theta) -> (mui + 2 sigma betai kappai
+        # rhoix, theta) with unit Jacobian. betai, kappai, rhoix and gammai are
+        # unchanged; dMUI falls by 2 sigma betai kappai rhoix. See
+        # poc/drift_sign_acceptance.py.
         drift  = self.mui
         drift += 0.5 * (self.sigma * self.betai)**2
-        drift -= self.sigma * self.betai * self.kappai * self.rhoix
+        drift += self.sigma * self.betai * self.kappai * self.rhoix
         return drift.reshape((-1, 1))
 
     def _variance(self) -> pt.TensorVariable:

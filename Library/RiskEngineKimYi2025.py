@@ -1670,3 +1670,233 @@ class KimYiLogLike:
         variance += 2. * self.sigma * self.betai * self.kappai * self.rhoix
         variance += self.kappai**2
         return variance.reshape((-1, 1))
+
+
+# ---------------------------------------------------------------------------
+# The conditional (joint) idiosyncratic likelihood.
+# ---------------------------------------------------------------------------
+# KimYiLogLike conditions on the name's own lagged state and nothing else. The
+# market's realised increment at step k never enters as data - sigma, lambda,
+# p and the etas enter only as parameters - so rho_iX can only be seen through
+# phi_i^2 = sigma^2 beta_i^2 + 2 sigma beta_i kappa_i rho_iX + kappa_i^2, where
+# it is confounded with beta_i and kappa_i. One equation, three unknowns.
+#
+# Conditioning additionally on the market's increment adds exactly one moment,
+# Cov(U,V), and therefore removes exactly one dimension. Writing
+#
+#     U_k = Delta Psi_k   + alpha Psi_{k-1}   Delta   (market innovation)
+#     V_k = Delta Psi_i,k + alpha Psi_i,{k-1} Delta   (name innovation)
+#
+# and rotating W_i = rho_iX Z + sqrt(1-rho_iX^2) W_perp, then eliminating Z
+# with sigma sqrt(dt) Z_k = U_k - Delta J_k, gives
+#
+#     V_k = b_i U_k + (gamma_i - b_i) Delta J_k + kappa_perp sqrt(dt) W_perp_k
+#
+# with b_i = beta_i + kappa_i rho_iX / sigma and
+# kappa_perp = kappa_i sqrt(1 - rho_iX^2). The name regresses on the market
+# with slope b_i on the DIFFUSIVE channel and gamma_i on the JUMP channel.
+#
+# WHAT THIS ESTIMATES, AND WHAT IT DOES NOT. The identified quantities are
+# b_i, kappa_perp, gamma_i and the drift m_i - so this arm samples those
+# directly rather than beta_i, kappa_i, rho_iX, mu_i, which remain on a
+# one-dimensional ridge:
+#
+#     b_i      = beta_i + kappa_i rho_iX / sigma
+#     kappa_perp^2 = kappa_i^2 (1 - rho_iX^2)
+#
+# Two equations, three unknowns. rho_iX is recovered afterwards by regressing
+# b_i on 1/sigma ACROSS windows, since b_i is linear in 1/sigma with intercept
+# beta_i and slope kappa_i rho_iX; see poc/estimate_idiosyncratic_joint.py.
+#
+# NUMERICS. The closed form of the jump integral carries exp(A B^2 / 2), which
+# overflows on its own once w = v - b_i u reaches order one. The product with
+# exp(-Q) is finite - Cauchy-Schwarz gives B0^2 <= 2 Q / A, hence
+# -Q + A B0^2 / 2 <= 0 - so the two factors must never be formed separately.
+# Everything below is in log space with a log-sum-exp over the three mixture
+# branches. poc/joint_likelihood_probe.py verifies the closed form against
+# quadrature (1e-6, quadrature-limited) and the normalisation (1.000000).
+
+
+def systematic_innovations(sys_returns, params_sys, delta_t):
+    """The market's innovation series U_k, as a plain numpy array.
+
+    Mirrors KimYiLogLike.logp's own conventions exactly - the same
+    [0, 1, ..., m-1] drift scaler and the same quasi-difference - so that U and
+    V are built the same way and line up step for step. The systematic
+    parameters are constants at this stage, so U needs no gradient and is
+    passed into the model as data.
+    """
+    alpha = float(np.asarray(params_sys["dALPHA"]).item())
+    sigma = float(np.asarray(params_sys["dSIGMA"]).item())
+    dt = float(np.asarray(delta_t).item())
+
+    psi = np.cumsum(np.asarray(sys_returns, dtype=float))
+    psi = psi - np.arange(len(psi)) * (0.5 * sigma ** 2) * dt
+    return psi[1:] - (1.0 - alpha * dt) * psi[:-1]
+
+
+class KimYiLogLikeJoint:
+    """log f(U_k, V_k): the name's increment jointly with the market's."""
+
+    def __init__(self, mi, kperp, gammai, bi, u_series,
+                 alpha, sigma, pprob, lamb, eta1, eta2, dt):
+        self.mi = pt.as_tensor(mi)
+        self.kperp = pt.as_tensor(kperp)
+        self.gammai = pt.as_tensor(gammai)
+        self.bi = pt.as_tensor(bi)
+        self.u = pt.as_tensor(np.asarray(u_series, dtype=float).reshape((-1, 1)))
+        self.alpha = pt.as_tensor(alpha)
+        self.sigma = pt.as_tensor(sigma)
+        self.pprob = pt.as_tensor(pprob)
+        self.qprob = pt.as_tensor(1. - pprob)
+        self.lamb = pt.as_tensor(lamb)
+        self.eta1 = pt.as_tensor(eta1)
+        self.eta2 = pt.as_tensor(eta2)
+        self.dt = pt.as_tensor(dt)
+
+    def logp(self, y: pt.TensorVariable) -> pt.TensorVariable:
+        # V: the name's innovation, built exactly as KimYiLogLike builds its
+        # own quasi-difference, except that the drift removed is m_i itself -
+        # the quantity the likelihood actually sees - rather than mu_i plus a
+        # function of beta_i, kappa_i and rho_iX, which this arm does not have.
+        m, _ = y.shape
+        drift_scaler = pt.zeros(m).reshape((-1, 1))
+        drift_scaler = drift_scaler[1:].set(pt.arange(m - 1).reshape((-1, 1)) + 1)
+        y = y - drift_scaler * self.mi * self.dt
+        x = y[:-1]
+        y = y[1:]
+        V = y - (1. - self.alpha * self.dt) * x
+        U = self.u
+
+        s2 = self.sigma ** 2 * self.dt
+        t2 = self.kperp ** 2 * self.dt
+        c = self.gammai - self.bi
+        w = V - self.bi * U
+
+        A = 1.0 / (1.0 / s2 + c * c / t2)
+        Q = U * U / (2. * s2) + w * w / (2. * t2)
+        base = U / s2 + w * c / t2
+        rtA = pt.sqrt(A)
+
+        Bu = base - self.eta1
+        Bd = base + self.eta2
+        lj = pt.log(self.lamb * self.dt) + 0.5 * pt.log(2. * np.pi * A)
+
+        norm_dist = pm.Normal.dist()
+        T0 = pt.log(1. - self.lamb * self.dt) - Q
+        T1 = (lj + pt.log(self.pprob * self.eta1) - Q + 0.5 * A * Bu ** 2
+              + pm.logcdf(norm_dist, value=Bu * rtA))
+        T2 = (lj + pt.log(self.qprob * self.eta2) - Q + 0.5 * A * Bd ** 2
+              + pm.logcdf(norm_dist, value=-Bd * rtA))
+
+        M = pt.maximum(pt.maximum(T0, T1), T2)
+        lse = M + pt.log(pt.exp(T0 - M) + pt.exp(T1 - M) + pt.exp(T2 - M))
+
+        lpre = -pt.log(2. * np.pi) - 0.5 * pt.log(s2) - 0.5 * pt.log(t2)
+        return lpre + lse
+
+
+def _dist_loglike_joint(y, mi, kperp, gammai, bi, u_series,
+                        alpha, sigma, pprob, lamb, eta1, eta2,
+                        delta_t) -> pt.TensorVariable:
+    return KimYiLogLikeJoint(
+        mi=mi, kperp=pt.exp(kperp), gammai=pt.exp(gammai), bi=pt.exp(bi),
+        u_series=u_series, alpha=alpha, sigma=sigma, pprob=pprob, lamb=lamb,
+        eta1=eta1, eta2=eta2, dt=delta_t,
+    ).logp(y=y)
+
+
+# Priors on the IDENTIFIED parameters. b_i is centred at 1.5 because the three
+# banks' reported b_i run 1.50 to 1.78 and the quantity is a loading on the
+# systematic Brownian, so values near one are the neutral expectation.
+# kappa_perp is the orthogonal idiosyncratic scale and is small by
+# construction. gamma_i keeps its existing prior. m_i is the drift the
+# likelihood sees; mu_i is recovered afterwards, not sampled.
+IDIOSYNCRATIC_PRIORS_JOINT = {
+    "bi_rv":     ("Gamma", {"alpha": 3.0, "beta": 2.0}),     # mean 1.500
+    "kperp_rv":  ("Gamma", {"alpha": 2.0, "beta": 2.0 / 0.13}),  # mean 0.130
+    "gamma_rv":  ("Gamma", {"alpha": 3.0, "beta": 1.0}),     # mean 3.000
+    "mi":        ("Normal", {"mu": 0.0, "sigma": 1.0}),
+}
+
+
+def pmle_kimyirisk_joint(
+        idi_returns: NDArray[np.float64],
+        sys_returns: NDArray[np.float64],
+        params_sys: dict,
+        delta_t: NDArray[np.float64],
+        seed_number: np.uint64 = np.uint64(20240114),
+        n_mc_paths: int = 10_000,
+        nuts_sampler: str = "nutpie",
+        is_progress_bar: bool = False,
+        priors: dict = None,
+) -> dict:
+    """Estimate (b_i, kappa_perp, gamma_i, m_i) conditional on the market.
+
+    The two-stage architecture is unchanged: the systematic parameters arrive
+    as fixed constants exactly as they do for pmle_kimyirisk_idiosyncratic.
+    The only new input is sys_returns, the market's return vector over the same
+    window, from which the innovation series U is built.
+    """
+    pr = dict(IDIOSYNCRATIC_PRIORS_JOINT)
+    if priors:
+        unknown = set(priors) - set(pr)
+        if unknown:
+            raise ValueError("unknown joint prior key(s): %s" % sorted(unknown))
+        pr.update(priors)
+
+    alpha = params_sys["dALPHA"]
+    sigma = params_sys["dSIGMA"]
+    pprob = params_sys["dPPROB"]
+    lamb = params_sys["dLAMB"]
+    eta1 = params_sys["dETA1"]
+    eta2 = params_sys["dETA2"]
+
+    u_series = systematic_innovations(sys_returns, params_sys, delta_t)
+    observed = np.cumsum(np.asarray(idi_returns, dtype=float)).reshape((-1, 1))
+    if len(u_series) != observed.shape[0] - 1:
+        raise ValueError("U has %d steps, the name has %d increments - the two "
+                         "windows are not aligned"
+                         % (len(u_series), observed.shape[0] - 1))
+
+    with pm.Model():
+        mi = _build_prior("mi", pr["mi"])
+
+        bi_rv = _build_prior("bi_rv", pr["bi_rv"])
+        bi = pm.Deterministic("bi", pt.log(bi_rv))
+
+        kperp_rv = _build_prior("kperp_rv", pr["kperp_rv"])
+        kperp = pm.Deterministic("kperp", pt.log(kperp_rv))
+
+        gammai_rv = _build_prior("gamma_rv", pr["gamma_rv"])
+        gammai = pm.Deterministic("gammai", pt.log(gammai_rv))
+
+        pm.CustomDist(
+            "likelihood",
+            mi, kperp, gammai, bi, u_series,
+            alpha, sigma, pprob, lamb, eta1, eta2, delta_t,
+            observed=observed,
+            logp=_dist_loglike_joint,
+        )
+
+        idata = pm.sample(JGL_DRAWS or n_mc_paths, chains=JGL_CHAINS, tune=1000,
+                          cores=JGL_CORES, target_accept=0.95,
+                          progressbar=is_progress_bar,
+                          random_seed=np.random.default_rng(np.uint64(seed_number)),
+                          nuts_sampler=nuts_sampler)
+
+    _warn_low_ess(idata, ["mi", "bi_rv", "kperp_rv", "gamma_rv"], "joint")
+
+    def _s(var):
+        return summarize(idata, var)
+
+    m_m, m_lo, m_hi = _s("mi")
+    b_m, b_lo, b_hi = _s("bi_rv")
+    k_m, k_lo, k_hi = _s("kperp_rv")
+    g_m, g_lo, g_hi = _s("gamma_rv")
+    return {
+        "dMI":     ParamsResults(dMEAN=m_m, dCI_LOWER=m_lo, dCI_UPPER=m_hi),
+        "dBI":     ParamsResults(dMEAN=b_m, dCI_LOWER=b_lo, dCI_UPPER=b_hi),
+        "dKPERP":  ParamsResults(dMEAN=k_m, dCI_LOWER=k_lo, dCI_UPPER=k_hi),
+        "dGAMMAI": ParamsResults(dMEAN=g_m, dCI_LOWER=g_lo, dCI_UPPER=g_hi),
+    }

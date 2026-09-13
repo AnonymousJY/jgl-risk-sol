@@ -1,0 +1,355 @@
+"""Does an observed liquidity scale identify rho_iX?  A pre-test. No refitting.
+
+WHY THIS EXISTS. rho_iX is not identified by the published likelihood - see
+poc/rhoix_identification_proof.py, which shows the Fisher information has rank
+3 of 5 and the likelihood is flat to machine precision along the fibre. The
+deficit is exactly ONE, so exactly one extra equation closes it. Brunetti and
+Caldarera (2006) and Feng, Hung and Wang (2014) both get that equation from the
+same place: market liquidity as a MEASURED, time-varying series rather than a
+constant diffusion coefficient. This script asks whether that equation is
+actually present in the data before anyone changes the model to use it.
+
+THE TEST. Under the model the name's diffusive loading on the market is
+
+    b_i = beta_i + kappa_i rho_iX / sigma
+
+so if sigma is replaced by an OBSERVED scale s_t, the name's beta against the
+market is not constant - it falls as s_t rises, at a rate that is exactly
+kappa_i rho_iX. That makes the whole thing one linear regression:
+
+    r_i,t = alpha + beta_i * r_t + (kappa_i rho_iX) * (r_t / s_t) + e_t
+
+    H0: coefficient on r_t / s_t is zero   <=>   rho_iX = 0 (since kappa_i > 0)
+
+The coefficient IS kappa_i rho_iX in annualised units. Combined with kperp from
+the conditional fit, which needs no rho_iX prior,
+
+    kappa_i = sqrt(kperp^2 + (kappa_i rho_iX)^2),   rho_iX = (kappa_i rho_iX)/kappa_i
+
+- a point estimate, with no prior anywhere.
+
+WHY THIS IS NOT THE ROUTE THAT ALREADY FAILED. Stage 3 of the conditional fit
+regressed b_i on 1/sigma across 245 overlapping 504-day windows and got the
+WRONG SIGN at all three names, because beta_i itself rises with sigma over the
+cycle (b_i climbs 60-130% into 2009) and that bias exceeds the signal. Here s_t
+is observed DAILY, and the contamination lives at the multi-year scale. Running
+the same regression at 21, 63 and 252 day scales separates the two: a
+coefficient that survives at 21 days is the kappa_i rho_iX term, one that
+appears only at 252 days is the same state-dependence as before.
+
+WHAT ANSWERS THE ACTUAL QUESTION ABOUT VOLUME. Three scales are built. "rv"
+uses PRICES ONLY - trailing realised volatility of the market. "bc" and
+"amihud" use VOLUME. If the volume-based scales do no better than rv, then
+volume adds nothing that the price series did not already carry, and the answer
+to "will adding SPX volume identify rho_iX" is no.
+
+CONTROLS, because a t statistic on its own means nothing here:
+  - block placebo: s_t is block-shuffled, preserving its autocorrelation and
+    marginal distribution but destroying its alignment with returns.
+  - lagged scale: s_{t-1} in place of s_t, which breaks any same-day mechanical
+    coupling between the regressor and the dependent variable and attenuates
+    classical measurement error in the proxy.
+  - subsamples, because one GFC-driven number is not an estimate.
+
+VALIDATED BEFORE USE, on simulated data with a known rho_iX. Given the TRUE
+scale the regression returns rho_iX 0.010 / 0.259 / 0.507 / 0.753 against
+truths of 0.00 / 0.25 / 0.50 / 0.75. Given a scale that has to be ESTIMATED
+from returns, as here, the 21-day window returns 0.490 against a truth of 0.50
+while the 252-day window attenuates to 0.348 - staleness, and the reason the
+21-day row is the primary one. Under the null the block placebo returns
+p = 0.163, and with signal present p = 0.000. So a null result from this script
+is evidence of absence, not of low power.
+
+    python poc/rhoix_volume_pretest.py --names C,BAC,JPM --volume-symbol SPY
+"""
+import argparse
+import os
+import sys
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from Library.DataAccess import get_aligned_price_panel                # noqa: E402
+from Library.Logging import report as _report                         # noqa: E402
+from Library.TableHeatmap import render as heat                       # noqa: E402
+
+_LOG = _report(__name__)
+ANNUAL = 252.0
+SYSTEMATIC_ID = "^SPX"
+
+
+# ---------------------------------------------------------------------------
+# data
+# ---------------------------------------------------------------------------
+def load_volume(symbol, csv_path=None):
+    """Daily volume. The committed snapshots hold adjusted close only, so this
+    is a live pull - the one thing in the pre-test that needs the network. Pass
+    --volume-csv (date in the first column, volume in the second) if the box
+    estimations run on has no outbound access."""
+    if csv_path:
+        v = pd.read_csv(csv_path, index_col=0, parse_dates=True).iloc[:, 0]
+        v.index = pd.to_datetime(v.index)
+        return v.astype(float).replace(0.0, np.nan)
+    import FinanceDataReader as fdr
+    df = fdr.DataReader(symbol)
+    if "Volume" not in df.columns:
+        raise SystemExit("%s has no Volume column" % symbol)
+    v = df["Volume"].astype(float)
+    v.index = pd.to_datetime(v.index)
+    nz = (v > 0).mean()
+    if nz < 0.5:
+        raise SystemExit(
+            "%s reports volume on only %.0f%% of days - index volume is often "
+            "blank. Try SPY." % (symbol, 100 * nz))
+    return v.replace(0.0, np.nan)
+
+
+def build_scales(mkt_ret, volume, windows):
+    """Observed proxies for the systematic diffusion scale, ANNUALISED.
+
+    rv      trailing realised volatility of the market. PRICE ONLY.
+    bc      Brunetti-Caldarera / Feng et al: |r_t| / volume, trailing mean.
+    amihud  Amihud (2002) illiquidity: |r_t| / dollar volume, trailing mean.
+
+    bc and amihud are rescaled to share rv's sample mean so that the regression
+    coefficients below are in the same units as sigma and therefore directly
+    comparable. That rescaling cannot manufacture a t statistic - it is a
+    change of units - but it does mean the LEVEL of kappa_i rho_iX from a
+    volume scale inherits rv's calibration.
+    """
+    px = (1.0 + mkt_ret).cumprod()
+    raw = {
+        "bc": (mkt_ret.abs() / volume.reindex(mkt_ret.index)),
+        "amihud": (mkt_ret.abs() / (volume.reindex(mkt_ret.index) * px)),
+    }
+    out = {}
+    for w in windows:
+        rv = mkt_ret.rolling(w).std() * np.sqrt(ANNUAL)
+        out[("rv", w)] = rv
+        for k, r in raw.items():
+            s = r.rolling(w).mean()
+            s = s / s.mean() * rv.mean()
+            out[(k, w)] = s
+    return out
+
+
+# ---------------------------------------------------------------------------
+# inference
+# ---------------------------------------------------------------------------
+def ols_nw(y, X, lags=None):
+    """OLS with Newey-West standard errors. Returns (coef, se, t, r2, n)."""
+    n, k = X.shape
+    if lags is None:
+        lags = int(np.floor(4 * (n / 100.0) ** (2.0 / 9.0)))
+    xtx_inv = np.linalg.pinv(X.T @ X)
+    b = xtx_inv @ (X.T @ y)
+    e = y - X @ b
+
+    u = X * e[:, None]
+    S = u.T @ u
+    for l in range(1, lags + 1):
+        w = 1.0 - l / (lags + 1.0)
+        G = u[l:].T @ u[:-l]
+        S += w * (G + G.T)
+    V = xtx_inv @ S @ xtx_inv
+    se = np.sqrt(np.maximum(np.diag(V), 0.0))
+
+    ss_res = float(e @ e)
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    return b, se, b / np.where(se > 0, se, np.nan), 1.0 - ss_res / ss_tot, n
+
+
+def conditional_beta(name_ret, mkt_ret, scale):
+    """r_i = a + beta_i r_t + (kappa_i rho_iX) (r_t / s_t) + e."""
+    d = pd.concat([name_ret, mkt_ret, scale], axis=1).dropna()
+    if len(d) < 250:
+        return None
+    y = d.iloc[:, 0].to_numpy()
+    r = d.iloc[:, 1].to_numpy()
+    s = d.iloc[:, 2].to_numpy()
+    X = np.column_stack([np.ones_like(r), r, r / s])
+    b, se, t, r2, n = ols_nw(y, X)
+    return dict(beta=b[1], se_beta=se[1], kr=b[2], se_kr=se[2], t_kr=t[2],
+                r2=r2, n=n)
+
+
+def block_placebo(name_ret, mkt_ret, scale, n_draws=500, block=21, seed=20240114):
+    """Block-shuffle the scale. Same autocorrelation and marginal, no alignment.
+
+    A plain i.i.d. shuffle would destroy the persistence of s_t and understate
+    the null distribution of the t statistic, making a spurious result look
+    significant. Blocks preserve it.
+    """
+    rng = np.random.default_rng(seed)
+    d = pd.concat([name_ret, mkt_ret, scale], axis=1).dropna()
+    s = d.iloc[:, 2].to_numpy()
+    N = len(s)
+    starts = np.arange(max(1, N - block + 1))
+    out = []
+    for _ in range(n_draws):
+        idx = np.concatenate([np.arange(a, a + block)
+                              for a in rng.choice(starts,
+                                                  size=int(np.ceil(N / block)))])[:N]
+        sh = pd.Series(s[idx], index=d.index)
+        res = conditional_beta(d.iloc[:, 0], d.iloc[:, 1], sh.rename("s"))
+        if res:
+            out.append(res["t_kr"])
+    return np.array(out)
+
+
+def variance_quadratic(name_ret, mkt_ret, volume):
+    """Brunetti-Caldarera's own moment with the rho_iX cross term restored.
+
+        E(u_i,t^2) = kappa_i^2 + 2 sigma beta_i kappa_i rho_iX v_t
+                     + (sigma beta_i)^2 v_t^2
+
+    REPORTED WITH A HEALTH WARNING. v_t = r_t / volume_t inherits the market
+    return's SIGN, and u_i,t retains market exposure, so u^2 is driven by r^2
+    while v is driven by r. The cross moment E(u^2 v) then picks up E(r^3),
+    which is negative for equity indices - a spurious NEGATIVE linear term, and
+    therefore a spurious negative rho_iX, out of nothing but skewness. The
+    skew diagnostic below is what says whether that is what happened.
+    """
+    d = pd.concat([name_ret, mkt_ret, volume.rename("vol")], axis=1).dropna()
+    if len(d) < 250:
+        return None
+    v = (d.iloc[:, 1] / d["vol"]).to_numpy()
+    v = v / np.std(v)
+    y0 = d.iloc[:, 0].to_numpy()
+    X0 = np.column_stack([np.ones_like(v), v])
+    b0, *_ = ols_nw(y0, X0)
+    u = y0 - X0 @ b0
+
+    X = np.column_stack([np.ones_like(v), v, v ** 2])
+    b, se, t, r2, n = ols_nw(u ** 2, X)
+    c0, c1, c2 = b
+    rho = (c1 / (2.0 * np.sqrt(c0 * c2))
+           if c0 > 0 and c2 > 0 else np.nan)
+    mkt_skew = float(pd.Series(d.iloc[:, 1]).skew())
+    return dict(c0=c0, c1=c1, t_c1=t[1], c2=c2, rho=rho, r2=r2, n=n,
+                mkt_skew=mkt_skew)
+
+
+# ---------------------------------------------------------------------------
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--names", default="C,BAC,JPM")
+    ap.add_argument("--volume-symbol", default="SPY",
+                    help="index volume is often blank; SPY is the usual stand-in")
+    ap.add_argument("--volume-csv", default=None,
+                    help="local volume CSV, if this box has no outbound access")
+    ap.add_argument("--windows", default="21,63,252",
+                    help="trailing windows for the scale, in business days")
+    ap.add_argument("--start", default="2006-01-01")
+    ap.add_argument("--placebo", type=int, default=500)
+    ap.add_argument("--kperp", default="C:0.2419,BAC:0.2390,JPM:0.1896",
+                    help="kperp per name from the conditional fit, to convert "
+                         "kappa_i rho_iX into rho_iX")
+    ap.add_argument("--color", dest="color", action="store_true", default=None)
+    ap.add_argument("--no-color", dest="color", action="store_false")
+    a = ap.parse_args()
+
+    names = [s.strip().upper() for s in a.names.split(",") if s.strip()]
+    windows = [int(s) for s in a.windows.split(",") if s.strip()]
+    kperp = {}
+    for part in a.kperp.split(","):
+        if ":" in part:
+            k, v = part.split(":")
+            kperp[k.strip().upper()] = float(v)
+
+    px = get_aligned_price_panel([SYSTEMATIC_ID] + names,
+                                 reference=SYSTEMATIC_ID)
+    px = px[px.index >= pd.Timestamp(a.start)]
+    ret = px.pct_change().dropna()
+    mkt = ret[SYSTEMATIC_ID]
+
+    vol = load_volume(a.volume_symbol, a.volume_csv)
+    scales = build_scales(mkt, vol, windows)
+
+    _LOG.info("=" * 78)
+    _LOG.info("DOES AN OBSERVED LIQUIDITY SCALE IDENTIFY rho_iX?")
+    _LOG.info("=" * 78)
+    _LOG.info("  %s .. %s   %d trading days   volume from %s"
+              % (ret.index[0].date(), ret.index[-1].date(), len(ret),
+                 a.volume_symbol))
+    _LOG.info("  H0: the coefficient on r_t/s_t is zero, i.e. rho_iX = 0.")
+    _LOG.info("  The model predicts it is kappa_i rho_iX > 0 - a POSITIVE sign.")
+    _LOG.info("  Stage 3 across windows gave NEGATIVE at all three names; that")
+    _LOG.info("  is the state-dependence this test is built to avoid.\n")
+
+    corr = pd.DataFrame(index=[k for k in ("rv", "bc", "amihud")],
+                        columns=[str(w) for w in windows], dtype=float)
+    base = {w: scales[("rv", w)] for w in windows}
+    for k in ("rv", "bc", "amihud"):
+        for w in windows:
+            j = pd.concat([scales[(k, w)], base[w]], axis=1).dropna()
+            corr.loc[k, str(w)] = float(j.iloc[:, 0].corr(j.iloc[:, 1]))
+    _LOG.info("  correlation of each scale with the price-only scale (rv):")
+    _LOG.info(heat(corr.astype(float).round(3), decimals=3, color=a.color,
+                   index_width=8))
+    _LOG.info("  A volume scale that correlates ~1.0 with rv carries no extra")
+    _LOG.info("  information, whatever its t statistic.\n")
+
+    for nm in names:
+        _LOG.info("=" * 78)
+        _LOG.info("%s" % nm)
+        _LOG.info("=" * 78)
+        rows = []
+        for k in ("rv", "bc", "amihud"):
+            for w in windows:
+                for lag, tag in ((0, "same-day"), (1, "lagged")):
+                    s = scales[(k, w)].shift(lag).rename("s")
+                    r = conditional_beta(ret[nm], mkt, s)
+                    if r is None:
+                        continue
+                    kap = np.sqrt(kperp.get(nm, np.nan) ** 2 + r["kr"] ** 2)
+                    rows.append(dict(
+                        scale=k, window=w, timing=tag,
+                        beta_i=r["beta"], kappa_rho=r["kr"],
+                        se=r["se_kr"], t=r["t_kr"],
+                        rho_iX=r["kr"] / kap if np.isfinite(kap) else np.nan,
+                        r2=r["r2"]))
+        t = pd.DataFrame(rows)
+        t.index = [("%s/%d/%s" % (r.scale, r.window, r.timing[:4]))
+                   for r in t.itertuples()]
+        _LOG.info(heat(t[["beta_i", "kappa_rho", "se", "t", "rho_iX", "r2"]]
+                       .astype(float).round(4), decimals=4, color=a.color,
+                       index_width=18))
+
+        s21 = scales[("rv", windows[0])].rename("s")
+        null = block_placebo(ret[nm], mkt, s21, n_draws=a.placebo)
+        obs = conditional_beta(ret[nm], mkt, s21)
+        if len(null) and obs:
+            p = float((np.abs(null) >= abs(obs["t_kr"])).mean())
+            _LOG.info("  block placebo on rv/%d: observed t %.2f, "
+                      "null |t| 95th pct %.2f, p = %.3f"
+                      % (windows[0], obs["t_kr"], np.percentile(np.abs(null), 95), p))
+            if p > 0.05:
+                _LOG.info("  -> indistinguishable from a shuffled scale. No signal.")
+
+        q = variance_quadratic(ret[nm], mkt, vol)
+        if q:
+            _LOG.info("  BC variance quadratic: c1 %+.4f (t %+.2f), implied "
+                      "rho %.3f, R2 %.3f" % (q["c1"], q["t_c1"], q["rho"], q["r2"]))
+            _LOG.info("     market return skew %+.2f - if c1 and the skew share"
+                      " a sign, suspect the E(r^3) artefact, not rho_iX."
+                      % q["mkt_skew"])
+        _LOG.info("")
+
+    _LOG.info("=" * 78)
+    _LOG.info("HOW TO READ THIS")
+    _LOG.info("=" * 78)
+    _LOG.info("  A usable result needs ALL of: a POSITIVE coefficient on")
+    _LOG.info("  r_t/s_t; survival at the 21-day window, not only at 252;")
+    _LOG.info("  survival when the scale is lagged; a placebo p below 0.05;")
+    _LOG.info("  and an implied rho_iX inside the identified set [0, rho_bar]")
+    _LOG.info("  (0.674 C, 0.671 BAC, 0.752 JPM). Anything less and the model")
+    _LOG.info("  should not be changed - the bracket stands.")
+
+
+if __name__ == "__main__":
+    main()

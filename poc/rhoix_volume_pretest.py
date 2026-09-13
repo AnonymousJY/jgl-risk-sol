@@ -161,9 +161,27 @@ def ols_nw(y, X, lags=None):
     return b, se, b / np.where(se > 0, se, np.nan), 1.0 - ss_res / ss_tot, n
 
 
-def conditional_beta(name_ret, mkt_ret, scale):
-    """r_i = a + beta_i r_t + (kappa_i rho_iX) (r_t / s_t) + e."""
+def conditional_beta(name_ret, mkt_ret, scale, truncate=None):
+    """r_i = a + beta_i r_t + (kappa_i rho_iX) (r_t / s_t) + e.
+
+    TRUNCATE IS NOT OPTIONAL IN PRACTICE. The common jump makes OLS on r_t
+    return a variance-weighted BLEND of b_i and gamma_i, and the weights move
+    with s_t: a high s_t tilts the blend toward b_i, a low one toward gamma_i.
+    Since gamma_i > b_i the blend FALLS as s_t rises - the same direction as
+    kappa_i rho_iX / s_t. With the paper's own SPX parameters the jump channel
+    is 42% of daily market variance, and on simulated data with rho_iX SET TO
+    ZERO this returns an implied rho of 0.438 at t = 9.48. A textbook false
+    positive.
+
+    Mancini truncation - drop days where |r_t| > k s_t sqrt(dt), which are the
+    jump days - removes it: the same simulation returns 0.016 at t = 0.51 for
+    k = 3, while a true rho_iX of 0.50 comes back as 0.500 and its t statistic
+    IMPROVES from 8.5 to 20.9, because the jump days were noise for this
+    purpose. It costs about 2% of observations.
+    """
     d = pd.concat([name_ret, mkt_ret, scale], axis=1).dropna()
+    if truncate:
+        d = d[d.iloc[:, 1].abs() <= truncate * d.iloc[:, 2] / np.sqrt(ANNUAL)]
     if len(d) < 250:
         return None
     y = d.iloc[:, 0].to_numpy()
@@ -175,7 +193,8 @@ def conditional_beta(name_ret, mkt_ret, scale):
                 r2=r2, n=n)
 
 
-def block_placebo(name_ret, mkt_ret, scale, n_draws=500, block=21, seed=20240114):
+def block_placebo(name_ret, mkt_ret, scale, n_draws=500, block=21,
+                  seed=20240114, truncate=3.0):
     """Block-shuffle the scale. Same autocorrelation and marginal, no alignment.
 
     A plain i.i.d. shuffle would destroy the persistence of s_t and understate
@@ -193,7 +212,8 @@ def block_placebo(name_ret, mkt_ret, scale, n_draws=500, block=21, seed=20240114
                               for a in rng.choice(starts,
                                                   size=int(np.ceil(N / block)))])[:N]
         sh = pd.Series(s[idx], index=d.index)
-        res = conditional_beta(d.iloc[:, 0], d.iloc[:, 1], sh.rename("s"))
+        res = conditional_beta(d.iloc[:, 0], d.iloc[:, 1], sh.rename("s"),
+                               truncate=truncate)
         if res:
             out.append(res["t_kr"])
     return np.array(out)
@@ -245,6 +265,10 @@ def main():
     ap.add_argument("--windows", default="21,63,252",
                     help="trailing windows for the scale, in business days")
     ap.add_argument("--start", default="2006-01-01")
+    ap.add_argument("--truncate", type=float, default=3.0,
+                    help="Mancini jump truncation: drop |r_t| > k s_t sqrt(dt). "
+                         "Without it the common jump manufactures a rho_iX of "
+                         "0.44 out of nothing - see conditional_beta.__doc__")
     ap.add_argument("--placebo", type=int, default=500)
     ap.add_argument("--kperp", default="C:0.2419,BAC:0.2390,JPM:0.1896",
                     help="kperp per name from the conditional fit, to convert "
@@ -301,9 +325,11 @@ def main():
         rows = []
         for k in ("rv", "bc", "amihud"):
             for w in windows:
-                for lag, tag in ((0, "same-day"), (1, "lagged")):
+                for lag, tr, tag in ((0, a.truncate, "trunc"),
+                                     (1, a.truncate, "lag"),
+                                     (0, None, "RAW")):
                     s = scales[(k, w)].shift(lag).rename("s")
-                    r = conditional_beta(ret[nm], mkt, s)
+                    r = conditional_beta(ret[nm], mkt, s, truncate=tr)
                     if r is None:
                         continue
                     kap = np.sqrt(kperp.get(nm, np.nan) ** 2 + r["kr"] ** 2)
@@ -314,15 +340,16 @@ def main():
                         rho_iX=r["kr"] / kap if np.isfinite(kap) else np.nan,
                         r2=r["r2"]))
         t = pd.DataFrame(rows)
-        t.index = [("%s/%d/%s" % (r.scale, r.window, r.timing[:4]))
+        t.index = [("%s/%d/%s" % (r.scale, r.window, r.timing))
                    for r in t.itertuples()]
         _LOG.info(heat(t[["beta_i", "kappa_rho", "se", "t", "rho_iX", "r2"]]
                        .astype(float).round(4), decimals=4, color=a.color,
                        index_width=18))
 
         s21 = scales[("rv", windows[0])].rename("s")
-        null = block_placebo(ret[nm], mkt, s21, n_draws=a.placebo)
-        obs = conditional_beta(ret[nm], mkt, s21)
+        null = block_placebo(ret[nm], mkt, s21, n_draws=a.placebo,
+                             truncate=a.truncate)
+        obs = conditional_beta(ret[nm], mkt, s21, truncate=a.truncate)
         if len(null) and obs:
             p = float((np.abs(null) >= abs(obs["t_kr"])).mean())
             _LOG.info("  block placebo on rv/%d: observed t %.2f, "
@@ -346,7 +373,10 @@ def main():
     _LOG.info("  A usable result needs ALL of: a POSITIVE coefficient on")
     _LOG.info("  r_t/s_t; survival at the 21-day window, not only at 252;")
     _LOG.info("  survival when the scale is lagged; a placebo p below 0.05;")
-    _LOG.info("  and an implied rho_iX inside the identified set [0, rho_bar]")
+    _LOG.info("  an implied rho_iX inside the identified set [0, rho_bar]")
+    _LOG.info("  and - decisively - a RAW row far above the trunc row, since")
+    _LOG.info("  that gap IS the jump artefact. A trunc row near zero with a")
+    _LOG.info("  large RAW row means the signal was never there.")
     _LOG.info("  (0.674 C, 0.671 BAC, 0.752 JPM). Anything less and the model")
     _LOG.info("  should not be changed - the bracket stands.")
 

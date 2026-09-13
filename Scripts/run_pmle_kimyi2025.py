@@ -26,6 +26,7 @@ import time
 import numpy as np
 import pandas as pd
 import os
+import sys
 import multiprocessing
 # forkserver, not fork. fork() in a process that has already started
 # threads is unsafe; Python 3.12+ warns and 3.14 changes the Linux
@@ -37,6 +38,17 @@ multiprocessing.set_start_method(
 
 from concurrent.futures import ProcessPoolExecutor
 from typing import List
+
+# Same sys.path bootstrap the other Scripts/ entry points carry (see
+# compute_wald_ci.py, mcmc_empirical_bayes.py and eight others). Without it
+# `python Scripts/run_pmle_kimyi2025.py` puts Scripts/ on sys.path but not the
+# repo root, so `from Scripts...` and `from Library...` both fail. It works
+# from PyCharm only because PyCharm adds the content root itself.
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_SCRIPTS_DIR)
+for _path in (_REPO_ROOT, _SCRIPTS_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from Scripts.load_portfolio import get_idiosyncratic_ids
 from Library.DataAccess import (

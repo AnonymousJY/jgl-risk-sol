@@ -176,15 +176,29 @@ if __name__ == "__main__":
     return_ts = price_ts.pct_change().dropna()
 
     # --- incremental work set: skip dates that already have a CSV ------------
+    # JGL_PMLE_FORCE=1 re-estimates everything and ignores the cache.
+    #
+    # The cache is keyed on (valuation date, underlying) and NOTHING ELSE, so
+    # it cannot tell that the MODEL changed. After a change to the likelihood
+    # - the Theorem 3.1 drift sign, a prior, the jump specification - this loop
+    # skips every date and the script exits having done nothing, with no error.
+    # The symptoms are "pairs: 0" in the two log lines below, and a downstream
+    # before/after comparison in which every parameter moves by exactly 0.0.
+    # Set the flag whenever the reason for re-running is the model rather than
+    # new data.
+    force = os.environ.get("JGL_PMLE_FORCE", "").strip().lower() in {"1", "true", "yes"}
+    if force:
+        _LOG.warning("JGL_PMLE_FORCE set - ignoring the parameter cache and "
+                     "re-estimating every date. Existing CSVs are overwritten.")
     set_to_valuate_systematic = [
         dt for dt in valuation_window_str
-        if not pmle_params_exists(dt, systematic_id)
+        if force or not pmle_params_exists(dt, systematic_id)
     ]
     set_to_valuate_idiosyncratic = [
         (dt, idi_id)
         for dt in valuation_window_str
         for idi_id in idiosyncratic_ids
-        if not pmle_params_exists(dt, idi_id)
+        if force or not pmle_params_exists(dt, idi_id)
     ]
     _LOG.info(f"Systematic dates to estimate:   {len(set_to_valuate_systematic)}")
     _LOG.info(f"Idiosyncratic (date, id) pairs: {len(set_to_valuate_idiosyncratic)}")

@@ -1,9 +1,18 @@
 # Ensure package imports resolve regardless of cwd.
+#
+# BOTH directories, not just the repo root. get_idiosyncratic_ids() below does
+# a bare `import config_skew`, which needs Scripts/ itself on sys.path; the
+# repo root alone only resolves `Scripts...` and `Library...`. Relying on the
+# caller to have added Scripts/ made this module's own entry point depend on
+# how it was invoked - it worked from PyCharm and from `python -m`, and failed
+# as `python Scripts/run_pmle_kimyi2025.py` with PYTHONPATH=. set.
 import sys as _sys
 from pathlib import Path as _Path
-_REPO_ROOT = _Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in _sys.path:
-    _sys.path.insert(0, str(_REPO_ROOT))
+_SCRIPTS_DIR = _Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPTS_DIR.parent
+for _p in (_REPO_ROOT, _SCRIPTS_DIR):
+    if str(_p) not in _sys.path:
+        _sys.path.insert(0, str(_p))
 
 from typing import List
 from collections import namedtuple

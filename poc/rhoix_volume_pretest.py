@@ -233,7 +233,10 @@ def within_year(name_ret, mkt_ret, scale, truncate=3.0):
     X = np.column_stack([yr * d["r"].to_numpy()[:, None],
                          (d["r"] / d["s"]).to_numpy()])
     b, se, t, r2, n = ols_nw(d["y"].to_numpy(), X)
-    return dict(kr=b[-1], se_kr=se[-1], t_kr=t[-1], r2=r2, n=n, beta=np.nan)
+    # b[:-1] are the per-year betas; report their mean so the column is
+    # comparable with the pooled rows rather than NaN.
+    return dict(kr=b[-1], se_kr=se[-1], t_kr=t[-1], r2=r2, n=n,
+                beta=float(np.mean(b[:-1])))
 
 
 def block_placebo(name_ret, mkt_ret, scale, n_draws=500, block=21,
@@ -331,8 +334,8 @@ def main():
             k, v = part.split(":")
             kperp[k.strip().upper()] = float(v)
 
-    px = get_aligned_price_panel([SYSTEMATIC_ID] + names,
-                                 reference=SYSTEMATIC_ID)
+    px, _ = get_aligned_price_panel([SYSTEMATIC_ID] + names,
+                                    reference=SYSTEMATIC_ID)
     px = px[px.index >= pd.Timestamp(a.start)]
     ret = px.pct_change().dropna()
     mkt = ret[SYSTEMATIC_ID]
@@ -422,11 +425,12 @@ def main():
     _LOG.info("  r_t/s_t; survival at the 21-day window, not only at 252;")
     _LOG.info("  survival when the scale is lagged; a placebo p below 0.05;")
     _LOG.info("  an implied rho_iX inside the identified set [0, rho_bar]")
-    _LOG.info("  and - decisively - a RAW row far above the trunc row, since")
-    _LOG.info("  that gap IS the jump artefact. A trunc row near zero with a")
-    _LOG.info("  large RAW row means the signal was never there.")
-    _LOG.info("  (0.674 C, 0.671 BAC, 0.752 JPM). Anything less and the model")
-    _LOG.info("  should not be changed - the bracket stands.")
+    _LOG.info("  (0.674 C, 0.671 BAC, 0.752 JPM); and presence in the WITHIN")
+    _LOG.info("  rows, not only the pooled ones - that gap is beta_i drift.")
+    _LOG.info("  A large pooledRAW row beside a null WITHIN row is the jump")
+    _LOG.info("  artefact plus the drift, not a signal.")
+    _LOG.info("  Anything less and the model should not be changed: the")
+    _LOG.info("  bracket stands and rho_iX is reported as a set, not a number.")
 
 
 if __name__ == "__main__":

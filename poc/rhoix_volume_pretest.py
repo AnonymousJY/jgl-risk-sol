@@ -106,7 +106,7 @@ def load_volume(symbol, csv_path=None):
     return v.replace(0.0, np.nan)
 
 
-def build_scales(mkt_ret, volume, windows):
+def build_scales(mkt_ret, volume, windows, detrend=252):
     """Observed proxies for the systematic diffusion scale, ANNUALISED.
 
     rv      trailing realised volatility of the market. PRICE ONLY.
@@ -120,9 +120,19 @@ def build_scales(mkt_ret, volume, windows):
     volume scale inherits rv's calibration.
     """
     px = (1.0 + mkt_ret).cumprod()
+    v = volume.reindex(mkt_ret.index)
+    # DETREND FIRST. r_t/V_t has units of 1/shares and inherits volume's
+    # secular growth inverted, so a scale built from it drifts across a
+    # 20-year sample even when market liquidity does not. Dividing volume by
+    # its own trailing year makes the ratio DIMENSIONLESS and stationary -
+    # today's volume relative to its own recent normal - which is what the
+    # measure was always meant to mean. Returns are already unitless, so only
+    # the volume side needs this.
+    v_rel = v / v.rolling(detrend).mean()
+    dv_rel = (v * px) / (v * px).rolling(detrend).mean()
     raw = {
-        "bc": (mkt_ret.abs() / volume.reindex(mkt_ret.index)),
-        "amihud": (mkt_ret.abs() / (volume.reindex(mkt_ret.index) * px)),
+        "bc": mkt_ret.abs() / v_rel,
+        "amihud": mkt_ret.abs() / dv_rel,
     }
     out = {}
     for w in windows:
@@ -193,6 +203,39 @@ def conditional_beta(name_ret, mkt_ret, scale, truncate=None):
                 r2=r2, n=n)
 
 
+def within_year(name_ret, mkt_ret, scale, truncate=3.0):
+    """Same regression, but beta_i is free to differ EVERY YEAR.
+
+    b_i,t = beta_i(t) + kappa_i rho_iX / s_t. beta_i drifts over the cycle -
+    C's b_i runs 1.74 in 2009 to 1.05 in 2025 - and any scale that also drifts
+    is confounded with it. That is Route 3's failure returning at the
+    low-frequency end, and it is NOT specific to volume: on simulated data with
+    rho_iX = 0, a drifting beta_i produces a spurious coefficient at t = -3.4
+    even with a PRICE-ONLY scale.
+
+    Interacting r_t with year dummies lets beta_i move freely across years, so
+    kappa_i rho_iX is identified only from WITHIN-year variation in s_t, where
+    beta_i is constant. On the same simulation this restores the null at all
+    three scales (t = -0.78, 0.29, 1.63 against a truth of zero).
+
+    IT COSTS MAGNITUDE. Within-year variation is a small slice of the total, so
+    errors-in-variables in the proxy bites hard: with a true rho_iX of 0.50 the
+    three scales return 0.29, 0.56 and 0.20. Treat this as a TEST of whether
+    the signal exists, not as an estimator of how big it is.
+    """
+    d = pd.concat([name_ret.rename("y"), mkt_ret.rename("r"),
+                   scale.rename("s")], axis=1).dropna()
+    if truncate:
+        d = d[d["r"].abs() <= truncate * d["s"] / np.sqrt(ANNUAL)]
+    if len(d) < 250:
+        return None
+    yr = pd.get_dummies(d.index.year).to_numpy(float)
+    X = np.column_stack([yr * d["r"].to_numpy()[:, None],
+                         (d["r"] / d["s"]).to_numpy()])
+    b, se, t, r2, n = ols_nw(d["y"].to_numpy(), X)
+    return dict(kr=b[-1], se_kr=se[-1], t_kr=t[-1], r2=r2, n=n, beta=np.nan)
+
+
 def block_placebo(name_ret, mkt_ret, scale, n_draws=500, block=21,
                   seed=20240114, truncate=3.0):
     """Block-shuffle the scale. Same autocorrelation and marginal, no alignment.
@@ -212,8 +255,8 @@ def block_placebo(name_ret, mkt_ret, scale, n_draws=500, block=21,
                               for a in rng.choice(starts,
                                                   size=int(np.ceil(N / block)))])[:N]
         sh = pd.Series(s[idx], index=d.index)
-        res = conditional_beta(d.iloc[:, 0], d.iloc[:, 1], sh.rename("s"),
-                               truncate=truncate)
+        res = within_year(d.iloc[:, 0], d.iloc[:, 1], sh.rename("s"),
+                          truncate=truncate)
         if res:
             out.append(res["t_kr"])
     return np.array(out)
@@ -269,6 +312,9 @@ def main():
                     help="Mancini jump truncation: drop |r_t| > k s_t sqrt(dt). "
                          "Without it the common jump manufactures a rho_iX of "
                          "0.44 out of nothing - see conditional_beta.__doc__")
+    ap.add_argument("--detrend", type=int, default=252,
+                    help="window for normalising volume to its own recent "
+                         "normal, making the measure dimensionless")
     ap.add_argument("--placebo", type=int, default=500)
     ap.add_argument("--kperp", default="C:0.2419,BAC:0.2390,JPM:0.1896",
                     help="kperp per name from the conditional fit, to convert "
@@ -292,7 +338,7 @@ def main():
     mkt = ret[SYSTEMATIC_ID]
 
     vol = load_volume(a.volume_symbol, a.volume_csv)
-    scales = build_scales(mkt, vol, windows)
+    scales = build_scales(mkt, vol, windows, detrend=a.detrend)
 
     _LOG.info("=" * 78)
     _LOG.info("DOES AN OBSERVED LIQUIDITY SCALE IDENTIFY rho_iX?")
@@ -325,11 +371,13 @@ def main():
         rows = []
         for k in ("rv", "bc", "amihud"):
             for w in windows:
-                for lag, tr, tag in ((0, a.truncate, "trunc"),
-                                     (1, a.truncate, "lag"),
-                                     (0, None, "RAW")):
+                for lag, tr, fn, tag in (
+                        (0, a.truncate, within_year, "WITHIN"),
+                        (1, a.truncate, within_year, "WITHINlag"),
+                        (0, a.truncate, conditional_beta, "pooled"),
+                        (0, None, conditional_beta, "pooledRAW")):
                     s = scales[(k, w)].shift(lag).rename("s")
-                    r = conditional_beta(ret[nm], mkt, s, truncate=tr)
+                    r = fn(ret[nm], mkt, s, truncate=tr)
                     if r is None:
                         continue
                     kap = np.sqrt(kperp.get(nm, np.nan) ** 2 + r["kr"] ** 2)
@@ -349,7 +397,7 @@ def main():
         s21 = scales[("rv", windows[0])].rename("s")
         null = block_placebo(ret[nm], mkt, s21, n_draws=a.placebo,
                              truncate=a.truncate)
-        obs = conditional_beta(ret[nm], mkt, s21, truncate=a.truncate)
+        obs = within_year(ret[nm], mkt, s21, truncate=a.truncate)
         if len(null) and obs:
             p = float((np.abs(null) >= abs(obs["t_kr"])).mean())
             _LOG.info("  block placebo on rv/%d: observed t %.2f, "

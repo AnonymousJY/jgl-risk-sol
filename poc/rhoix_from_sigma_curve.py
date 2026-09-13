@@ -76,7 +76,20 @@ def phi_series(idf, sdf):
     components is not the component of means, and each window's phi_i belongs
     with its own sigma rather than the year's.
     """
-    m = idf.merge(sdf[["dt", "dSIGMA"]], on="dt", how="inner")
+    # The idiosyncratic CSV carries the FULL eleven-parameter row, systematic
+    # constants included, so it already holds the sigma that fit was run with.
+    # Merging the systematic frame in as well produced dSIGMA_x / dSIGMA_y and
+    # a KeyError. Prefer the file's own sigma - it is by construction the one
+    # paired with this window's phi_i - and merge only if it is absent.
+    if "dSIGMA" in idf.columns:
+        m = idf.copy()
+    else:
+        m = idf.merge(sdf[["dt", "dSIGMA"]], on="dt", how="inner")
+    need = ["dSIGMA", "dBETAI", "dKAPPAI", "dRHOIX"]
+    missing = [c for c in need if c not in m.columns]
+    if missing:
+        raise SystemExit("drawer is missing %s; columns present: %s"
+                         % (", ".join(missing), ", ".join(sorted(m.columns))))
     s, b = m["dSIGMA"].to_numpy(), m["dBETAI"].to_numpy()
     k, r = m["dKAPPAI"].to_numpy(), m["dRHOIX"].to_numpy()
     m["phi"] = np.sqrt(np.maximum((s * b) ** 2 + 2 * s * b * k * r + k ** 2, 0.0))

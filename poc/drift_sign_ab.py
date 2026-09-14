@@ -77,6 +77,7 @@ def draws(idata):
         "kappa": np.exp(po["kappai"].values.ravel()),
         "beta": np.exp(po["betai"].values.ravel()),
         "rho": np.tanh(po["rhoix"].values.ravel()),
+        "gamma": np.exp(po["gammai"].values.ravel()),
     }
 
 
@@ -105,6 +106,7 @@ def main():
     price = get_price_panel([SYSTEMATIC_ID] + list(names))
     rets = price.pct_change().dropna()
 
+    traces = {}
     print("dates %s   names %s   seed %d\n" % (window, list(names), int(SEED)))
     rows = []
     for dt in window:
@@ -114,6 +116,7 @@ def main():
             r = rets.loc[rets.index <= dt, nm].iloc[-LOOKBACK:].to_numpy()
             (old, id_old) = fit(r, params_sys, minus=True)
             (new, id_new) = fit(r, params_sys, minus=False)
+            traces[(dt, nm)] = (draws(id_old), draws(id_new))
             row = {"date": dt, "name": nm}
             for p in IDI_PARAMS:
                 row[p + "_old"] = old[p].dMEAN
@@ -187,6 +190,63 @@ def main():
     print("\n   A non-zero move here is the sampler's own run-to-run tolerance,")
     print("   not the sign. It bounds how much of the dMUI move in (a) could")
     print("   be anything other than the reparameterisation.")
+
+    print("\n(a3) EXACT PREDICTION: reweight the OLD posterior")
+    print("     The likelihood reparameterises exactly, mui -> mui - s. The")
+    print("     PRIOR does not: re-centring mui tilts the posterior by")
+    print("     w = N(mui-s)/N(mui). Every draw of the old run therefore")
+    print("     predicts the new run once reweighted - including the small")
+    print("     moves in beta, kappa, rho and gamma that")
+    print("     (b) reports, which are NOT sampler noise but this same tilt.")
+    mu0, tau = _mui_prior()
+    print("     (prior read from IDIOSYNCRATIC_PRIORS: mean %.3g sd %.3g)"
+          % (mu0, tau))
+    out = []
+    for (dt, nm), (do, dn) in traces.items():
+        sig = float(d.loc[(d.date == dt) & (d.name == nm), "sigma"].iloc[0])
+        s_o = 2.0 * sig * do["beta"] * do["kappa"] * do["rho"]
+        logw = ((do["mu"] - mu0) * s_o - 0.5 * s_o ** 2) / tau ** 2
+        w = np.exp(logw - logw.max())
+        ess = w.sum() ** 2 / (w ** 2).sum()
+        row = {"date": dt, "name": nm,
+               "ESS/N": ess / len(w),
+               "sd(mui)": do["mu"].std()}
+        for key, lab in (("mu", "dMUI"), ("beta", "dBETAI"),
+                         ("kappa", "dKAPPAI"), ("rho", "dRHOIX"),
+                         ("gamma", "dGAMMAI")):
+            v = do[key] - s_o if key == "mu" else do[key]
+            row[lab + " pred"] = float(np.average(v, weights=w))
+            row[lab + " actual"] = float(dn[key].mean())
+        out.append(row)
+    o = pd.DataFrame(out)
+    for lab in ["dMUI", "dBETAI", "dKAPPAI", "dRHOIX", "dGAMMAI"]:
+        o[lab + " err"] = o[lab + " pred"] - o[lab + " actual"]
+    print(o[["date", "name", "ESS/N", "sd(mui)",
+             "dMUI pred", "dMUI actual", "dMUI err"]].to_string(
+        index=False, float_format=lambda x: "%+.6f" % x))
+    print()
+    print(o[["date", "name"] + [c for lab in ["dBETAI", "dKAPPAI", "dRHOIX"]
+                                for c in (lab + " pred", lab + " actual")]
+            ].to_string(index=False, float_format=lambda x: "%+.5f" % x))
+    worst_mu = o["dMUI err"].abs().max()
+    print("\n     max |prediction error| on E[mui]  %.3e" % worst_mu)
+    print("     compare with the raw shift it is explaining, %.3e" % scale)
+    print("     %s" % ("PASS - the flip is exactly the reparameterisation, "
+                       "prior tilt included"
+                       if worst_mu < 0.15 * scale else
+                       "**FAIL** - something beyond the reparameterisation "
+                       "moved"))
+
+
+def _mui_prior():
+    """Mean and sd of the mui prior actually in force."""
+    try:
+        kind, kw = eng.IDIOSYNCRATIC_PRIORS["mui"]
+        if kind == "Normal":
+            return float(kw.get("mu", 0.0)), float(kw.get("sigma", 1.0))
+    except Exception:
+        pass
+    return 0.0, 1.0
 
 
 if __name__ == "__main__":

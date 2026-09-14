@@ -203,8 +203,29 @@ def verify(before_dir, after_dir):
     if m.empty:
         raise SystemExit("no (date, underlying) rows in common")
     m = m[m.dBETAI_b.abs() > 0]              # drop the systematic-only rows
+
+    # Rows the runner did not visit are byte-identical carry-overs: the
+    # parameter cache holds every (date, underlying) ever estimated, across
+    # arms and configurations, while one run only covers its own valuation
+    # window. Averaging the handful that moved against thousands of exact
+    # zeros would report that nothing happened. Exact equality across every
+    # parameter cannot arise between two MCMC runs, so it is a safe marker.
+    cols = [c for c in ["dMUI"] + OTHERS if c + "_b" in m.columns]
+    untouched = np.ones(len(m), dtype=bool)
+    for c in cols:
+        untouched &= m[c + "_b"].to_numpy() == m[c + "_a"].to_numpy()
+    n_carry = int(untouched.sum())
+    m = m[~untouched]
     n = len(m)
-    print("%d idiosyncratic rows matched\n" % n)
+    if n_carry:
+        print("%d carry-over rows excluded (identical in both runs - outside "
+              "this run's valuation window)" % n_carry)
+    if n == 0:
+        raise SystemExit(
+            "nothing was re-estimated. Check the runner's log for "
+            "\"pairs: 0\", and set JGL_PMLE_FORCE=1 when the MODEL changed "
+            "rather than the data.")
+    print("%d re-estimated rows compared\n" % n)
 
     pred = 2.0 * m.dSIGMA_b * m.dBETAI_b * m.dKAPPAI_b * m.dRHOIX_b
     got = m.dMUI_b - m.dMUI_a

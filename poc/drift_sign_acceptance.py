@@ -73,6 +73,27 @@ def load(directory):
     missing = [c for c in KEY + CROSS + ["dMUI"] if c not in df.columns]
     if missing:
         raise SystemExit("columns missing from the CSVs: %s" % missing)
+
+    # A (date, underlying) must appear once. Twice means the directory holds a
+    # nested copy of itself - `cp -r src dst` with dst ALREADY EXISTING copies
+    # src INTO dst rather than replacing it, so running the snapshot command a
+    # second time buries a second generation one level down. Left alone that
+    # doubles every row through the merge and, worse, the nested generation may
+    # be from the other side of the change, which makes the comparison compare
+    # a run against itself. Refuse rather than guess which copy is meant.
+    dup = df.duplicated(subset=KEY, keep=False)
+    if dup.any():
+        sub = sorted({os.path.relpath(os.path.dirname(q), directory).split(os.sep)[0]
+                      for q in paths})
+        raise SystemExit(
+            "%d of %d rows in %r share a (date, underlying) key.\n"
+            "The directory almost certainly contains a nested copy of itself.\n"
+            "Top-level entries found: %s\n"
+            "Remove the nested generation, or re-take the snapshot with\n"
+            "    rm -rf <snapshot> && cp -r <cache> <snapshot>\n"
+            "so that <snapshot> is replaced rather than copied into."
+            % (int(dup.sum()), len(df), directory, ", ".join(sub[:8])))
+
     return df.sort_values(KEY).reset_index(drop=True)
 
 

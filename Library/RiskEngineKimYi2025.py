@@ -1287,8 +1287,20 @@ def pmle_kimyirisk_idiosyncratic(
         n_mc_paths: int = 10_000,
         nuts_sampler: Literal["pymc", "nutpie", "jax", "numpyro", "blackjax"] = "nutpie",
         is_progress_bar: bool = False,
-        priors: dict = None
-) -> dict:
+        priors: dict = None,
+        return_idata: bool = False
+):
+    """Estimate the five idiosyncratic parameters for one (date, asset).
+
+    return_idata=True additionally returns the InferenceData, as
+    ``(results, idata)``. The summary dict carries posterior MEANS, and a mean
+    is not enough for any question about a PRODUCT of parameters: on the
+    identification ridge beta_i, kappa_i and rho_iX are strongly dependent, so
+    E[beta kappa rho] is not E[beta] E[kappa] E[rho]. Diagnostics that need the
+    joint - the drift-sign check in poc/, anything touching sigma*beta*kappa*rho
+    - must work from the draws. Default False, so every existing caller is
+    unchanged.
+    """
     SEED = np.uint64(seed_number)
     Delta_t = delta_t
 
@@ -1367,13 +1379,14 @@ def pmle_kimyirisk_idiosyncratic(
     b_m, b_lo, b_hi = summarize(idata_idiosyncratic, "betai", transform=np.exp)
     r_m, r_lo, r_hi = summarize(idata_idiosyncratic, "rhoix", transform=np.tanh)
 
-    return {
+    results = {
         'dMUI': ParamsResults(dMEAN=mu_m, dCI_LOWER=mu_lo, dCI_UPPER=mu_hi),
         'dKAPPAI': ParamsResults(dMEAN=k_m, dCI_LOWER=k_lo, dCI_UPPER=k_hi),
         'dGAMMAI': ParamsResults(dMEAN=g_m, dCI_LOWER=g_lo, dCI_UPPER=g_hi),
         'dBETAI': ParamsResults(dMEAN=b_m, dCI_LOWER=b_lo, dCI_UPPER=b_hi),
         'dRHOIX': ParamsResults(dMEAN=r_m, dCI_LOWER=r_lo, dCI_UPPER=r_hi)
     }
+    return (results, idata_idiosyncratic) if return_idata else results
 
 
 class KimYiRiskEngine:

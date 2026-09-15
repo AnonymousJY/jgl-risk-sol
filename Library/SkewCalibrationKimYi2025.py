@@ -190,12 +190,23 @@ class KimYiSkewCalibrationIdiosyncratic(SkewCalibrationBase):
     assumption but a consequence of the model. The same argument pins
     sigma_Q = sigma_P on the systematic side.
 
-    That leaves gamma_i as the name's only free Q parameter. Note that the
-    strict reading of the same argument would pin gamma_i too: it is a
-    pathwise loading, so the name moves gamma_i times as far as the index on
-    the same jump under either measure. Fitting it here is the ONE place the
-    model allows a name-specific jump risk premium, and it should be stated
-    as such rather than left implicit - a referee will ask.
+    That leaves gamma_i as the name's only free Q parameter, AND THAT IS
+    WHERE THE PREMIUM BELONGS. The strict reading of the same Girsanov
+    argument would pin gamma_i too - it is a pathwise loading, so the name
+    moves gamma_i times as far as the index on any given jump under either
+    measure. So gamma_i_Q != gamma_i_P is not a structural difference but a
+    PRICING WEDGE: the name's own jump risk premium.
+
+    Putting the wedge there is what the evidence says. Bollerslev and Todorov
+    (2011) find that much of the equity and variance risk premium is
+    compensation for jump TAIL risk rather than diffusive risk; Bakshi et al.
+    (2003) find that the channel through which individual equity options
+    price differently from index options is SKEW. In this model the level of
+    the smile is phi_i and its skew is gamma_i, through eta1/gamma_i and
+    eta2/gamma_i. Confining the measure change to the jump channel therefore
+    puts the premium where it is documented to be, and gamma_i_Q / gamma_i_P
+    becomes a measurable name-level jump risk premium rather than a fitting
+    residual.
 
     LIQUIDITY_SKEW_FIT_PHI=1 in the calibration script frees phi_i as a
     second parameter. That is a misspecification diagnostic, not an

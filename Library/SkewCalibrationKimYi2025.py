@@ -4,7 +4,7 @@ from scipy.optimize import newton
 # from Library.RootFinder import newton_raphson
 from Library.SkewCalibrationBase import SkewCalibrationBase
 from Library.OptionPricerBSM1973 import BlackScholesMertonCall, BlackScholesMertonPut
-from Library.OptionPricerKimYi2025 import kimyi_call, kimyi_put
+from Library.OptionPricerKimYi2025 import kimyi_call, kimyi_put, psi_vol
 
 
 class KimYiSkewCalibrationSystematic(SkewCalibrationBase):
@@ -134,6 +134,29 @@ class KimYiSkewCalibrationSystematic(SkewCalibrationBase):
 
 
 class KimYiSkewCalibrationIdiosyncratic(SkewCalibrationBase):
+    """Calibrate the name's Q-measure parameters to its own option surface.
+
+    ONLY TWO THINGS ABOUT THE NAME REACH THE PRICE. kimyi_call/kimyi_put
+    collapse beta_i, kappa_i and rho_iX into the single diffusive volatility
+    psi_vol(beta_i, kappa_i, rho_iX, sigma) = phi_i, and gamma_i enters only
+    as eta/gamma_i on the two jump decays. So the surface identifies phi_i and
+    gamma_i, and NOTHING ELSE: the four-parameter fit this class used to run
+    was searching a two-dimensional flat manifold, where SLSQP stopped
+    wherever its path happened to end and the reported beta_i, kappa_i and
+    rho_iX were arbitrary points on it.
+
+    This class therefore takes (gamma_i) or (gamma_i, phi_i) - never the four.
+
+    phi_i DEFAULTS TO THE P-MEASURE VALUE, scaled by the index's own variance
+    risk premium sigma_Q / sigma_P, which the systematic calibration has
+    already measured. That makes the name's Q calibration ONE-DIMENSIONAL -
+    gamma_i alone - and says the name inherits the market's variance risk
+    premium rather than carrying one of its own. It is an assumption, and a
+    testable one: pass a two-element x (or set LIQUIDITY_SKEW_FIT_PHI=1 in
+    the calibration script) to free phi_i and compare the fit residual. If
+    the one-parameter fit cannot reach the market ATM level, that comparison
+    is where it will show.
+    """
 
     def __init__(
             self,
@@ -149,8 +172,17 @@ class KimYiSkewCalibrationIdiosyncratic(SkewCalibrationBase):
             dividend_yield: NDArray[np.float64],
             time_to_expiry: NDArray[np.float64],
             is_call_option: NDArray[np.bool_],
-            option_weights: NDArray[np.float64]
+            option_weights: NDArray[np.float64],
+            phii: NDArray[np.float64] = None,
     ):
+        # Keyword and optional: a caller replaying a cached four-vector does
+        # not need it, and _unpack() says so precisely if a one-element x
+        # arrives without it.
+        # A PLAIN FLOAT, not a column. The pricer broadcasts sigma against
+        # the strike vectors and phi_i takes the slot a scalar used to
+        # occupy, so reshaping it here would change model_vol()'s output
+        # shape and silently break the vstack below.
+        self.phii = None if phii is None else float(np.asarray(phii))
         self.sigma = sigma
         self.pprob = pprob
         self.lamb = lamb
@@ -165,6 +197,44 @@ class KimYiSkewCalibrationIdiosyncratic(SkewCalibrationBase):
         self.is_call_option = is_call_option
         self.option_weights = option_weights
         self.penalty = np.array(0.)
+
+    def _unpack(self, x):
+        """(gamma_i, phi_i) as plain floats, from a one-, two- or four-element x.
+
+        phi_i is passed to the pricer as betai=0, kappai=phi_i, rhoix=0,
+        because psi_vol(0, phi_i, 0, sigma) = phi_i EXACTLY. It looks like a
+        trick and is not: phi_i is the only combination of the three that the
+        price depends on, so any (beta_i, kappa_i, rho_iX) with the same
+        psi_vol gives the same surface, and this is the one that needs no
+        constraint to exist. The structural beta_i and kappa_i come from the
+        P-measure joint likelihood, which can separate them; the option
+        surface cannot, and pretending otherwise is what produced the old
+        flat manifold.
+        """
+        x = np.atleast_1d(np.asarray(x, dtype=float))
+        if x.size == 1:
+            if self.phii is None:
+                raise ValueError(
+                    "x is gamma_i alone, so phi_i has to come from the "
+                    "constructor; pass phii= (the P-measure phi_i, scaled by "
+                    "the index's sigma_Q/sigma_P), or a two-element x to fit "
+                    "phi_i, or the legacy four-vector.")
+            return float(x[0]), self.phii
+        if x.size == 2:
+            return float(x[0]), float(x[1])
+        if x.size == 4:
+            # LEGACY, for replaying cached four-vector fits and the stored
+            # (dKAPPAI, dGAMMAI, dBETAI, dRHOIX) columns. Collapsed through
+            # psi_vol exactly as the pricer used to collapse them, so plots
+            # and comparisons off the old cache reproduce to the last digit -
+            # while no NEW fit can wander the manifold those four spanned.
+            kappai, gammai, betai, rhoix = x
+            return float(gammai), float(np.asarray(
+                psi_vol(betai=betai, kappai=kappai, rhoix=rhoix,
+                        sigma=self.sigma)).ravel()[0])
+        raise ValueError(
+            "the name's surface identifies gamma_i and phi_i and nothing "
+            "else; x has %d elements" % x.size)
 
     def target(self, x: NDArray[np.float64]) -> NDArray[np.float64]:
 
@@ -182,7 +252,8 @@ class KimYiSkewCalibrationIdiosyncratic(SkewCalibrationBase):
 
     def model_vol(self, x: NDArray[np.float64]) -> NDArray[np.float64]:
 
-        kappai, gammai, betai, rhoix = x
+        gammai, phii = self._unpack(x)
+        kappai, betai, rhoix = phii, np.array(0.), np.array(0.)
 
         mod_imp_vol_put = _kimyi_imp_vol_put(
             kappai=kappai,

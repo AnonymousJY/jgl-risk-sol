@@ -32,6 +32,7 @@ import ustreasurycurve as ustcurve
 from Library.Utility import UST_TENOR_MAP
 from Library.OptionPricerBSM1973 import BlackScholesMertonPut
 from Library.SkewCalibrationKimYi2025 import KimYiSkewCalibrationSystematic, KimYiSkewCalibrationIdiosyncratic, kimyi_vol_surface, _kimyi_imp_vol_call
+from Library.DataAccess import get_pmle_params_dict
 from scipy.optimize import minimize
 from nelson_siegel_svensson.calibrate import calibrate_nss_ols
 
@@ -132,7 +133,15 @@ mkt_vol_df['dVEGA'] = vegas
 # %% cell 4
 logger.info("[cell %d/14] compute initial_values_systematic", 4)
 initial_values_systematic = np.array([.2, .2, 5., 22., 7.])
-initial_values_idiosyncratic = np.array([1., 2., 1., .5])
+
+# The name's surface identifies gamma_i and phi_i and nothing else - see
+# KimYiSkewCalibrationIdiosyncratic. phi_i is pinned by default at its
+# P-measure value scaled by the index's variance risk premium, leaving
+# gamma_i as the only free parameter. LIQUIDITY_SKEW_FIT_PHI=1 frees phi_i as
+# a second parameter, which is how to test whether that pin costs fit.
+FIT_PHI = os.environ.get("LIQUIDITY_SKEW_FIT_PHI", "").strip().lower() in {
+    "1", "true", "yes"}
+initial_values_idiosyncratic = np.array([2.])
 
 method = 'SLSQP'
 
@@ -144,12 +153,16 @@ bounds_systematic = {
     'dETA2': (0.5, None)
 }
 
+# ONE free parameter, not four. The old four searched a two-dimensional flat
+# manifold: beta_i, kappa_i and rho_iX reach the price only through
+# psi_vol(...) = phi_i, so three of them were redundant and whatever SLSQP
+# reported for them was an artefact of its path. The stored RESULT always
+# carries (dGAMMAI, dPHII); this is only what gets searched.
 bounds_idiosyncratic = {
-    'dKAPPAI': (1e-4, None),
     'dGAMMAI': (1e-1, None),
-    'dBETAI': (1e-1, None),
-    'dRHOIX': (-1., 1.)
 }
+if FIT_PHI:
+    bounds_idiosyncratic['dPHII'] = (1e-4, None)
 
 # %% cell 5
 logger.info("[cell %d/14] load cached kimyi2025 calibration", 5)
@@ -168,8 +181,11 @@ except FileNotFoundError:
 # published Q-measure parameters from the paper's Figure 5 caption; using
 # them as x0 nudges the optimizer into the correct basin without changing
 # the objective or bounds. Keys are (underlying, YYYYMMDD).
+# The published hint was the four-vector (kappa_i, gamma_i, beta_i, rho_iX) =
+# (0.61, 1.61, 0.94, 0.41); in the identified parameters that is gamma_i =
+# 1.61 with phi_i = psi_vol(0.94, 0.61, 0.41, sigma_Q).
 IDIOSYNCRATIC_X0_HINTS = {
-    ('COIN', '20250409'): np.array([0.61, 1.61, 0.94, 0.41]),
+    ('COIN', '20250409'): np.array([1.61]),
 }
 
 # %% cell 6
@@ -274,7 +290,28 @@ def _calibrate_idiosyncratic_for(underlying_name, valuation_date):
         return
     sigma, pprob, lamb, eta1, eta2 = calib_results[sys_key].x
 
+    # phi_i from the P-MLE fit for this (name, date), at rho_iX = 0, scaled by
+    # the index's variance risk premium sigma_Q / sigma_P. Both sigmas are the
+    # index's: sigma above is the Q value just calibrated to index options,
+    # sigma_P the P value the systematic P-MLE stage estimated on the same
+    # date. The name is assumed to inherit that premium rather than carry one
+    # of its own - the parsimonious choice, and the one FIT_PHI tests.
+    try:
+        p_idi = get_pmle_params_dict(valuation_date_str, underlying_name,
+                                     params=["dBETAI", "dKAPPAI"])
+        p_sys = get_pmle_params_dict(valuation_date_str, systematic_name,
+                                     params=["dSIGMA"])
+    except FileNotFoundError:
+        logger.warning("no P-MLE parameters for %s; skipping", key)
+        return
+    sigma_p = p_sys["dSIGMA"]
+    phii_p = np.sqrt((sigma_p * p_idi["dBETAI"]) ** 2 + p_idi["dKAPPAI"] ** 2)
+    phii = phii_p * (sigma / sigma_p)
+    logger.info("phi_i: P %.4f  x sigma_Q/sigma_P %.4f  -> %.4f%s",
+                phii_p, sigma / sigma_p, phii, "  (free)" if FIT_PHI else "")
+
     vol_fitter = KimYiSkewCalibrationIdiosyncratic(
+        phii=np.array(phii),
         sigma=np.array(sigma),
         pprob=np.array(pprob),
         lamb=np.array(lamb),
@@ -293,6 +330,8 @@ def _calibrate_idiosyncratic_for(underlying_name, valuation_date):
         (underlying_name, valuation_date_str),
         initial_values_idiosyncratic,
     )
+    if FIT_PHI:
+        x0 = np.append(np.atleast_1d(x0)[:1], phii)
     minimizer_results = minimize(
         vol_fitter.target,
         x0=x0,
@@ -301,6 +340,13 @@ def _calibrate_idiosyncratic_for(underlying_name, valuation_date):
         tol=1e-6,
         options={'maxiter': 1e4},
     )
+    # THE STORED x IS ALWAYS (dGAMMAI, dPHII), fitted or pinned. The search is
+    # still one-dimensional when phi_i is pinned; this only records the value
+    # that was used, so every downstream model_vol(x=result.x) has both
+    # identified numbers in hand and needs nothing from the constructor.
+    if not FIT_PHI:
+        minimizer_results.x = np.array([float(minimizer_results.x[0]),
+                                        float(phii)])
     logger.info("minimize result: %s", minimizer_results)
     calib_results[key] = minimizer_results
     save_calibration_results(calib_results, _kimyi_calib_parquet)

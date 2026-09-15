@@ -266,7 +266,59 @@ def _warn_low_ess(idata, names, label):
         pass
 
 
+# ---------------------------------------------------------------------------
+# alpha: LogUniform(0.01, 250), not Beta
+# ---------------------------------------------------------------------------
+# Every alpha prior in draft 7 was a Beta, whose support is (0, 1). alpha = 1
+# is a half-life of 175 trading days, so the model was not merely doubtful
+# that Psi reverts within a year - IT COULD NOT EXPRESS IT. The posterior
+# sitting well away from zero, and Psi wandering far from zero and staying
+# there, are both consequences of that cap rather than findings.
+#
+# alpha is a RATE with no natural scale, so the prior is flat on log alpha.
+#
+#   lower 0.01   half-life 69 years. Deliberately below the draft-7
+#                full-sample value of 0.036, so the old answer stays inside
+#                the support and the data can still return it.
+#   upper 250    the Euler transition coefficient in KimYiLogLike.logp is
+#                (1 - alpha dt) with dt = 1/252. It changes sign at
+#                alpha = 252, where the recursion stops being a
+#                discretisation of an OU and starts oscillating. 250 is the
+#                largest round number on the right side of that. Half-life
+#                0.7 trading days - far faster than anything the data could
+#                plausibly want, which is the point of an upper bound.
+#
+# BOTH FIXES ARE NEEDED AND NEITHER IS ENOUGH ALONE. poc/alpha_prior_cap.py
+# fits alpha by conditional MLE on simulated OU paths - 504 days, sigma =
+# 0.1437, no priors, median of 40 replications:
+#
+#     true alpha = 50          cap 1     cap 250    de-meaned
+#     with a 9%/yr trend       1.000       3.278       46.93
+#     no trend                 1.000      51.339      46.93
+#
+# The cap binds even on a CLEAN mean-zero path: 1.000 in every cell, which is
+# the boundary and not an estimate, so the published alpha measured the prior.
+# Widening it on a trended series still misses badly, 3.3 against a true 50.
+# Only de-meaning AND widening recover alpha. Same shape at true alpha = 5:
+# 1.000 / 2.435 / 6.543. Under the full jump likelihood with priors the pymc
+# run gave 0.33 capped either way and 46.6 de-meaned.
+#
+# RERUN EVERYTHING. The parameter drawers are keyed by arm, not by prior
+# values, so a rerun will find the dates already on disk and print draft-7
+# posteriors under the new header. JGL_PMLE_FORCE=1, or a fresh drawer.
 SYSTEMATIC_PRIORS = {
+    "sigma":    ("Gamma", {"alpha":  1.0,  "beta": 1.0}),    # mean  1.000 sd 1.000
+    "alpha_rv": ("LogUniform", {"lower": 0.01, "upper": 250.0}),  # median 1.581
+    "pprob_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
+    "lamb":     ("Gamma", {"alpha": 10.0,  "beta": 0.5}),    # mean 20.000 sd 6.325
+    "eta1":     ("Gamma", {"alpha": 50.0,  "beta": 1.0}),    # mean 50.000 sd 7.071
+    "eta2":     ("Gamma", {"alpha": 25.0,  "beta": 1.0}),    # mean 25.000 sd 5.000
+}
+
+# Draft 7 exactly as published, for reproducing the printed tables. Spelled
+# out in full rather than derived from the spec above - see the note on
+# inheritance below.
+SYSTEMATIC_PRIORS_DRAFT7 = {
     "sigma":    ("Gamma", {"alpha":  1.0,  "beta": 1.0}),    # mean  1.000 sd 1.000
     "alpha_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
     "pprob_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
@@ -357,9 +409,13 @@ SYSTEMATIC_PRIORS_SKEW = {
 # while containing strictly less information. That is how a published table of
 # tight, stable estimates on unidentifiable parameters comes about without
 # anyone doing anything careless.
+# alpha_rv is LogUniform here for the same reason it is on the paper arm.
+# skew-tight is what every rolling run since has used, so leaving it on
+# Beta(9.5, 9.5) would have left the cap in place everywhere that matters.
+# Every other prior is untouched, so the arm still means what it meant.
 SYSTEMATIC_PRIORS_SKEW_TIGHT = {
     "sigma":    ("Gamma", {"alpha":  2.0,   "beta": 10.0}),  # mean  0.200 sd  0.141
-    "alpha_rv": ("Beta",  {"alpha":  9.5,   "beta":  9.5}),  # mean  0.500 sd  0.112
+    "alpha_rv": ("LogUniform", {"lower": 0.01, "upper": 250.0}),  # median 1.581
     "pprob_rv": ("Beta",  {"alpha": 10.925, "beta":  8.075}),# mean  0.575 sd  0.111
     "lamb":     ("Gamma", {"alpha":  3.0,   "beta":  0.5}),  # mean  6.000 sd  3.464
     "eta1":     ("Gamma", {"alpha": 16.0,   "beta":  0.32}), # mean 50.000 sd 12.500
@@ -398,6 +454,15 @@ SYSTEMATIC_PRIORS_SKEW_TIGHT = {
 #               displaced. Predicts 0.285. If a tight prior at 0.30 returns
 #               0.29 while a tight prior at 0.50 returns 0.49, alpha is set by
 #               assumption at this horizon and nothing else.
+SYSTEMATIC_PRIORS_SKEW_TIGHT_DRAFT7 = {
+    "sigma":    ("Gamma", {"alpha":  2.0,   "beta": 10.0}),  # mean  0.200 sd  0.141
+    "alpha_rv": ("Beta",  {"alpha":  9.5,   "beta":  9.5}),  # mean  0.500 sd  0.112
+    "pprob_rv": ("Beta",  {"alpha": 10.925, "beta":  8.075}),# mean  0.575 sd  0.111
+    "lamb":     ("Gamma", {"alpha":  3.0,   "beta":  0.5}),  # mean  6.000 sd  3.464
+    "eta1":     ("Gamma", {"alpha": 16.0,   "beta":  0.32}), # mean 50.000 sd 12.500
+    "eta2":     ("Gamma", {"alpha": 16.0,   "beta":  0.64}), # mean 25.000 sd  6.250
+}
+
 SYSTEMATIC_PRIORS_ALPHA_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
 SYSTEMATIC_PRIORS_ALPHA_FLAT["alpha_rv"] = (
     "Beta", {"alpha": 1.0, "beta": 1.0})                     # mean 0.500 sd 0.289
@@ -699,6 +764,10 @@ SYSTEMATIC_PRIOR_SETS = {
     "alpha-pprob-flat": SYSTEMATIC_PRIORS_ALPHA_PPROB_FLAT,
     "alpha-pprob-fixed": SYSTEMATIC_PRIORS_ALPHA_PPROB_FIXED,
     "alpha-pprob-eta-flat": SYSTEMATIC_PRIORS_ALPHA_PPROB_ETA_FLAT,
+    # The two published configurations, with alpha still capped at 1. Kept so
+    # the draft-7 tables can be regenerated; not for new work.
+    "draft7":            SYSTEMATIC_PRIORS_DRAFT7,
+    "skew-tight-draft7": SYSTEMATIC_PRIORS_SKEW_TIGHT_DRAFT7,
 }
 
 # Drawer suffix per arm. "paper" keeps the bare underlying id so the committed
@@ -743,6 +812,16 @@ def _build_prior(name, spec):
     dist, kw = spec
     if dist == "Fixed":
         return pt.as_tensor(np.float64(kw["value"]))
+    if dist == "LogUniform":
+        # PyMC has no LogUniform, so sample log(x) uniformly and exponentiate.
+        # The CALLER'S NAME goes on the Deterministic, not on the free
+        # variable: summarize() and _warn_low_ess address these parameters by
+        # name and must keep seeing the parameter itself, on its own scale.
+        # The free variable takes a "__log" suffix.
+        lo, hi = float(kw["lower"]), float(kw["upper"])
+        return pm.Deterministic(
+            name, pt.exp(pm.Uniform(name + "__log",
+                                    lower=np.log(lo), upper=np.log(hi))))
     kw = dict(kw)
     # Uniform owns lower/upper as its own parameters; for any other
     # distribution they mean truncation.
@@ -761,6 +840,15 @@ def prior_moments(spec):
     dist, kw = spec
     if dist == "Fixed":
         return float(kw["value"]), 0.0
+    if dist == "LogUniform":
+        # X = exp(U), U ~ Uniform(log lo, log hi):
+        #   E[X]   = (hi - lo) / log(hi/lo)
+        #   E[X^2] = (hi^2 - lo^2) / (2 log(hi/lo))
+        lo, hi = float(kw["lower"]), float(kw["upper"])
+        L = np.log(hi / lo)
+        m = (hi - lo) / L
+        m2 = (hi ** 2 - lo ** 2) / (2.0 * L)
+        return float(m), float(np.sqrt(max(m2 - m * m, 0.0)))
     if dist != "Uniform" and ("lower" in kw or "upper" in kw):
         # Truncated: integrate the base density over the retained interval.
         kw = dict(kw)
@@ -831,6 +919,10 @@ def prior_ci_width(spec, prob=0.95):
     dist, kw = spec
     if dist == "Fixed":
         return 0.0
+    if dist == "LogUniform":
+        # Quantile q is lo * (hi/lo)**q, so the interval is exact.
+        lo, hi = float(kw["lower"]), float(kw["upper"])
+        return float(lo * (hi / lo) ** hi_q - lo * (hi / lo) ** lo_q)
     if dist != "Uniform" and ("lower" in kw or "upper" in kw):
         # Truncated: invert the CDF on the same grid prior_moments integrates.
         kw = dict(kw)

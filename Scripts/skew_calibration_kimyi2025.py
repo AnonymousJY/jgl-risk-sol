@@ -132,26 +132,44 @@ mkt_vol_df['dVEGA'] = vegas
 
 # %% cell 4
 logger.info("[cell %d/14] compute initial_values_systematic", 4)
-initial_values_systematic = np.array([.2, .2, 5., 22., 7.])
-
-# The name's surface identifies gamma_i and phi_i and nothing else - see
-# KimYiSkewCalibrationIdiosyncratic. phi_i is pinned by default at its
-# P-measure value scaled by the index's variance risk premium, leaving
-# gamma_i as the only free parameter. LIQUIDITY_SKEW_FIT_PHI=1 frees phi_i as
-# a second parameter, which is how to test whether that pin costs fit.
+# ONLY THE JUMP PARAMETERS ARE CALIBRATED UNDER Q.
+#
+# sigma, beta_i and kappa_i are diffusion coefficients, and an equivalent
+# change of measure cannot touch one: Girsanov shifts a Brownian motion's
+# drift and leaves its quadratic variation, which is pathwise, alone. So
+# sigma_Q = sigma_P and phi_i_Q = phi_i_P, both taken from the P-MLE stage
+# where the returns measure them - and measure them well, which the surface
+# does not. What a measure change CAN move is the jump compensator, so the
+# index surface fits (p, lambda, eta1, eta2) and the name's fits gamma_i.
+#
+# Both flags below restore the old unrestricted fits for comparison. Neither
+# is an alternative specification: a large gap is evidence that the
+# single-factor jump structure is too thin, not that a diffusion coefficient
+# changed measure.
+FIT_SIGMA = os.environ.get("LIQUIDITY_SKEW_FIT_SIGMA", "").strip().lower() in {
+    "1", "true", "yes"}
 FIT_PHI = os.environ.get("LIQUIDITY_SKEW_FIT_PHI", "").strip().lower() in {
     "1", "true", "yes"}
+
+# (p, lambda, eta1, eta2); sigma is prepended when FIT_SIGMA.
+initial_values_systematic = np.array([.2, 5., 22., 7.])
+if FIT_SIGMA:
+    initial_values_systematic = np.append([.2], initial_values_systematic)
 initial_values_idiosyncratic = np.array([2.])
 
 method = 'SLSQP'
 
-bounds_systematic = {
-    'dSIGMA': (1e-4, None),
+# The RESULT always carries all five, (dSIGMA, dPPROB, dLAMB, dETA1, dETA2),
+# fitted or pinned; this is only what gets searched.
+bounds_systematic = {}
+if FIT_SIGMA:
+    bounds_systematic['dSIGMA'] = (1e-4, None)
+bounds_systematic.update({
     'dPPROB': (0., 1.),
     'dLAMB': (1e-4, None),
     'dETA1': (1.5, None),
     'dETA2': (0.5, None)
-}
+})
 
 # ONE free parameter, not four. The old four searched a two-dimensional flat
 # manifold: beta_i, kappa_i and rho_iX reach the price only through
@@ -239,7 +257,18 @@ def _calibrate_systematic_for(valuation_date):
         logger.warning("no market vols for %s; skipping", key)
         return
 
+    # sigma_Q = sigma_P, from the systematic P-MLE stage on the same date.
+    try:
+        sigma_p = get_pmle_params_dict(valuation_date_str, systematic_name,
+                                       params=["dSIGMA"])["dSIGMA"]
+    except FileNotFoundError:
+        logger.warning("no P-MLE sigma for %s; skipping", key)
+        return
+    logger.info("sigma pinned at the P-measure %.4f%s", sigma_p,
+                "  (free)" if FIT_SIGMA else "")
+
     vol_fitter = KimYiSkewCalibrationSystematic(
+        sigma=np.array(sigma_p),
         mkt_imp_vol=tmp_df.dMKT_IMP_VOL.to_numpy(),
         und_price=tmp_df.dUND_PRICE.to_numpy(),
         und_strike=tmp_df.dUND_STRIKE.to_numpy(),
@@ -257,6 +286,10 @@ def _calibrate_systematic_for(valuation_date):
         tol=1e-6,
         options={'maxiter': 1e4},
     )
+    # THE STORED x IS ALWAYS THE FIVE-VECTOR, so every downstream
+    # "sigma, pprob, lamb, eta1, eta2 = calib_results[key].x" is unchanged.
+    if not FIT_SIGMA:
+        minimizer_results.x = np.append([float(sigma_p)], minimizer_results.x)
     logger.info("minimize result: %s", minimizer_results)
     calib_results[key] = minimizer_results
     save_calibration_results(calib_results, _kimyi_calib_parquet)
@@ -290,25 +323,19 @@ def _calibrate_idiosyncratic_for(underlying_name, valuation_date):
         return
     sigma, pprob, lamb, eta1, eta2 = calib_results[sys_key].x
 
-    # phi_i from the P-MLE fit for this (name, date), at rho_iX = 0, scaled by
-    # the index's variance risk premium sigma_Q / sigma_P. Both sigmas are the
-    # index's: sigma above is the Q value just calibrated to index options,
-    # sigma_P the P value the systematic P-MLE stage estimated on the same
-    # date. The name is assumed to inherit that premium rather than carry one
-    # of its own - the parsimonious choice, and the one FIT_PHI tests.
+    # phi_i_Q = phi_i_P, unscaled, at rho_iX = 0. beta_i and kappa_i are
+    # diffusion coefficients and do not change measure. sigma here is the
+    # index's, which the systematic stage pinned at its own P value, so both
+    # sides of the model use one sigma.
     try:
         p_idi = get_pmle_params_dict(valuation_date_str, underlying_name,
                                      params=["dBETAI", "dKAPPAI"])
-        p_sys = get_pmle_params_dict(valuation_date_str, systematic_name,
-                                     params=["dSIGMA"])
     except FileNotFoundError:
         logger.warning("no P-MLE parameters for %s; skipping", key)
         return
-    sigma_p = p_sys["dSIGMA"]
-    phii_p = np.sqrt((sigma_p * p_idi["dBETAI"]) ** 2 + p_idi["dKAPPAI"] ** 2)
-    phii = phii_p * (sigma / sigma_p)
-    logger.info("phi_i: P %.4f  x sigma_Q/sigma_P %.4f  -> %.4f%s",
-                phii_p, sigma / sigma_p, phii, "  (free)" if FIT_PHI else "")
+    phii = np.sqrt((sigma * p_idi["dBETAI"]) ** 2 + p_idi["dKAPPAI"] ** 2)
+    logger.info("phi_i pinned at the P-measure %.4f%s", phii,
+                "  (free)" if FIT_PHI else "")
 
     vol_fitter = KimYiSkewCalibrationIdiosyncratic(
         phii=np.array(phii),

@@ -8,6 +8,24 @@ from Library.OptionPricerKimYi2025 import kimyi_call, kimyi_put, psi_vol
 
 
 class KimYiSkewCalibrationSystematic(SkewCalibrationBase):
+    """Calibrate the index's Q-measure JUMP parameters to its option surface.
+
+    sigma IS NOT FITTED. It is a diffusion coefficient, and an equivalent
+    change of measure cannot touch one: Girsanov shifts the drift of a
+    Brownian motion and leaves its quadratic variation alone, and quadratic
+    variation is a pathwise quantity. So sigma_Q = sigma_P, and sigma comes
+    from the systematic P-MLE stage. The same argument covers beta_i and
+    kappa_i, hence phi_i, on the idiosyncratic side.
+
+    What a measure change CAN move is the jump compensator - the intensity
+    lambda and the jump-size distribution (p, eta1, eta2). Those are the four
+    this class fits, and they are where the index's jump risk premium lives.
+
+    This is not a restriction imposed for parsimony; it is what the model
+    already implies, and fitting sigma here was letting the surface overwrite
+    a quantity the returns measure better. LIQUIDITY_SKEW_FIT_SIGMA=1 in the
+    calibration script restores the five-parameter fit for comparison.
+    """
 
     def __init__(
             self,
@@ -18,8 +36,12 @@ class KimYiSkewCalibrationSystematic(SkewCalibrationBase):
             dividend_yield: NDArray[np.float64],
             time_to_expiry: NDArray[np.float64],
             is_call_option: NDArray[np.bool_],
-            option_weights: NDArray[np.float64]
+            option_weights: NDArray[np.float64],
+            sigma: NDArray[np.float64] = None,
     ):
+        # Keyword and optional: a caller replaying a cached five-vector does
+        # not need it.
+        self.sigma_p = None if sigma is None else float(np.asarray(sigma))
         self.mkt_imp_vol = mkt_imp_vol
         self.und_price = und_price
         self.und_strike = und_strike
@@ -29,6 +51,20 @@ class KimYiSkewCalibrationSystematic(SkewCalibrationBase):
         self.is_call_option = is_call_option
         self.option_weights = option_weights
         self.penalty = np.array(0.)
+
+    def _unpack(self, x):
+        """(sigma, p, lambda, eta1, eta2) from a four- or five-element x."""
+        x = np.atleast_1d(np.asarray(x, dtype=float))
+        if x.size == 4:
+            if self.sigma_p is None:
+                raise ValueError(
+                    "x is the four jump parameters, so sigma has to come from "
+                    "the constructor; pass sigma= (the P-measure value), or a "
+                    "five-element x to fit it.")
+            return (self.sigma_p,) + tuple(x)
+        if x.size == 5:
+            return tuple(x)
+        raise ValueError("x has %d elements; expected 4 or 5" % x.size)
 
     def target(self, x: NDArray[np.float64]) -> NDArray[np.float64]:
 
@@ -46,7 +82,7 @@ class KimYiSkewCalibrationSystematic(SkewCalibrationBase):
 
     def model_vol(self, x: NDArray[np.float64]) -> NDArray[np.float64]:
 
-        sigma, pprob, lamb, eta1, eta2 = x
+        sigma, pprob, lamb, eta1, eta2 = self._unpack(x)
 
         mod_imp_vol_put = _kimyi_imp_vol_put(
             kappai=np.array(0.),
@@ -147,15 +183,25 @@ class KimYiSkewCalibrationIdiosyncratic(SkewCalibrationBase):
 
     This class therefore takes (gamma_i) or (gamma_i, phi_i) - never the four.
 
-    phi_i DEFAULTS TO THE P-MEASURE VALUE, scaled by the index's own variance
-    risk premium sigma_Q / sigma_P, which the systematic calibration has
-    already measured. That makes the name's Q calibration ONE-DIMENSIONAL -
-    gamma_i alone - and says the name inherits the market's variance risk
-    premium rather than carrying one of its own. It is an assumption, and a
-    testable one: pass a two-element x (or set LIQUIDITY_SKEW_FIT_PHI=1 in
-    the calibration script) to free phi_i and compare the fit residual. If
-    the one-parameter fit cannot reach the market ATM level, that comparison
-    is where it will show.
+    phi_i IS THE P-MEASURE VALUE, unscaled. beta_i and kappa_i are diffusion
+    coefficients and an equivalent change of measure cannot touch one -
+    Girsanov shifts a Brownian motion's drift and leaves its quadratic
+    variation, a pathwise quantity, alone - so phi_i_Q = phi_i_P is not an
+    assumption but a consequence of the model. The same argument pins
+    sigma_Q = sigma_P on the systematic side.
+
+    That leaves gamma_i as the name's only free Q parameter. Note that the
+    strict reading of the same argument would pin gamma_i too: it is a
+    pathwise loading, so the name moves gamma_i times as far as the index on
+    the same jump under either measure. Fitting it here is the ONE place the
+    model allows a name-specific jump risk premium, and it should be stated
+    as such rather than left implicit - a referee will ask.
+
+    LIQUIDITY_SKEW_FIT_PHI=1 in the calibration script frees phi_i as a
+    second parameter. That is a misspecification diagnostic, not an
+    alternative: if the one-parameter fit cannot reach the market's ATM
+    level, the gap is telling you the single-factor jump structure is too
+    thin, not that phi_i has a risk premium.
     """
 
     def __init__(

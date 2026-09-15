@@ -93,9 +93,55 @@ def est_liquidity_process(
     return Psi
 
 
+def systematic_psi_returns(sys_returns: NDArray[np.float64]) -> NDArray[np.float64]:
+    """The index return series with its own sample drift removed.
+
+    Psi is a MEAN-ZERO OU process, so the series handed to the systematic
+    likelihood has to carry no drift of its own. The index's does. Over the
+    sample the S&P rises at roughly 10%/yr while the only drift this arm ever
+    removed was the Jensen term 0.5 sigma^2, about 1%/yr. The remaining ~9%/yr
+    is a LINEAR TREND inside a process the model says reverts to zero, and
+    over the sample it reaches 14 stationary standard deviations. That is what
+    Figure 6 shows, and it is a data-construction artefact, not liquidity.
+
+    Removing the sample mean removes the WHOLE drift - the index's risk
+    premium, which the model has no parameter for, and the Jensen term, which
+    it does. The arm's own drift removal must therefore be switched OFF, or it
+    puts a -0.5 sigma^2 trend straight back in; _dist_loglike_systematic does
+    that by passing mui = -0.5 sigma^2, which cancels _drift() identically
+    without touching _variance(), where betai = 1 is still required.
+
+    The cost is one degree of freedom. What it buys is the level
+    interpretation the paper wants: Psi_t is systematic liquidity RELATIVE TO
+    ITS OWN SAMPLE AVERAGE, Psi = 0 is the frictionless benchmark, and the
+    equity risk premium is no longer counted as illiquidity.
+
+    IT ALSO UNBLOCKS alpha. Fitting a mean-zero OU to a trended series drives
+    alpha to the floor whatever its prior allows: in simulation, true alpha =
+    50 with a 9%/yr trend added returns 0.33 under a prior capped at 1 and
+    0.33 under one capped at 500. De-mean first and it returns 46.6. The
+    prior widening is a no-op without this.
+
+    KEEP EVERY CONSTRUCTION OF Psi_infinity GOING THROUGH HERE: the estimation
+    (pmle_kimyirisk_systematic), the innovation series the joint arm
+    conditions on (systematic_innovations), and the series plotted and fed to
+    the simulation (est_liquidity_process_sys_helper in
+    Scripts/run_var_kimyi2025.py). If one of them de-means and another does
+    not, the parameters are fitted to one series and applied to a different
+    one.
+    """
+    r = np.asarray(sys_returns, dtype=float)
+    return r - r.mean(axis=0, keepdims=True)
+
+
 def _dist_loglike_systematic(y, alpha, sigma, pprob, lamb, eta1, eta2, delta_t) -> pt.TensorVariable:
     return KimYiLogLike(
-        mui=np.array(.0),
+        # mui = -0.5 sigma^2 makes _drift() identically zero. The series
+        # arrives already de-meaned by systematic_psi_returns(), and the
+        # sample mean it removed SUBSUMES the Jensen term, so removing
+        # 0.5 sigma^2 again here would reintroduce a trend of that size.
+        # betai stays 1 - _variance() still needs it.
+        mui=-0.5 * sigma ** 2,
         kappai=np.array(.0),
         gammai=np.array(1.),
         betai=np.array(1.),
@@ -845,7 +891,8 @@ def pmle_kimyirisk_systematic(
         eta1 = _build_prior("eta1", pr["eta1"])
         eta2 = _build_prior("eta2", pr["eta2"])
 
-        observed_data = np.cumsum(sys_returns).reshape((-1, 1))
+        observed_data = np.cumsum(
+            systematic_psi_returns(sys_returns)).reshape((-1, 1))
 
         pm.CustomDist(
             "likelihood",
@@ -1830,18 +1877,19 @@ class KimYiLogLike:
 def systematic_innovations(sys_returns, params_sys, delta_t):
     """The market's innovation series U_k, as a plain numpy array.
 
-    Mirrors KimYiLogLike.logp's own conventions exactly - the same
-    [0, 1, ..., m-1] drift scaler and the same quasi-difference - so that U and
-    V are built the same way and line up step for step. The systematic
+    Mirrors the systematic arm's own construction of Psi exactly - the same
+    de-meaning and the same quasi-difference - so that U and V are built the
+    same way and line up step for step. No drift term appears here because
+    _dist_loglike_systematic no longer removes one either: the de-meaning in
+    systematic_psi_returns() has already taken it out. The systematic
     parameters are constants at this stage, so U needs no gradient and is
     passed into the model as data.
     """
     alpha = float(np.asarray(params_sys["dALPHA"]).item())
-    sigma = float(np.asarray(params_sys["dSIGMA"]).item())
     dt = float(np.asarray(delta_t).item())
 
-    psi = np.cumsum(np.asarray(sys_returns, dtype=float))
-    psi = psi - np.arange(len(psi)) * (0.5 * sigma ** 2) * dt
+    psi = np.cumsum(systematic_psi_returns(
+        np.asarray(sys_returns, dtype=float).reshape(-1)))
     return psi[1:] - (1.0 - alpha * dt) * psi[:-1]
 
 

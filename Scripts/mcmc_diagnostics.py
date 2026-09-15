@@ -84,6 +84,13 @@ CORR_THRESHOLD = 0.9
 # Model builders (duplicated from Library.RiskEngineKimYi2025 to keep this
 # script standalone and to avoid touching production functions)
 # ----------------------------------------------------------------------------
+# THESE MIRROR DRAFT 7, NOT THE CURRENT PRODUCTION CONFIGURATION. Deliberately
+# frozen: the point of this script is to reproduce the published fits, and it
+# cannot do that if it tracks the engine. Production now (a) de-means the index
+# returns and cancels the arm's drift, (b) samples alpha on LogUniform rather
+# than Beta(5, 2), and (c) does not sample rho_iX at all - so "rhoix_rv" in
+# IDI_SAMPLE_VARS above exists here and nowhere else. Run
+# Library.RiskEngineKimYi2025 directly for a diagnostic on the current model.
 def build_systematic_model(sys_returns, delta_t):
     with pm.Model() as model:
         sigma = pm.Gamma(name="sigma", alpha=1.0, beta=1.0)

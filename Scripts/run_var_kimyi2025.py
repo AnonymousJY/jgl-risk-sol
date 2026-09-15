@@ -88,7 +88,7 @@ from Library.Random import RandomMT19937
 from Library.StatisticsMC import StatisticsMCMean
 from Library.ExoticEngine import ExoticEngineBlackScholesMerton
 from Library.OptionPricerBSM1973 import BlackScholesMertonCall, BlackScholesMertonPut
-from Library.RiskEngineKimYi2025 import pmle_kimyirisk_systematic, pmle_kimyirisk_idiosyncratic, KimYiRiskEngine
+from Library.RiskEngineKimYi2025 import pmle_kimyirisk_systematic, pmle_kimyirisk_idiosyncratic, KimYiRiskEngine, systematic_psi_returns
 from Library.PathDependent import PathDependentAsianDiscrete
 
 import matplotlib
@@ -477,8 +477,16 @@ def simulate_shock_returns_systematic_helper(inputs: dict) -> dict:
     delta_time = inputs["dDELTA_TIME"]
     size = inputs["oSIZE"]
 
+    # MUST MATCH est_liquidity_process_sys_helper and
+    # _dist_loglike_systematic. est_liquidity_process() subtracts the drift
+    # and random() adds it back; the round trip is the identity only while
+    # both carry the same mui. Under the de-meaned Psi that drift is zero, so
+    # the simulated index has no drift either - which is what the model says:
+    # d log S_inf = d Psi_inf, and there is no equity risk premium in it. The
+    # old +0.5 sigma^2 (~1%/yr) was the Jensen term, not a premium.
+    sys_sigma = float(np.asarray(params.dSIGMA))
     ret, _, _ = KimYiRiskEngine(
-        mui=[ParametersConstant(np.array(0.))],
+        mui=[ParametersConstant(np.array(-0.5 * sys_sigma ** 2))],
         kappai=[ParametersConstant(np.array(0.))],
         gammai=[ParametersConstant(np.array(1.))],
         betai=[ParametersConstant(np.array(1.))],
@@ -553,8 +561,14 @@ def est_liquidity_process_sys_helper(inputs: dict) -> dict:
     params = inputs["oPARAMS"]
     delta_time = inputs["dDELTA_TIME"]
 
+    # MUST MATCH _dist_loglike_systematic. mui = -0.5 sigma^2 cancels the
+    # engine's drift exactly, and the returns are de-meaned on the way in, so
+    # this Psi is the same series the parameters were fitted to. Estimating
+    # on a de-meaned index and then plotting a trended one would put the trend
+    # back into Figure 6 while the fit knows nothing about it.
+    sys_sigma = float(np.asarray(params.dSIGMA))
     ret = KimYiRiskEngine(
-        mui=[ParametersConstant(np.array(0.))],
+        mui=[ParametersConstant(np.array(-0.5 * sys_sigma ** 2))],
         kappai=[ParametersConstant(np.array(0.))],
         gammai=[ParametersConstant(np.array(1.))],
         betai=[ParametersConstant(np.array(1.))],
@@ -566,7 +580,8 @@ def est_liquidity_process_sys_helper(inputs: dict) -> dict:
         eta1=ParametersConstant(params.dETA1),
         eta2=ParametersConstant(params.dETA2),
         end_dt=delta_time
-    ).est_liquidity_process(return_ts.loc[return_ts.index <= valuation_date, id].iloc[-lookback_period:].to_numpy().reshape((-1, 1)))
+    ).est_liquidity_process(systematic_psi_returns(
+        return_ts.loc[return_ts.index <= valuation_date, id].iloc[-lookback_period:].to_numpy().reshape((-1, 1))))
 
     return {f"{id}-{valuation_date}-{scenario_number}": ret}
 

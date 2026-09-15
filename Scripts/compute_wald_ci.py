@@ -110,7 +110,7 @@ for _path in (_REPO_ROOT, _SCRIPTS_DIR):
 
 from Scripts.load_portfolio import get_idiosyncratic_ids
 from Library.DataAccess import get_price_panel, get_pmle_params, pmle_params_exists
-from Library.RiskEngineKimYi2025 import KimYiLogLike
+from Library.RiskEngineKimYi2025 import KimYiLogLike, systematic_psi_returns
 
 logger = logging.getLogger(__name__)
 
@@ -252,10 +252,14 @@ def build_systematic_loglik(
             entry = _pytensor_from_unconstrained(entry, PARAM_TRANSFORMS[name])
         param_slots[name] = entry
 
-    y_data = np.cumsum(returns).reshape((-1, 1))
+    # De-meaned, and mui = -0.5 sigma^2 to cancel the engine's own drift -
+    # exactly as _dist_loglike_systematic does. A Wald interval computed on a
+    # different series from the one the posterior was fitted to is not an
+    # interval for the same parameter.
+    y_data = np.cumsum(systematic_psi_returns(returns)).reshape((-1, 1))
 
     ll = KimYiLogLike(
-        mui=np.array(0.0),
+        mui=-0.5 * param_slots["dSIGMA"] ** 2,
         kappai=np.array(0.0),
         gammai=np.array(1.0),
         betai=np.array(1.0),

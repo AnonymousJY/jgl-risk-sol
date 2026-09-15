@@ -928,6 +928,45 @@ def pmle_kimyirisk_systematic(
 # So a prior on rhoix is not a starting point the data refines - it PICKS A
 # POINT on a two-dimensional flat manifold, and betai and kappai follow it
 # there. That is why the flat arm below is a diagnostic and not an estimator.
+# ---------------------------------------------------------------------------
+# rho_iX = 0: dZ_t and dW_i,t are orthogonal.
+# ---------------------------------------------------------------------------
+# Agreed with the co-author, September 2026. Three reasons, in order of weight:
+#
+#   1. IT IS NOT IDENTIFIED. The marginal likelihood sees rho_iX only inside
+#      phi_i^2 = (sigma beta_i)^2 + 2 sigma beta_i kappa_i rho_iX + kappa_i^2,
+#      confounded with the two parameters beside it. The posterior reproduced
+#      the prior at all 245 dates (ratio 1.000), and doubling the prior width
+#      did not change that.
+#   2. IT IS NOT MEASURED TO DIFFER FROM ZERO. Estimated outside the
+#      likelihood the 95% intervals are C [-0.21, +0.10], BAC [-0.24, +0.08],
+#      JPM [-0.16, +0.17] - all covering zero.
+#   3. IT BREAKS THE VARIANCE DECOMPOSITION THE MODEL IS FOR. With rho_iX != 0
+#      the cross term belongs to neither channel: the asset's TOTAL systematic
+#      exposure is b_i = beta_i + kappa_i rho_iX / sigma and the only
+#      orthogonal split is phi_i^2 = sigma^2 b_i^2 + kappa_perp^2 with
+#      kappa_perp = kappa_i sqrt(1 - rho_iX^2). beta_i is still the loading of
+#      Psi_i on X_t, but a shock called "idiosyncratic" then carries factor
+#      exposure as well. At rho_iX = 0, b_i = beta_i and kappa_perp = kappa_i:
+#      the model's parameters ARE the factor model's coefficients, and beta_i
+#      is the liquidity beta.
+#
+# Brunetti and Caldarera (2006), Feng et al. (2014) and Zhang et al. (2019)
+# all keep the two channels orthogonal.
+#
+# WHAT THIS DOES NOT FIX. beta_i and kappa_i are still not separately
+# identified by the MARGINAL likelihood: at rho_iX = 0 it sees them only
+# through phi_i^2 = (sigma beta_i)^2 + kappa_i^2, one equation in two
+# unknowns, and every point on that circle gives an IDENTICAL likelihood.
+# That is observational equivalence, not weak identification - no prior, no
+# window length and no sample size resolves it. pmle_kimyirisk_joint, which
+# conditions on the market's own increment, does.
+#
+# Set False to reproduce the draft-7 arms that sampled rho_iX; the prior
+# variants below are kept for exactly that.
+ORTHOGONAL_SHOCKS = True
+
+
 IDIOSYNCRATIC_PRIORS = {
     "mui":       ("Normal", {"mu": 0.0, "sigma": 1.0}),   # mean 0.000 sd 1.000
     "kappai_rv": ("Gamma",  {"alpha": 2.0, "beta": 1.0}), # mean 2.000 sd 1.414
@@ -1337,9 +1376,21 @@ def pmle_kimyirisk_idiosyncratic(
         betai_rv = _build_prior("betai_rv", pr["betai_rv"])
         betai = pm.Deterministic("betai", pt.log(betai_rv))
 
-        rhoix_rv = _build_prior("rhoix_rv", pr["rhoix_rv"])
-        loc, scale = -1., 2.
-        rhoix = pm.Deterministic("rhoix", pt.arctanh((scale * rhoix_rv) + loc))
+        if ORTHOGONAL_SHOCKS:
+            # Corr(dZ_t, dW_i,t) = 0 is an ASSUMPTION of the model, not a
+            # parameter, so rho_iX is not sampled and never enters idata.
+            # _dist_loglike_idiosyncratic applies tanh() on the way in and
+            # tanh(0) = 0, so the zero passes through untouched.
+            if priors and "rhoix_rv" in priors:
+                raise ValueError(
+                    "rhoix_rv was given a prior, but ORTHOGONAL_SHOCKS is on "
+                    "and rho_iX is pinned at 0. Set ORTHOGONAL_SHOCKS = False "
+                    "to run the draft-7 arms that sampled it.")
+            rhoix = pt.as_tensor(np.float64(0.))
+        else:
+            rhoix_rv = _build_prior("rhoix_rv", pr["rhoix_rv"])
+            loc, scale = -1., 2.
+            rhoix = pm.Deterministic("rhoix", pt.arctanh((scale * rhoix_rv) + loc))
 
         observed_data = np.cumsum(idi_returns).reshape((-1, 1))
 
@@ -1369,15 +1420,25 @@ def pmle_kimyirisk_idiosyncratic(
     # See the note in pmle_kimyirisk_systematic. Transforms are applied to the
     # DRAWS, not to the summary, so means are arithmetic and intervals are the
     # transformed quantiles rather than quantiles of the transform's input.
-    _warn_low_ess(idata_idiosyncratic,
-                  ["mui", "kappai_rv", "gamma_rv", "betai_rv", "rhoix_rv"],
-                  "idiosyncratic")
+    ess_vars = ["mui", "kappai_rv", "gamma_rv", "betai_rv"]
+    if not ORTHOGONAL_SHOCKS:
+        ess_vars.append("rhoix_rv")
+    _warn_low_ess(idata_idiosyncratic, ess_vars, "idiosyncratic")
 
     mu_m, mu_lo, mu_hi = summarize(idata_idiosyncratic, "mui")
     k_m, k_lo, k_hi = summarize(idata_idiosyncratic, "kappai", transform=np.exp)
     g_m, g_lo, g_hi = summarize(idata_idiosyncratic, "gammai", transform=np.exp)
     b_m, b_lo, b_hi = summarize(idata_idiosyncratic, "betai", transform=np.exp)
-    r_m, r_lo, r_hi = summarize(idata_idiosyncratic, "rhoix", transform=np.tanh)
+    # dRHOIX stays in the results dict - the parameter files on disk, the
+    # simulation and the Q-side calibration all address it by name - reported
+    # as the constant it now is, with a zero-width interval. Same convention
+    # the systematic arm uses for a "Fixed" prior: no uncertainty is reported
+    # because none was estimated.
+    if ORTHOGONAL_SHOCKS:
+        r_m = r_lo = r_hi = 0.
+    else:
+        r_m, r_lo, r_hi = summarize(idata_idiosyncratic, "rhoix",
+                                    transform=np.tanh)
 
     results = {
         'dMUI': ParamsResults(dMEAN=mu_m, dCI_LOWER=mu_lo, dCI_UPPER=mu_hi),

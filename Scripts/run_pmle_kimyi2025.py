@@ -61,6 +61,7 @@ from Library.DataAccess import (
 from Library.RiskEngineKimYi2025 import (
     pmle_kimyirisk_systematic,
     pmle_kimyirisk_idiosyncratic,
+    pmle_kimyirisk_joint,
 )
 
 from Library.Logging import report as _report  # noqa: E402
@@ -98,21 +99,52 @@ def pmle_kimyirisk_idiosyncratic_helper(args) -> tuple:
     """Estimate the idiosyncratic parameters for one (valuation date, asset),
     conditional on the systematic parameters.
 
+    Uses the JOINT likelihood. The marginal one sees beta_i and kappa_i only
+    through phi_i^2 = (sigma beta_i)^2 + kappa_i^2 - one equation, two
+    unknowns, every point on that circle giving an identical likelihood - so
+    the published beta_i and kappa_i were a prior readout. Conditioning on the
+    market's own increment makes beta_i a SLOPE and kappa_i^2 dt a RESIDUAL
+    VARIANCE, and both are identified. Same five keys out, so nothing
+    downstream changes.
+
+    JGL_PMLE_MARGINAL=1 runs the draft-7 marginal arm instead.
+
     Returns ``(valuation_dt, idiosyncratic_id, results)``.
     """
-    # Eight elements when an arm is in force, seven for the published
-    # configuration - so every existing caller keeps working unchanged.
+    # Positions 0-6 are the published layout, 7 is an arm's priors and 8 the
+    # market's return vector. Trailing and optional, so poc/ callers that
+    # build seven- or eight-element tuples keep working unchanged.
     (valuation_dt, params_sys, return_vector, delta_t, seed_number,
      n_mc_paths, idiosyncratic_id) = args[:7]
     priors = args[7] if len(args) > 7 else None
-    results = pmle_kimyirisk_idiosyncratic(
-        params_sys=params_sys,
-        idi_returns=return_vector,
-        delta_t=delta_t,
-        seed_number=seed_number,
-        n_mc_paths=n_mc_paths,
-        priors=priors,
-    )
+    sys_return_vector = args[8] if len(args) > 8 else None
+
+    # THE MARKET'S RETURNS ARE THE SWITCH. Supplying them selects the joint
+    # arm, because that is the only thing the joint arm needs that the
+    # marginal one does not.
+    if sys_return_vector is None:
+        results = pmle_kimyirisk_idiosyncratic(
+            params_sys=params_sys,
+            idi_returns=return_vector,
+            delta_t=delta_t,
+            seed_number=seed_number,
+            n_mc_paths=n_mc_paths,
+            priors=priors,
+        )
+    else:
+        if priors is not None:
+            raise ValueError(
+                "the joint arm takes IDIOSYNCRATIC_PRIORS_JOINT keys, which "
+                "are not the marginal arm's; pass an arm's priors only with "
+                "the marginal arm (omit sys_return_vector).")
+        results = pmle_kimyirisk_joint(
+            params_sys=params_sys,
+            idi_returns=return_vector,
+            sys_returns=sys_return_vector,
+            delta_t=delta_t,
+            seed_number=seed_number,
+            n_mc_paths=n_mc_paths,
+        )
     return valuation_dt, idiosyncratic_id, results
 
 
@@ -241,17 +273,32 @@ if __name__ == "__main__":
     # Built after the systematic stage so every required systematic CSV exists
     # (whether just estimated above or already cached from a previous run).
     if set_to_valuate_idiosyncratic:
+        marginal = os.environ.get("JGL_PMLE_MARGINAL", "").strip().lower() in {
+            "1", "true", "yes"}
         idiosyncratic_arg_list = []
         for dt, idi_id in set_to_valuate_idiosyncratic:
             params_sys = get_pmle_params_dict(dt, systematic_id, params=SYSTEMATIC_PARAMS)
-            return_vector = (
+            idi_slice = (
                 return_ts.loc[return_ts.index <= dt, idi_id]
                 .iloc[-lookback_period:]
-                .to_numpy()
             )
-            idiosyncratic_arg_list.append(
-                (dt, params_sys, return_vector, delta_t, seed_number, n_mc_paths, idi_id)
-            )
+            return_vector = idi_slice.to_numpy()
+            args = [dt, params_sys, return_vector, delta_t, seed_number,
+                    n_mc_paths, idi_id]
+            if not marginal:
+                # SLICED ON THE NAME'S OWN INDEX, not re-sliced by date, so U
+                # and V are the same trading days in the same order. The joint
+                # likelihood pairs them step for step and a one-day offset
+                # would silently turn beta_i into a lagged regression.
+                sys_slice = return_ts.loc[idi_slice.index, systematic_id]
+                if sys_slice.isna().any():
+                    raise ValueError(
+                        "%s has no %s return on %d of %s's trading days in the "
+                        "window ending %s" % (systematic_id, systematic_id,
+                                              int(sys_slice.isna().sum()),
+                                              idi_id, dt))
+                args += [None, sys_slice.to_numpy()]
+            idiosyncratic_arg_list.append(tuple(args))
 
         with ProcessPoolExecutor() as executor:
             for valuation_dt, idi_id, results in executor.map(

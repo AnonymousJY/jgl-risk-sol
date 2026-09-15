@@ -1945,17 +1945,23 @@ class KimYiLogLike:
 # kappa_perp = kappa_i sqrt(1 - rho_iX^2). The name regresses on the market
 # with slope b_i on the DIFFUSIVE channel and gamma_i on the JUMP channel.
 #
-# WHAT THIS ESTIMATES, AND WHAT IT DOES NOT. The identified quantities are
-# b_i, kappa_perp, gamma_i and the drift m_i - so this arm samples those
-# directly rather than beta_i, kappa_i, rho_iX, mu_i, which remain on a
-# one-dimensional ridge:
+# WHAT THIS ESTIMATES. The identified quantities are b_i, kappa_perp, gamma_i
+# and the drift, where
 #
-#     b_i      = beta_i + kappa_i rho_iX / sigma
+#     b_i          = beta_i + kappa_i rho_iX / sigma
 #     kappa_perp^2 = kappa_i^2 (1 - rho_iX^2)
 #
-# Two equations, three unknowns. rho_iX is recovered afterwards by regressing
-# b_i on 1/sigma ACROSS windows, since b_i is linear in 1/sigma with intercept
-# beta_i and slope kappa_i rho_iX; see poc/estimate_idiosyncratic_joint.py.
+# AT rho_iX = 0 THOSE ARE beta_i AND kappa_i EXACTLY, so under
+# ORTHOGONAL_SHOCKS this arm identifies the model's own parameters and
+# reports them under their own names. Rank 4 of 4: m_i, beta_i, kappa_i,
+# gamma_i, against 3 of 4 for the marginal arm.
+#
+# (With rho_iX free it would be rank 4 of 5 and beta_i, kappa_i, rho_iX would
+# stay on a one-dimensional ridge. An earlier draft proposed breaking it by
+# regressing b_i on 1/sigma across windows. That is withdrawn: the paper
+# estimates sigma once, on one date, so there is no cross-window variation in
+# sigma to regress on. pmle_kimyirisk_joint therefore requires
+# ORTHOGONAL_SHOCKS.)
 #
 # NUMERICS. The closed form of the jump integral carries exp(A B^2 / 2), which
 # overflows on its own once w = v - b_i u reaches order one. The product with
@@ -1986,7 +1992,15 @@ def systematic_innovations(sys_returns, params_sys, delta_t):
 
 
 class KimYiLogLikeJoint:
-    """log f(U_k, V_k): the name's increment jointly with the market's."""
+    """log f(U_k, V_k): the name's increment jointly with the market's.
+
+    The algebra is written for GENERAL rho_iX, in the two quantities the
+    conditional law actually identifies - the total systematic exposure
+    b_i = beta_i + kappa_i rho_iX / sigma and the orthogonal idiosyncratic
+    scale kappa_perp = kappa_i sqrt(1 - rho_iX^2). pmle_kimyirisk_joint calls
+    it at rho_iX = 0, where b_i = beta_i and kappa_perp = kappa_i and the
+    argument names below are the model's own parameters.
+    """
 
     def __init__(self, mi, kperp, gammai, bi, u_series,
                  alpha, sigma, pprob, lamb, eta1, eta2, dt):
@@ -2052,27 +2066,36 @@ class KimYiLogLikeJoint:
         return lpre + lse
 
 
-def _dist_loglike_joint(y, mi, kperp, gammai, bi, u_series,
+def _dist_loglike_joint(y, mi, kappai, gammai, betai, u_series,
                         alpha, sigma, pprob, lamb, eta1, eta2,
                         delta_t) -> pt.TensorVariable:
+    # At rho_iX = 0 the class's b_i and kappa_perp ARE beta_i and kappa_i, so
+    # the model's parameters go straight into those slots. exp() because the
+    # three positive parameters are carried on the log scale, exactly as
+    # _dist_loglike_idiosyncratic carries them.
     return KimYiLogLikeJoint(
-        mi=mi, kperp=pt.exp(kperp), gammai=pt.exp(gammai), bi=pt.exp(bi),
+        mi=mi, kperp=pt.exp(kappai), gammai=pt.exp(gammai), bi=pt.exp(betai),
         u_series=u_series, alpha=alpha, sigma=sigma, pprob=pprob, lamb=lamb,
         eta1=eta1, eta2=eta2, dt=delta_t,
     ).logp(y=y)
 
 
-# Priors on the IDENTIFIED parameters. b_i is centred at 1.5 because the three
-# banks' reported b_i run 1.50 to 1.78 and the quantity is a loading on the
-# systematic Brownian, so values near one are the neutral expectation.
-# kappa_perp is the orthogonal idiosyncratic scale and is small by
-# construction. gamma_i keeps its existing prior. m_i is the drift the
-# likelihood sees; mu_i is recovered afterwards, not sampled.
+# Priors on the natural parameters. beta_i is centred at 1.5 - the three
+# banks' total systematic exposure runs 1.50 to 1.78 and the quantity is a
+# loading on the systematic Brownian, so values near one are the neutral
+# expectation. kappa_i is the idiosyncratic scale and is small by
+# construction. gamma_i and mu_i keep the marginal arm's priors exactly, so a
+# difference between the two arms is the LIKELIHOOD and not the prior.
+#
+# mu_i is sampled, not m_i. The likelihood needs the total drift
+# m_i = mu_i + 0.5 (sigma beta_i)^2, but that is a deterministic function of
+# what is already here, and sampling mu_i keeps dMUI on the same footing as
+# the marginal arm's.
 IDIOSYNCRATIC_PRIORS_JOINT = {
-    "bi_rv":     ("Gamma", {"alpha": 3.0, "beta": 2.0}),     # mean 1.500
-    "kperp_rv":  ("Gamma", {"alpha": 2.0, "beta": 2.0 / 0.13}),  # mean 0.130
+    "betai_rv":  ("Gamma", {"alpha": 3.0, "beta": 2.0}),     # mean 1.500
+    "kappai_rv": ("Gamma", {"alpha": 2.0, "beta": 2.0 / 0.13}),  # mean 0.130
     "gamma_rv":  ("Gamma", {"alpha": 3.0, "beta": 1.0}),     # mean 3.000
-    "mi":        ("Normal", {"mu": 0.0, "sigma": 1.0}),
+    "mui":       ("Normal", {"mu": 0.0, "sigma": 1.0}),
 }
 
 
@@ -2086,14 +2109,29 @@ def pmle_kimyirisk_joint(
         nuts_sampler: str = "nutpie",
         is_progress_bar: bool = False,
         priors: dict = None,
-) -> dict:
-    """Estimate (b_i, kappa_perp, gamma_i, m_i) conditional on the market.
+        return_idata: bool = False,
+):
+    """Estimate (mu_i, kappa_i, gamma_i, beta_i) conditional on the market.
 
-    The two-stage architecture is unchanged: the systematic parameters arrive
-    as fixed constants exactly as they do for pmle_kimyirisk_idiosyncratic.
-    The only new input is sys_returns, the market's return vector over the same
-    window, from which the innovation series U is built.
+    The identified drop-in replacement for pmle_kimyirisk_idiosyncratic. It
+    returns the SAME FIVE KEYS, so nothing downstream changes, but beta_i and
+    kappa_i are now separately identified rather than confounded inside
+    phi_i^2 = (sigma beta_i)^2 + kappa_i^2. On a day with no jump,
+    V_k | U_k ~ N(beta_i U_k, kappa_i^2 dt): beta_i is a SLOPE and
+    kappa_i^2 dt a RESIDUAL VARIANCE, two distinct features of the
+    conditional law.
+
+    The two-stage architecture is unchanged - the systematic parameters
+    arrive as fixed constants exactly as they do for the marginal arm - and
+    no new data is needed. sys_returns is the same ^SPX window the systematic
+    stage already used, from which the innovation series U is built.
     """
+    if not ORTHOGONAL_SHOCKS:
+        raise ValueError(
+            "pmle_kimyirisk_joint reports beta_i and kappa_i, which equal the "
+            "quantities the conditional likelihood identifies (b_i and "
+            "kappa_perp) only at rho_iX = 0. With ORTHOGONAL_SHOCKS off the "
+            "two differ and the names would be wrong.")
     pr = dict(IDIOSYNCRATIC_PRIORS_JOINT)
     if priors:
         unknown = set(priors) - set(pr)
@@ -2116,20 +2154,25 @@ def pmle_kimyirisk_joint(
                          % (len(u_series), observed.shape[0] - 1))
 
     with pm.Model():
-        mi = _build_prior("mi", pr["mi"])
+        mui = _build_prior("mui", pr["mui"])
 
-        bi_rv = _build_prior("bi_rv", pr["bi_rv"])
-        bi = pm.Deterministic("bi", pt.log(bi_rv))
+        betai_rv = _build_prior("betai_rv", pr["betai_rv"])
+        betai = pm.Deterministic("betai", pt.log(betai_rv))
 
-        kperp_rv = _build_prior("kperp_rv", pr["kperp_rv"])
-        kperp = pm.Deterministic("kperp", pt.log(kperp_rv))
+        kappai_rv = _build_prior("kappai_rv", pr["kappai_rv"])
+        kappai = pm.Deterministic("kappai", pt.log(kappai_rv))
 
         gammai_rv = _build_prior("gamma_rv", pr["gamma_rv"])
         gammai = pm.Deterministic("gammai", pt.log(gammai_rv))
 
+        # The drift the likelihood removes. At rho_iX = 0 KimYiLogLike._drift()
+        # is mu_i + 0.5 (sigma beta_i)^2, so this is the same drift the
+        # marginal arm removes, written in the parameters this one samples.
+        mi = pm.Deterministic("mi", mui + 0.5 * (sigma * betai_rv) ** 2)
+
         pm.CustomDist(
             "likelihood",
-            mi, kperp, gammai, bi, u_series,
+            mi, kappai, gammai, betai, u_series,
             alpha, sigma, pprob, lamb, eta1, eta2, delta_t,
             observed=observed,
             logp=_dist_loglike_joint,
@@ -2141,18 +2184,25 @@ def pmle_kimyirisk_joint(
                           random_seed=np.random.default_rng(np.uint64(seed_number)),
                           nuts_sampler=nuts_sampler)
 
-    _warn_low_ess(idata, ["mi", "bi_rv", "kperp_rv", "gamma_rv"], "joint")
+    _warn_low_ess(idata, ["mui", "betai_rv", "kappai_rv", "gamma_rv"], "joint")
 
-    def _s(var):
-        return summarize(idata, var)
+    # Transforms are applied to the DRAWS, so means are arithmetic and
+    # intervals are the transformed quantiles - same convention as the
+    # marginal arm.
+    mu_m, mu_lo, mu_hi = summarize(idata, "mui")
+    k_m, k_lo, k_hi = summarize(idata, "kappai", transform=np.exp)
+    g_m, g_lo, g_hi = summarize(idata, "gammai", transform=np.exp)
+    b_m, b_lo, b_hi = summarize(idata, "betai", transform=np.exp)
 
-    m_m, m_lo, m_hi = _s("mi")
-    b_m, b_lo, b_hi = _s("bi_rv")
-    k_m, k_lo, k_hi = _s("kperp_rv")
-    g_m, g_lo, g_hi = _s("gamma_rv")
-    return {
-        "dMI":     ParamsResults(dMEAN=m_m, dCI_LOWER=m_lo, dCI_UPPER=m_hi),
-        "dBI":     ParamsResults(dMEAN=b_m, dCI_LOWER=b_lo, dCI_UPPER=b_hi),
-        "dKPERP":  ParamsResults(dMEAN=k_m, dCI_LOWER=k_lo, dCI_UPPER=k_hi),
+    # THE SAME FIVE KEYS the marginal arm returns, so this is a drop-in
+    # replacement: the parameter files, the simulation and the Q-side
+    # calibration need no change. dRHOIX is 0 by assumption, reported with a
+    # zero-width interval.
+    results = {
+        "dMUI":    ParamsResults(dMEAN=mu_m, dCI_LOWER=mu_lo, dCI_UPPER=mu_hi),
+        "dKAPPAI": ParamsResults(dMEAN=k_m, dCI_LOWER=k_lo, dCI_UPPER=k_hi),
         "dGAMMAI": ParamsResults(dMEAN=g_m, dCI_LOWER=g_lo, dCI_UPPER=g_hi),
+        "dBETAI":  ParamsResults(dMEAN=b_m, dCI_LOWER=b_lo, dCI_UPPER=b_hi),
+        "dRHOIX":  ParamsResults(dMEAN=0., dCI_LOWER=0., dCI_UPPER=0.),
     }
+    return (results, idata) if return_idata else results

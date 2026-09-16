@@ -371,8 +371,11 @@ SYSTEMATIC_PRIORS_DRAFT7 = {
 #
 # NOT one run. eta1/eta2/pprob and alpha/sigma/lamb come from different arms,
 # so quote it as a calibration, never as a single re-estimation result.
+# SUPERSEDED, AND NOT TO BE PAIRED WITH WINDOW ESTIMATES. See _build_prior.
+# alpha_rv = 0.036 here is an artifact of a trended Psi under a prior capped
+# at 1; it is not a measurement. Kept only to reproduce draft-7 numbers.
 FULL_SAMPLE = {
-    "alpha_rv": 0.036,      # half-life 19.3 yr; Psi is near a random walk
+    "alpha_rv": 0.036,      # ARTIFACT. half-life 19.3 yr; see _build_prior
     "sigma":    0.105,
     "pprob_rv": 0.575,      # +-0.026 under a flat prior, 2.9 sd above 0.5
     "lamb":     76.99,      # ~77 jumps/yr, one every 3.3 trading days
@@ -845,10 +848,42 @@ def _build_prior(name, spec):
     """Instantiate one prior from a (distribution_name, kwargs) pair.
 
     ("Fixed", {"value": x}) pins the parameter to a constant instead of
-    sampling it. Used for parameters a 252-day window cannot identify - alpha,
-    whose half-life exceeds the window, and the jump-size decays, which see
-    only ~7 jumps per side - so they are carried from a full-sample fit rather
-    than re-estimated badly in every window.
+    sampling it.
+
+    DO NOT USE IT TO CARRY A PARAMETER IN FROM A DIFFERENT PERIOD. Every
+    parameter in one fit has to come from the same window. They are not
+    variation-independent: alpha and sigma jointly set the stationary
+    variance sigma^2/(2 alpha), which is what drives the VaR tail, so a
+    full-sample alpha paired with a window sigma describes no process that
+    ever existed. The window also sits inside the full sample, so the fit
+    would use the same data twice and report an interval that is too narrow.
+
+    THE ORIGINAL JUSTIFICATION IS GONE, AND IT WAS CIRCULAR. This docstring
+    used to say a 252-day window could not identify alpha "whose half-life
+    exceeds the window", citing the full-sample 0.036 - a half-life of 19
+    years. That value came from fitting a TRENDED Psi under a Beta prior
+    CAPPED AT 1. Both defects are fixed, and alpha now comes back at 15-20,
+    a half-life near ten trading days. Simulated recovery, no prior:
+
+        alpha    half-life |  252d        504d        1008d   half-lives/252d
+        0.036    4852.0 d  |  5.5+-4.5   2.6+-2.2   1.3+-1.1        0
+        1.000     174.7 d  |  6.1+-4.6   3.3+-2.3   2.2+-1.2        1
+       15.000      11.6 d  | 18.8+-6.9  17.0+-4.0  15.9+-2.8       22
+       20.000       8.7 d  | 23.8+-7.7  22.0+-4.6  20.9+-3.2       29
+       50.000       3.5 d  | 53.6+-11.8 52.0+-7.6  51.0+-5.3       72
+
+    The old claim was TRUE at the old alpha and FALSE at the corrected one -
+    and the loop closed on itself: a capped prior on a trended series put
+    alpha at 0.036, which made it look unidentifiable in a window, which
+    justified importing it from the full sample, which locked 0.036 in.
+
+    The jump decays were fixed for the same reason ("~7 jumps per side").
+    That is also gone: at lambda = 77 a 504-day window carries ~154 jumps,
+    and the recovery study returns eta1 +3.3% and eta2 -5.8% with 100%
+    coverage. Everything is estimated on the window it belongs to.
+
+    Fixed remains available for DIAGNOSTIC arms - holding a parameter at a
+    known value to see what moves - which is what the arms below use it for.
     """
     dist, kw = spec
     if dist == "Fixed":

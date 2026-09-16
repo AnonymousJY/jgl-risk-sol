@@ -275,6 +275,20 @@ def _warn_low_ess(idata, names, label):
 # sitting well away from zero, and Psi wandering far from zero and staying
 # there, are both consequences of that cap rather than findings.
 #
+# THE PRIOR IS SPECIFIED ON THE SCALE NUTS ACTUALLY WALKS. alpha is positive,
+# so PyMC samples alpha_rv on a log transform (the value variable is literally
+# named alpha_rv_log__) and applies the Jacobian. A LogNormal makes the PRIOR
+# Gaussian on that same line: log alpha ~ N(log 25, 1). Nothing is bounded,
+# nothing piles up at an edge, and the geometry NUTS sees is the one it
+# handles best.
+#
+# This is only safe because the transition is now exp(-alpha dt). Under the
+# old Euler (1 - alpha dt) the recursion changed sign at alpha = 252, and a
+# LogNormal(log 25, 1) puts 1.0% of its mass above that - a region where the
+# model is not an OU at all. Gamma(2, 0.08) put 3.7e-08 there, which is why
+# it was the right choice while the ceiling existed. With the exact
+# transition there is no ceiling and no reason to shape the prior around one.
+#
 # ALPHA IS IDENTIFIED. This was an open question and the simulation study
 # settles it: with no prior at all, the estimator is consistent - bias +7.6%
 # at 504 days shrinking to +1.2% at 10,080 - with sd 4.54 at the paper's
@@ -324,7 +338,7 @@ def _warn_low_ess(idata, names, label):
 # posteriors under the new header. JGL_PMLE_FORCE=1, or a fresh drawer.
 SYSTEMATIC_PRIORS = {
     "sigma":    ("Gamma", {"alpha":  1.0,  "beta": 1.0}),    # mean  1.000 sd 1.000
-    "alpha_rv": ("Gamma", {"alpha": 2.0, "beta": 0.08}),     # mean 25.000 sd 17.678
+    "alpha_rv": ("LogNormal", {"mu": 3.2189, "sigma": 1.0}), # median 25.0
     "pprob_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
     "lamb":     ("Gamma", {"alpha": 10.0,  "beta": 0.5}),    # mean 20.000 sd 6.325
     "eta1":     ("Gamma", {"alpha": 50.0,  "beta": 1.0}),    # mean 50.000 sd 7.071
@@ -425,13 +439,13 @@ SYSTEMATIC_PRIORS_SKEW = {
 # while containing strictly less information. That is how a published table of
 # tight, stable estimates on unidentifiable parameters comes about without
 # anyone doing anything careless.
-# alpha_rv is Gamma here for the same reason it is on the paper arm.
+# alpha_rv is LogNormal here for the same reason it is on the paper arm.
 # skew-tight is what every rolling run since has used, so leaving it on
 # Beta(9.5, 9.5) would have left the cap in place everywhere that matters.
 # Every other prior is untouched, so the arm still means what it meant.
 SYSTEMATIC_PRIORS_SKEW_TIGHT = {
     "sigma":    ("Gamma", {"alpha":  2.0,   "beta": 10.0}),  # mean  0.200 sd  0.141
-    "alpha_rv": ("Gamma", {"alpha": 2.0, "beta": 0.08}),     # mean 25.000 sd 17.678
+    "alpha_rv": ("LogNormal", {"mu": 3.2189, "sigma": 1.0}), # median 25.0
     "pprob_rv": ("Beta",  {"alpha": 10.925, "beta":  8.075}),# mean  0.575 sd  0.111
     "lamb":     ("Gamma", {"alpha":  3.0,   "beta":  0.5}),  # mean  6.000 sd  3.464
     "eta1":     ("Gamma", {"alpha": 16.0,   "beta":  0.32}), # mean 50.000 sd 12.500
@@ -478,6 +492,10 @@ SYSTEMATIC_PRIORS_SKEW_TIGHT_DRAFT7 = {
     "eta1":     ("Gamma", {"alpha": 16.0,   "beta":  0.32}), # mean 50.000 sd 12.500
     "eta2":     ("Gamma", {"alpha": 16.0,   "beta":  0.64}), # mean 25.000 sd  6.250
 }
+
+SYSTEMATIC_PRIORS_ALPHA_GAMMA = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_ALPHA_GAMMA["alpha_rv"] = (
+    "Gamma", {"alpha": 2.0, "beta": 0.08})                   # mean 25.000 sd 17.678
 
 SYSTEMATIC_PRIORS_ALPHA_LOGUNIFORM = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
 SYSTEMATIC_PRIORS_ALPHA_LOGUNIFORM["alpha_rv"] = (
@@ -787,6 +805,7 @@ SYSTEMATIC_PRIOR_SETS = {
     # The two published configurations, with alpha still capped at 1. Kept so
     # the draft-7 tables can be regenerated; not for new work.
     # alpha on the LogUniform this replaced, for the prior-sensitivity arm.
+    "alpha-gamma":       SYSTEMATIC_PRIORS_ALPHA_GAMMA,
     "alpha-loguniform":  SYSTEMATIC_PRIORS_ALPHA_LOGUNIFORM,
     "draft7":            SYSTEMATIC_PRIORS_DRAFT7,
     "skew-tight-draft7": SYSTEMATIC_PRIORS_SKEW_TIGHT_DRAFT7,
@@ -862,6 +881,10 @@ def prior_moments(spec):
     dist, kw = spec
     if dist == "Fixed":
         return float(kw["value"]), 0.0
+    if dist == "LogNormal":
+        mu, sg = float(kw["mu"]), float(kw["sigma"])
+        m = np.exp(mu + 0.5 * sg * sg)
+        return float(m), float(m * np.sqrt(np.expm1(sg * sg)))
     if dist == "LogUniform":
         # X = exp(U), U ~ Uniform(log lo, log hi):
         #   E[X]   = (hi - lo) / log(hi/lo)
@@ -941,6 +964,10 @@ def prior_ci_width(spec, prob=0.95):
     dist, kw = spec
     if dist == "Fixed":
         return 0.0
+    if dist == "LogNormal":
+        mu, sg = float(kw["mu"]), float(kw["sigma"])
+        return float(np.exp(mu + sg * stats.norm.ppf(hi_q))
+                     - np.exp(mu + sg * stats.norm.ppf(lo_q)))
     if dist == "LogUniform":
         # Quantile q is lo * (hi/lo)**q, so the interval is exact.
         lo, hi = float(kw["lower"]), float(kw["upper"])
@@ -1695,7 +1722,9 @@ class KimYiRiskEngine:
 
         # do simulations
         for t in range(n_steps):
-            psi[:, :, t + 1]  = (1. - self.alpha_dt) * psi[:, :, t]
+            # EXACT OU transition. KEEP IN STEP WITH KimYiLogLike.logp,
+            # KimYiLogLikeJoint.logp and systematic_innovations().
+            psi[:, :, t + 1]  = np.exp(-self.alpha_dt) * psi[:, :, t]
             psi[:, :, t + 1] += np.sqrt(self.variance_dt) * np.dot(self.L, Z[:, :, t])
             psi[:, :, t + 1] += self.gammai * Y[:, t]
 
@@ -1873,7 +1902,9 @@ class KimYiLogLike:
         x = y[:-1]
         y = y[1:]
 
-        diff_y_x = y - (1. - self.alpha * self.dt) * x
+        # exp(-alpha dt), not the Euler (1 - alpha dt) - see the note on
+        # SYSTEMATIC_PRIORS. KEEP IN STEP WITH the three other sites.
+        diff_y_x = y - pt.exp(-self.alpha * self.dt) * x
         eta1 = self.eta1 / self.gammai
         eta2 = self.eta2 / self.gammai
 
@@ -2010,7 +2041,7 @@ def systematic_innovations(sys_returns, params_sys, delta_t):
 
     psi = np.cumsum(systematic_psi_returns(
         np.asarray(sys_returns, dtype=float).reshape(-1)))
-    return psi[1:] - (1.0 - alpha * dt) * psi[:-1]
+    return psi[1:] - np.exp(-alpha * dt) * psi[:-1]
 
 
 class KimYiLogLikeJoint:
@@ -2057,7 +2088,7 @@ class KimYiLogLikeJoint:
         y = y - drift_scaler * self.mi * self.dt
         x = y[:-1]
         y = y[1:]
-        V = y - (1. - self.alpha * self.dt) * x
+        V = y - pt.exp(-self.alpha * self.dt) * x
         U = self.u
 
         s2 = self.sigma ** 2 * self.dt

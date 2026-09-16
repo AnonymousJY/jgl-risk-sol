@@ -1090,8 +1090,19 @@ def pmle_kimyirisk_systematic(
         n_mc_paths: int = 10_000,
         nuts_sampler: Literal["pymc", "nutpie", "jax", "numpyro", "blackjax"] = "nutpie",
         is_progress_bar: bool = False,
-        priors: dict = None
-) -> dict:
+        priors: dict = None,
+        return_idata: bool = False
+):
+    """Estimate the six systematic parameters.
+
+    return_idata=True additionally returns the InferenceData, as
+    ``(results, idata)`` - the same contract pmle_kimyirisk_idiosyncratic and
+    pmle_kimyirisk_joint use. Needed for anything that wants the DRAWS rather
+    than the summary: ArviZ posterior and trace plots, R-hat by hand, or any
+    question about a function of two parameters, where a mean of a product is
+    not the product of the means. Default False, so every existing caller is
+    unchanged.
+    """
     SEED = np.uint64(seed_number)
 
     # priors=None reproduces the published configuration exactly.
@@ -1160,14 +1171,14 @@ def pmle_kimyirisk_systematic(
                   ["sigma", "alpha_rv", "pprob_rv", "lamb", "eta1", "eta2"],
                   "systematic")
 
-    a_m, a_lo, a_hi = _summ("alpha_rv", "alpha_rv")
+    a_m, a_lo, a_hi = _summ("alpha_rv", "alpha_rv")  # noqa: E501
     s_m, s_lo, s_hi = _summ("sigma", "sigma")
     p_m, p_lo, p_hi = _summ("pprob_rv", "pprob_rv")
     l_m, l_lo, l_hi = _summ("lamb", "lamb")
     e1_m, e1_lo, e1_hi = _summ("eta1", "eta1")
     e2_m, e2_lo, e2_hi = _summ("eta2", "eta2")
 
-    return {
+    results = {
         'dALPHA': ParamsResults(dMEAN=a_m, dCI_LOWER=a_lo, dCI_UPPER=a_hi),
         'dSIGMA': ParamsResults(dMEAN=s_m, dCI_LOWER=s_lo, dCI_UPPER=s_hi),
         'dPPROB': ParamsResults(dMEAN=p_m, dCI_LOWER=p_lo, dCI_UPPER=p_hi),
@@ -1175,6 +1186,7 @@ def pmle_kimyirisk_systematic(
         'dETA1': ParamsResults(dMEAN=e1_m, dCI_LOWER=e1_lo, dCI_UPPER=e1_hi),
         'dETA2': ParamsResults(dMEAN=e2_m, dCI_LOWER=e2_lo, dCI_UPPER=e2_hi)
     }
+    return (results, idata_systematic) if return_idata else results
 
 
 # ---------------------------------------------------------------------------

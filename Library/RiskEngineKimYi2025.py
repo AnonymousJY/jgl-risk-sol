@@ -267,7 +267,7 @@ def _warn_low_ess(idata, names, label):
 
 
 # ---------------------------------------------------------------------------
-# alpha: LogUniform(0.01, 250), not Beta
+# alpha: Gamma(2, 0.08), not Beta and not LogUniform
 # ---------------------------------------------------------------------------
 # Every alpha prior in draft 7 was a Beta, whose support is (0, 1). alpha = 1
 # is a half-life of 175 trading days, so the model was not merely doubtful
@@ -275,18 +275,34 @@ def _warn_low_ess(idata, names, label):
 # sitting well away from zero, and Psi wandering far from zero and staying
 # there, are both consequences of that cap rather than findings.
 #
-# alpha is a RATE with no natural scale, so the prior is flat on log alpha.
+# ALPHA IS IDENTIFIED. This was an open question and the simulation study
+# settles it: with no prior at all, the estimator is consistent - bias +7.6%
+# at 504 days shrinking to +1.2% at 10,080 - with sd 4.54 at the paper's
+# window. So alpha is estimable but IMPRECISE, +-23% at one sd, and that is a
+# property of the data that no prior or reparameterisation improves.
 #
-#   lower 0.01   half-life 69 years. Deliberately below the draft-7
-#                full-sample value of 0.036, so the old answer stays inside
-#                the support and the data can still return it.
-#   upper 250    the Euler transition coefficient in KimYiLogLike.logp is
-#                (1 - alpha dt) with dt = 1/252. It changes sign at
-#                alpha = 252, where the recursion stops being a
-#                discretisation of an OU and starts oscillating. 250 is the
-#                largest round number on the right side of that. Half-life
-#                0.7 trading days - far faster than anything the data could
-#                plausibly want, which is the point of an upper bound.
+# That makes the prior's job narrow: stay out of the way. Gamma(2, 0.08) has
+# mean 25 (half-life ~7 trading days), mode 12.5, sd 17.7 and a 95% interval
+# of [3.0, 69.7] - half-lives from 58 days down to 2.5. Shape 2 matters: the
+# density vanishes at the origin.
+#
+# WHY NOT LogUniform. Flat on log alpha is a 1/alpha DENSITY on alpha, which
+# piles mass at the origin exactly where a mean-reversion rate should not be
+# favoured. Against a likelihood centred at 20 that tilt is worth about -5%.
+#
+# HOW MUCH EACH PRIOR ACTUALLY WEIGHS, against a likelihood sd of 4.54:
+#
+#     Beta(5, 2)       sd 0.16    posterior precision from the prior  99.9%
+#     Gamma(2, 0.08)   sd 17.7    posterior precision from the prior   6.1%
+#
+# That single line is the whole case. The published alpha was not an estimate
+# tilted by a prior; it was the prior, with the data contributing a tenth of
+# a percent. Under the Gamma the data carries 94%.
+#
+# The upper tail is unbounded, which is safe here: the Euler coefficient
+# (1 - alpha dt) in KimYiLogLike.logp changes sign at alpha = 252, and the
+# Gamma puts 2e-8 of its mass above that - far less than the LogUniform's
+# hard bound was doing, and without the bound itself becoming a statement.
 #
 # BOTH FIXES ARE NEEDED AND NEITHER IS ENOUGH ALONE. poc/alpha_prior_cap.py
 # fits alpha by conditional MLE on simulated OU paths - 504 days, sigma =
@@ -308,7 +324,7 @@ def _warn_low_ess(idata, names, label):
 # posteriors under the new header. JGL_PMLE_FORCE=1, or a fresh drawer.
 SYSTEMATIC_PRIORS = {
     "sigma":    ("Gamma", {"alpha":  1.0,  "beta": 1.0}),    # mean  1.000 sd 1.000
-    "alpha_rv": ("LogUniform", {"lower": 0.01, "upper": 250.0}),  # median 1.581
+    "alpha_rv": ("Gamma", {"alpha": 2.0, "beta": 0.08}),     # mean 25.000 sd 17.678
     "pprob_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
     "lamb":     ("Gamma", {"alpha": 10.0,  "beta": 0.5}),    # mean 20.000 sd 6.325
     "eta1":     ("Gamma", {"alpha": 50.0,  "beta": 1.0}),    # mean 50.000 sd 7.071
@@ -409,13 +425,13 @@ SYSTEMATIC_PRIORS_SKEW = {
 # while containing strictly less information. That is how a published table of
 # tight, stable estimates on unidentifiable parameters comes about without
 # anyone doing anything careless.
-# alpha_rv is LogUniform here for the same reason it is on the paper arm.
+# alpha_rv is Gamma here for the same reason it is on the paper arm.
 # skew-tight is what every rolling run since has used, so leaving it on
 # Beta(9.5, 9.5) would have left the cap in place everywhere that matters.
 # Every other prior is untouched, so the arm still means what it meant.
 SYSTEMATIC_PRIORS_SKEW_TIGHT = {
     "sigma":    ("Gamma", {"alpha":  2.0,   "beta": 10.0}),  # mean  0.200 sd  0.141
-    "alpha_rv": ("LogUniform", {"lower": 0.01, "upper": 250.0}),  # median 1.581
+    "alpha_rv": ("Gamma", {"alpha": 2.0, "beta": 0.08}),     # mean 25.000 sd 17.678
     "pprob_rv": ("Beta",  {"alpha": 10.925, "beta":  8.075}),# mean  0.575 sd  0.111
     "lamb":     ("Gamma", {"alpha":  3.0,   "beta":  0.5}),  # mean  6.000 sd  3.464
     "eta1":     ("Gamma", {"alpha": 16.0,   "beta":  0.32}), # mean 50.000 sd 12.500
@@ -462,6 +478,10 @@ SYSTEMATIC_PRIORS_SKEW_TIGHT_DRAFT7 = {
     "eta1":     ("Gamma", {"alpha": 16.0,   "beta":  0.32}), # mean 50.000 sd 12.500
     "eta2":     ("Gamma", {"alpha": 16.0,   "beta":  0.64}), # mean 25.000 sd  6.250
 }
+
+SYSTEMATIC_PRIORS_ALPHA_LOGUNIFORM = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
+SYSTEMATIC_PRIORS_ALPHA_LOGUNIFORM["alpha_rv"] = (
+    "LogUniform", {"lower": 0.01, "upper": 250.0})           # median 1.581
 
 SYSTEMATIC_PRIORS_ALPHA_FLAT = dict(SYSTEMATIC_PRIORS_SKEW_TIGHT)
 SYSTEMATIC_PRIORS_ALPHA_FLAT["alpha_rv"] = (
@@ -766,6 +786,8 @@ SYSTEMATIC_PRIOR_SETS = {
     "alpha-pprob-eta-flat": SYSTEMATIC_PRIORS_ALPHA_PPROB_ETA_FLAT,
     # The two published configurations, with alpha still capped at 1. Kept so
     # the draft-7 tables can be regenerated; not for new work.
+    # alpha on the LogUniform this replaced, for the prior-sensitivity arm.
+    "alpha-loguniform":  SYSTEMATIC_PRIORS_ALPHA_LOGUNIFORM,
     "draft7":            SYSTEMATIC_PRIORS_DRAFT7,
     "skew-tight-draft7": SYSTEMATIC_PRIORS_SKEW_TIGHT_DRAFT7,
 }

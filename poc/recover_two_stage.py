@@ -105,11 +105,20 @@ def save_plots(idata, varmap, truth, outdir, tag):
     fig.savefig(outdir / ("%s_posterior.png" % tag), dpi=130)
     plt.close(fig)
 
-    axes = az.plot_trace(idata, var_names=names, compact=True)
+    # One row per parameter, density left and trace right, CHAINS OVERLAID -
+    # four densities that sit on top of each other is the convergence check,
+    # and compact=True would collapse them into one. lines= puts the true
+    # value on the density as a vertical reference.
+    lines = [(v, {}, [float(truth[key])]) for v, key in varmap if v in names]
+    axes = az.plot_trace(idata, var_names=names, compact=False, lines=lines,
+                         figsize=(11, 2.0 * len(names)))
     fig = axes.ravel()[0].figure
-    fig.suptitle("%s - traces" % tag, fontsize=11)
-    fig.tight_layout()
-    fig.savefig(outdir / ("%s_trace.png" % tag), dpi=110)
+    for ax, (v, key) in zip(axes[:, 0], [p for p in varmap if p[0] in names]):
+        ax.set_title("%s   (true %.4g)" % (v, truth[key]), fontsize=10)
+    fig.suptitle("%s - posterior density (truth marked) and traces" % tag,
+                 fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    fig.savefig(outdir / ("%s_trace.png" % tag), dpi=120)
     plt.close(fig)
 
     summ = az.summary(idata, var_names=names, hdi_prob=0.95)

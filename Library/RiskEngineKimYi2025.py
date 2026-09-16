@@ -339,11 +339,57 @@ def _warn_low_ess(idata, names, label):
 SYSTEMATIC_PRIORS = {
     "sigma":    ("Gamma", {"alpha":  1.0,  "beta": 1.0}),    # mean  1.000 sd 1.000
     "alpha_rv": ("LogNormal", {"mu": 3.2189, "sigma": 1.0}), # median 25.0
-    "pprob_rv": ("Beta",  {"alpha":  5.0,  "beta": 2.0}),    # mean  0.714 sd 0.160
-    "lamb":     ("Gamma", {"alpha": 10.0,  "beta": 0.5}),    # mean 20.000 sd 6.325
-    "eta1":     ("Gamma", {"alpha": 50.0,  "beta": 1.0}),    # mean 50.000 sd 7.071
-    "eta2":     ("Gamma", {"alpha": 25.0,  "beta": 1.0}),    # mean 25.000 sd 5.000
+    "pprob_rv": ("Beta",  {"alpha":  2.0,  "beta": 2.0}),    # mean  0.500 sd 0.224
+    "lamb":     ("LogNormal", {"mu": 3.9120, "sigma": 1.0}), # median 50.0
+    "eta1":     ("LogNormal", {"mu": 4.0073, "sigma": 1.0}), # median 55.0
+    "eta2":     ("LogNormal", {"mu": 4.0073, "sigma": 1.0}), # median 55.0  - SAME as eta1
 }
+
+# ---------------------------------------------------------------------------
+# Why the jump priors were widened
+# ---------------------------------------------------------------------------
+# The old priors could not reach the values the paper itself reports. Their
+# standard deviations against the distance to FULL_SAMPLE's own calibration:
+#
+#     param   old prior        sd     published   distance in prior sd
+#     lamb    Gamma(10, 0.5)  6.33      76.99            9.0
+#     eta2    Gamma(25, 1)    5.00      60.68            7.1
+#     eta1    Gamma(50, 1)    7.07      78.59            4.0
+#
+# A prior four to nine standard deviations from the answer is not a weak
+# assumption, it IS the answer. Simulating at the published calibration and
+# refitting on 504 days shows exactly that - and shows it is the PRIORS, not
+# the density in Appendix B:
+#
+#                      lamb     eta1     eta2    sigma    pprob
+#     TRUTH            77.0     78.6     60.7   0.1050    0.575
+#     old priors       35.6     51.7     30.9   0.1239    0.599   coverage 0/0/0/1/3
+#     these priors     89.9     78.4     64.6   0.1034    0.554   coverage 3/3/3/3/2
+#
+# Profiling lambda with NO prior at all peaks at 72.0 against a true 77.0, so
+# the <=1-jump truncation costs about 6%. The priors cost the other 48%.
+#
+# THIS IS ALSO WHAT WAS WRONG WITH alpha. alpha was never independently
+# broken - it was absorbing the distortion from lambda and the etas being
+# pinned at a third of their true values. Same data, 5 seeds, true alpha 15:
+#
+#     jump priors      alpha    bias   cover/5 |   lamb   eta1   eta2
+#     old tight        11.49    -23%       3/5 |   31.6   51.8   30.2
+#     these            13.15    -12%       5/5 |   83.9   81.7   63.4
+#
+# Per-seed scatter tightens from [11.8 11.9 14.0 10.0 9.7] to
+# [13.5 13.4 14.0 11.1 13.9]. The residual -12% is about half of alpha's own
+# sampling sd (sqrt(2*alpha/T_years) = 3.9 here) and is the level at which the
+# two-jump branch would be the next refinement - a refinement, not a repair.
+#
+# eta1 AND eta2 DELIBERATELY SHARE A PRIOR. The old pair asserted the equity
+# skew (means 50 and 25, i.e. down jumps twice the size of up jumps) and then
+# reported it as a finding. From a common prior the fit separates them to 78.4
+# and 64.6 - the same direction, now measured rather than assumed. Do not
+# split these two priors again without a reason that is not the result.
+#
+# pprob moves from Beta(5, 2) to Beta(2, 2) for the same reason: mean 0.5
+# asserts no skew direction, so whatever comes out is the data's.
 
 # Draft 7 exactly as published, for reproducing the printed tables. Spelled
 # out in full rather than derived from the spec above - see the note on
@@ -442,6 +488,10 @@ SYSTEMATIC_PRIORS_SKEW = {
 # while containing strictly less information. That is how a published table of
 # tight, stable estimates on unidentifiable parameters comes about without
 # anyone doing anything careless.
+# NOTE: this arm keeps the NARROW jump priors on purpose - it is the
+# historical "tight" diagnostic, and the paper arm above is what production
+# uses (priors=None). Its lamb prior has mean 6.0 against a published 76.99,
+# twenty prior standard deviations away; do not use it for new fits.
 # alpha_rv is LogNormal here for the same reason it is on the paper arm.
 # skew-tight is what every rolling run since has used, so leaving it on
 # Beta(9.5, 9.5) would have left the cap in place everywhere that matters.

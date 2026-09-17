@@ -348,16 +348,16 @@ SYSTEMATIC_PRIORS = {
 # ---------------------------------------------------------------------------
 # Why the jump priors were widened
 # ---------------------------------------------------------------------------
-# The old priors could not reach the values the paper itself reports. Their
-# standard deviations against the distance to FULL_SAMPLE's own calibration:
+# The old priors could not reach the values our own full-sample fit returns.
+# Their standard deviations against the distance to FULL_SAMPLE:
 #
-#     param   old prior        sd     published   distance in prior sd
+#     param   old prior        sd   FULL_SAMPLE   distance in prior sd
 #     lamb    Gamma(10, 0.5)  6.33      76.99            9.0
 #     eta2    Gamma(25, 1)    5.00      60.68            7.1
 #     eta1    Gamma(50, 1)    7.07      78.59            4.0
 #
 # A prior four to nine standard deviations from the answer is not a weak
-# assumption, it IS the answer. Simulating at the published calibration and
+# assumption, it IS the answer. Simulating at that calibration and
 # refitting on 504 days shows exactly that - and shows it is the PRIORS, not
 # the density in Appendix B:
 #
@@ -490,7 +490,7 @@ SYSTEMATIC_PRIORS_SKEW = {
 # anyone doing anything careless.
 # NOTE: this arm keeps the NARROW jump priors on purpose - it is the
 # historical "tight" diagnostic, and the paper arm above is what production
-# uses (priors=None). Its lamb prior has mean 6.0 against a published 76.99,
+# uses (priors=None). Its lamb prior has mean 6.0 against FULL_SAMPLE's 76.99,
 # twenty prior standard deviations away; do not use it for new fits.
 # alpha_rv is LogNormal here for the same reason it is on the paper arm.
 # skew-tight is what every rolling run since has used, so leaving it on

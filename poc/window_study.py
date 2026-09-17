@@ -20,7 +20,7 @@ different thing, and they scale differently:
 alpha is a RATE, so only elapsed time informs it and no amount of intraday
 sampling helps - see identification_alpha.html. sigma is a quadratic-variation
 object and is pinned by observation count, so 252 days is already ample. The
-jump parameters need JUMPS, and at the paper's lambda ~ 77 even 252 days
+jump parameters need JUMPS, and at the SIMULATED lambda ~ 77 even 252 days
 carries 77 of them.
 
 WHAT TO LOOK FOR, and it is not the bias column.
@@ -54,6 +54,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from recover_two_stage import DT, simulate                      # noqa: E402
 from Library.RiskEngineKimYi2025 import pmle_kimyirisk_systematic  # noqa: E402
 
+# TRUTH IS A CHOICE. It is NOT the paper's calibration - Table 1 reports
+# alpha ~ 0.68, lamb ~ 10-12, eta1 ~ 50.5, eta2 ~ 26-27, pprob ~ 0.35-0.44,
+# sigma ~ 0.13-0.17. These values are FULL_SAMPLE (itself a cross-arm
+# calibration, not one fit) with alpha set to 15 by hand, chosen so that no
+# truth sits at its prior mean: a truth AT the prior mean scores perfect
+# coverage even when the likelihood carries no information at all, which
+# would make this whole script vacuous.
+#
+# The choice is not neutral for what is measured here:
+#   alpha  rel sd is sqrt(2/(alpha*T_yr)): 37% at alpha 15 over one year, but
+#          171% at alpha 0.68, and still 61% over eight years. A SMALL alpha
+#          is unmeasurable at every window, prior-driven by construction.
+#   lamb   Appendix B drops P(N>=2) per step, order (lam*dt)^2/2: 3.8% at
+#          lamb 77, 0.1% at lamb 11. The ~-12% specification bias driving
+#          the coverage decay is measured at 77, UNMEASURED at 11.
+# So "252 days" is conditional on this scale. Re-run at the paper's own scale
+# before quoting the conclusion there.
 TRUTH = dict(alpha=15.0, sigma=0.105, lamb=76.99, pprob=0.575, eta1=78.59,
              eta2=60.68, betai=1.5, kappai=0.15, gammai=2.5, mui=0.05)
 KEYS = [("dALPHA", "alpha"), ("dSIGMA", "sigma"), ("dPPROB", "pprob"),

@@ -161,11 +161,21 @@ def simulate(truth, n_steps, seed):
 
 
 def _row(name, true_v, ests, los, his):
-    e = np.asarray(ests)
-    cov = int(np.sum((np.asarray(los) <= true_v) & (true_v <= np.asarray(his))))
-    print("  %-9s %11.4f %11.4f %8.1f%% %6d/%d"
+    """One line per parameter.
+
+    sd(est) is the ACROSS-SEED spread - how much the estimate actually moves
+    from one simulated dataset to the next. post.sd is what a single run
+    REPORTS, backed out of its own 95% interval as width/3.92. The two should
+    agree; where post.sd is much smaller, the run is claiming more precision
+    than the estimator has, and coverage falls even when the estimate is
+    unbiased. The 95% interval shown is the average of the per-seed intervals.
+    """
+    e, lo, hi = np.asarray(ests), np.asarray(los), np.asarray(his)
+    cov = int(np.sum((lo <= true_v) & (true_v <= hi)))
+    print("  %-9s %10.4f %10.4f %7.1f%% %9.4f %9.4f  [%9.4f, %9.4f] %5d/%d"
           % (name, true_v, e.mean(), 100 * (e.mean() - true_v) / abs(true_v),
-             cov, len(e)))
+             e.std(ddof=1) if e.size > 1 else float("nan"),
+             (hi - lo).mean() / 3.92, lo.mean(), hi.mean(), cov, len(e)))
 
 
 def main():
@@ -217,7 +227,9 @@ def main():
                            "joint_%s_seed%d" % (tag, sd))
             joint_res[tag].append(out)
 
-    hdr = "  %-9s %11s %11s %9s %8s" % ("param", "TRUE", "estimate", "bias", "cover")
+    hdr = ("  %-9s %10s %10s %8s %9s %9s %23s %7s"
+           % ("param", "TRUE", "estimate", "bias", "sd(est)", "post.sd",
+              "mean 95% interval", "cover"))
     print("\nSTAGE 1  systematic\n" + hdr)
     for key, t in (("dALPHA", "alpha"), ("dSIGMA", "sigma"), ("dPPROB", "pprob"),
                    ("dLAMB", "lamb"), ("dETA1", "eta1"), ("dETA2", "eta2")):

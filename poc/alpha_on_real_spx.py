@@ -24,15 +24,21 @@ On 19 years of simulated data that is near unbiased at every scale tried:
 and it barely cares what jump parameters the calibration assumes - inverting
 lambda-11 data under a lambda-77 table moves alpha by a few percent.
 
-WHY THE BLOCKS MATTER. Psi is rebuilt as cumsum(de-meaned returns) INSIDE
-each block, so every block starts at Psi = 0 rather than at a draw from the
-stationary distribution. That is its own source of bias, and it is exactly
-why the correction has to be calibrated on the procedure rather than taken
-from a textbook AR(1) expansion. Blocks are non-overlapping so the
+WHY NO TEXTBOOK CORRECTION APPLIES. Psi is rebuilt as cumsum(de-meaned
+returns) inside each window, and the de-meaned returns sum to zero BY
+CONSTRUCTION, so Psi[0] ~= 0 and Psi[-1] = 0 EXACTLY. The series the
+estimator sees is a BRIDGE pinned at both ends, not a free OU path - and
+this is true of the production estimator too, which builds its observed
+series the same way. That, plus the near-unit-root bias, is why alpha_hat
+comes out far too HIGH at short windows and too LOW at long ones (at a true
+5.0: 9.41, 7.22, 5.64, 4.74 across 252 to 2016 days). The bias changes
+sign, so no single expansion describes it and the correction has to be
+calibrated on the procedure itself. Blocks are non-overlapping so the
 per-window numbers are not re-reading the same data.
 
     python poc/alpha_on_real_spx.py
     SELFTEST=5.0 python poc/alpha_on_real_spx.py      # recover a known alpha
+    START=2003-07-01 python poc/alpha_on_real_spx.py  # is alpha stable?
     SYMBOL=^SPX WINDOWS=252,504,1008,2016 GRIDN=28 REPS=60 python poc/...
 """
 import os
@@ -140,11 +146,26 @@ def main():
     else:
         sym = os.environ.get("SYMBOL", "^SPX")
         px, _ = get_aligned_price_panel([sym], reference=sym, verbose=False)
-        r = px[sym].pct_change().dropna().to_numpy()
+        ser = px[sym]
+        # alpha over the FULL history assumes one alpha for the whole span. To
+        # test that, refit on halves: START=1980-01-01 END=2003-06-30, then
+        # START=2003-07-01. If they disagree, alpha is not a constant and it
+        # cannot simply be fixed in the rolling window.
+        start, end = os.environ.get("START"), os.environ.get("END")
+        if start:
+            ser = ser[ser.index >= start]
+        if end:
+            ser = ser[ser.index <= end]
+        r = ser.pct_change().dropna().to_numpy()
         n_hist = len(r)
+        if n_hist < max(windows) * 2:
+            raise SystemExit("only %d sessions after filtering - need at least "
+                             "two blocks of the longest window (%d)"
+                             % (n_hist, max(windows)))
         sigma = float(r.std(ddof=1)) * np.sqrt(252.0)
-        print("%s: %d returns, %.1f years, sigma %.3f\n"
-              % (sym, n_hist, n_hist * DT, sigma))
+        print("%s: %d returns, %.1f years (%s to %s), sigma %.3f\n"
+              % (sym, n_hist, n_hist * DT, ser.index[0].date(),
+                 ser.index[-1].date(), sigma))
         a_true = None
 
     # Jump parameters enter only through the calibration, and the recovered

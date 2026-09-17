@@ -77,6 +77,22 @@ KEYS = [("dALPHA", "alpha"), ("dSIGMA", "sigma"), ("dPPROB", "pprob"),
         ("dLAMB", "lamb"), ("dETA1", "eta1"), ("dETA2", "eta2")]
 
 
+def truth_from_env():
+    """TRUTH, with any entry overridden by an upper-case env var.
+
+    To run at the scale the paper's own Table 1 reports:
+
+        ALPHA=0.68 LAMB=11 ETA1=50.5 ETA2=26.5 PPROB=0.40 SIGMA=0.15 \
+        SEEDS=$(seq -s, 1 40) python poc/window_study.py
+    """
+    t = dict(TRUTH)
+    for k in t:
+        v = os.environ.get(k.upper())
+        if v is not None:
+            t[k] = float(v)
+    return t
+
+
 def predicted_rel_sd(key, n_steps, truth):
     """Relative sd each parameter's own information source implies."""
     years = n_steps / 252.0
@@ -104,10 +120,14 @@ def main():
               "at this count; window comparisons will not resolve. Use 30+.\n"
               % (len(seeds), 100 / np.sqrt(2 * (len(seeds) - 1))))
 
+    truth = truth_from_env()
+    print("truth: %s\n" % ", ".join(
+        "%s %g" % (k, truth[k]) for _, k in KEYS))
+
     rows = []
     for n in windows:
         for sd in seeds:
-            sys_r, _ = simulate(TRUTH, n, sd)
+            sys_r, _ = simulate(truth, n, sd)
             t0 = time.time()
             r = pmle_kimyirisk_systematic(
                 sys_returns=sys_r, delta_t=np.array(DT),
@@ -125,9 +145,10 @@ def main():
     by = collections.defaultdict(list)
     for r in rows:
         by[r["n"]].append(r)
-    print("\n%d seeds per window, truth = the paper's calibration" % len(seeds))
+    print("\n%d seeds per window. TRUTH IS A CHOICE, not the paper's "
+          "Table 1 - see the module docstring." % len(seeds))
     for key, tname in KEYS:
-        true_v = TRUTH[tname]
+        true_v = truth[tname]
         print("\n%s   (true %.4g)" % (key, true_v))
         print("   %6s %10s %8s %11s %10s %9s %8s"
               % ("window", "mean", "bias", "across-sd", "rel meas", "rel pred", "cover"))
@@ -135,7 +156,7 @@ def main():
             e = np.array([r[key][0] for r in by[n]])
             lo = np.array([r[key][1] for r in by[n]])
             hi = np.array([r[key][2] for r in by[n]])
-            pr = predicted_rel_sd(key, n, TRUTH)
+            pr = predicted_rel_sd(key, n, truth)
             print("   %5dd %10.4f %7.1f%% %11.4f %9.0f%% %8s %5d/%d"
                   % (n, e.mean(), 100 * (e.mean() - true_v) / true_v,
                      e.std(ddof=1), 100 * e.std(ddof=1) / abs(true_v),

@@ -42,3 +42,9 @@ poc/_es_ladder_cache/
 # untracked files and disable half the IDE.
 Study/PMLE __archived_*/
 Study/*__archived_*/
+
+# Diagnostic plots and summaries from poc/recover_two_stage.py (PLOTS=<dir>).
+# ~1.5 MB per seed across the three panels, and they are regenerable from the
+# script plus the seed, so the SCRIPT is versioned and the pictures are not.
+poc/out/
+out/

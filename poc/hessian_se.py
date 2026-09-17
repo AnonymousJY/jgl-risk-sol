@@ -65,8 +65,31 @@ def to_theta(nat):
 def to_natural(theta):
     out = []
     for t, (_, link) in zip(np.atleast_1d(theta), PARAMS):
+        t = float(np.clip(t, -700, 700))          # no overflow warning at the edge
         out.append(1 / (1 + np.exp(-t)) if link == "logit" else np.exp(t))
     return np.array(out)
+
+
+# A fit is usable only if the maximum is INTERIOR. Two things happen otherwise
+# and both corrupt the summary rather than announcing themselves:
+#
+#   alpha runs to the boundary  - the estimate prints as 0.000 with se 0.000,
+#                                 and the delta-method se underflows.
+#   a direction goes flat       - se on the unconstrained scale blows up and
+#                                 the interval's upper end reaches 1e132.
+#
+# Either way the interval then spans (0, inf), which CONTAINS the truth, so a
+# coverage count that keeps these reports them as successes. They are not
+# estimates and are excluded, with the count shown.
+THETA_MAX = 25.0      # alpha outside [1e-11, 7e10]: collapsed, not estimated
+SE_T_MAX = 10.0       # a 95% interval spanning e^(+-19.6): a flat direction
+
+
+def usable(th, se_t, nat, se_nat):
+    return bool(np.all(np.isfinite(th)) and np.all(np.abs(th) < THETA_MAX)
+                and np.all(np.isfinite(se_t)) and np.all(se_t < SE_T_MAX)
+                and np.all(np.isfinite(nat)) and np.all(nat > 0)
+                and np.all(np.isfinite(se_nat)) and np.all(se_nat > 0))
 
 
 def jacobian(theta):
@@ -143,8 +166,10 @@ def fit_one(fn, returns, start_nat, h=1e-4):
         se2 = np.sqrt(np.diag(np.linalg.inv(-H2)))
         drift = float(np.max(np.abs(se2 - se_t) / se_t))
 
-    nat = to_natural(th)
-    return dict(nat=nat, se_nat=jacobian(th) * se_t, drift=drift,
+    nat, se_nat = to_natural(th), jacobian(th) * se_t
+    if not usable(th, se_t, nat, se_nat):
+        return "boundary"
+    return dict(nat=nat, se_nat=se_nat, drift=drift,
                 grad=float(np.linalg.norm(fn(th, obs)[1])),
                 lo=to_natural(th - 1.96 * se_t), hi=to_natural(th + 1.96 * se_t))
 
@@ -166,14 +191,17 @@ def main():
     print("%d simulated datasets of %d days; truth %s\n"
           % (len(seeds), n, dict(zip([p for p, _ in PARAMS], true_vec))))
 
-    fits = []
+    fits, dropped = [], []
     for sd in seeds:
         sys_r, _ = simulate(truth, n, sd)
         # Start away from the truth: an optimiser begun AT the answer measures
         # nothing. A 30% displacement is enough to make the search real.
         out = fit_one(fn, sys_r, true_vec * 1.3)
-        if out is None:
-            print("  seed %-5d  -H not positive definite - skipped" % sd)
+        if out is None or out == "boundary":
+            dropped.append(sd)
+            print("  seed %-5d  %s - excluded"
+                  % (sd, "maximum on the boundary" if out == "boundary"
+                     else "-H not positive definite"))
             continue
         fits.append(out)
         print("  seed %-5d  alpha %8.3f  se %7.3f   [%7.3f, %8.3f]"
@@ -190,6 +218,9 @@ def main():
     hi = np.array([f["hi"] for f in fits])
     cov = ((lo <= true_vec) & (true_vec <= hi)).sum(axis=0)
 
+    if dropped:
+        print("\n  %d of %d datasets excluded (maximum not interior): %s"
+              % (len(dropped), len(seeds), ", ".join(map(str, dropped))))
     print("\n  %-8s %9s %9s %11s %11s %9s %22s"
           % ("param", "TRUE", "MLE", "se(Hess)", "sd(across)", "ratio",
              "median 95% interval"))

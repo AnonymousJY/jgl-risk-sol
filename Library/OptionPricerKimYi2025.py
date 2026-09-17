@@ -7,6 +7,11 @@ from Library.Logging import report as _report  # noqa: E402
 _LOG = _report(__name__)
 
 
+def _col(x) -> NDArray[np.float64]:
+    """As a column vector, accepting a scalar as readily as an array."""
+    return np.asarray(x, dtype=float).reshape((-1, 1))
+
+
 def psi_vol(
         betai: NDArray[np.float64],
         kappai: NDArray[np.float64],
@@ -36,20 +41,25 @@ def kimyi_call(
         time_to_expiry: NDArray[np.float64]
 ) -> NDArray[np.float64]:
 
-    und_price = und_price.reshape((-1, 1))
-    und_strike = und_strike.reshape((-1, 1))
-    r = risk_free_rate.reshape((-1, 1))
-    d = dividend_yield.reshape((-1, 1))
-    kappai = kappai.reshape((-1, 1))
-    gammai = gammai.reshape((-1, 1))
-    betai = betai.reshape((-1, 1))
-    rhoix = rhoix.reshape((-1, 1))
-    sigma = sigma.reshape((-1, 1))
-    pprob = pprob.reshape((-1, 1))
-    lamb = lamb.reshape((-1, 1))
-    eta1 = eta1.reshape((-1, 1))
-    eta2 = eta2.reshape((-1, 1))
-    time_to_expiry = time_to_expiry.reshape((-1, 1))
+    # _col, not .reshape: the calibrators hand these in as PYTHON FLOATS
+    # whenever a parameter is pinned rather than fitted - sigma on the
+    # systematic side when FIT_SIGMA is off, phi_i on the idiosyncratic side
+    # when FIT_PHI is off - and a float has no .reshape. Those are the
+    # DEFAULT paths, so the Q calibration raised AttributeError before this.
+    und_price = _col(und_price)
+    und_strike = _col(und_strike)
+    r = _col(risk_free_rate)
+    d = _col(dividend_yield)
+    kappai = _col(kappai)
+    gammai = _col(gammai)
+    betai = _col(betai)
+    rhoix = _col(rhoix)
+    sigma = _col(sigma)
+    pprob = _col(pprob)
+    lamb = _col(lamb)
+    eta1 = _col(eta1)
+    eta2 = _col(eta2)
+    time_to_expiry = _col(time_to_expiry)
 
     psi = psi_vol(betai=betai, kappai=kappai, rhoix=rhoix, sigma=sigma)
 
@@ -86,20 +96,25 @@ def kimyi_put(
         time_to_expiry: NDArray[np.float64]
 ) -> NDArray[np.float64]:
 
-    und_price = und_price.reshape((-1, 1))
-    und_strike = und_strike.reshape((-1, 1))
-    r = risk_free_rate.reshape((-1, 1))
-    d = dividend_yield.reshape((-1, 1))
-    kappai = kappai.reshape((-1, 1))
-    gammai = gammai.reshape((-1, 1))
-    betai = betai.reshape((-1, 1))
-    rhoix = rhoix.reshape((-1, 1))
-    sigma = sigma.reshape((-1, 1))
-    pprob = pprob.reshape((-1, 1))
-    lamb = lamb.reshape((-1, 1))
-    eta1 = eta1.reshape((-1, 1))
-    eta2 = eta2.reshape((-1, 1))
-    time_to_expiry = time_to_expiry.reshape((-1, 1))
+    # _col, not .reshape: the calibrators hand these in as PYTHON FLOATS
+    # whenever a parameter is pinned rather than fitted - sigma on the
+    # systematic side when FIT_SIGMA is off, phi_i on the idiosyncratic side
+    # when FIT_PHI is off - and a float has no .reshape. Those are the
+    # DEFAULT paths, so the Q calibration raised AttributeError before this.
+    und_price = _col(und_price)
+    und_strike = _col(und_strike)
+    r = _col(risk_free_rate)
+    d = _col(dividend_yield)
+    kappai = _col(kappai)
+    gammai = _col(gammai)
+    betai = _col(betai)
+    rhoix = _col(rhoix)
+    sigma = _col(sigma)
+    pprob = _col(pprob)
+    lamb = _col(lamb)
+    eta1 = _col(eta1)
+    eta2 = _col(eta2)
+    time_to_expiry = _col(time_to_expiry)
 
     psi = psi_vol(betai=betai, kappai=kappai, rhoix=rhoix, sigma=sigma)
 

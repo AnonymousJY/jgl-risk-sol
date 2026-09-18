@@ -30,6 +30,7 @@ different things, and the objective-at-truth column is what tells them apart.
     TENOR=0.5 NSTRIKES=21 python poc/q_recover_3m.py
     SHAPES=2 python poc/q_recover_3m.py        # one shape only, to go fast
     NSTARTS=1 python poc/q_recover_3m.py       # production's single start
+    PLOTS=out python poc/q_recover_3m.py       # also write the figure
 
 Budget about a minute per start per shape: the default 5 starts x 4 shapes is
 roughly 15 minutes.
@@ -82,6 +83,76 @@ def fit(f, x0):
     return np.asarray(r.x, dtype=float) * sc, float(r.fun)
 
 
+# Categorical slots 1-3 of the validated palette, which clear the all-pairs
+# colour-vision gates. Target is the thick line underneath; the two fits sit
+# on top so a fit that lands on the truth reads as a coloured core in a blue
+# halo rather than vanishing.
+C_TRUE, C_ONE, C_BEST = "#2a78d6", "#eb6834", "#1baf7a"
+
+
+def save_plots(out_dir, T, panels):
+    """One figure, one panel per shape: the target surface and both fits."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import FuncFormatter
+    except ImportError:
+        print("\n  matplotlib not installed - skipping plots")
+        return
+    os.makedirs(out_dir, exist_ok=True)
+    n = len(panels)
+    cols = 2 if n > 1 else 1
+    rows = int(np.ceil(n / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(6.2 * cols, 4.3 * rows),
+                             squeeze=False)
+    for ax, pan in zip(axes.ravel(), panels):
+        m = pan["m"]
+        ax.plot(m, pan["tgt"], color=C_TRUE, lw=3.4, label="target (true parameters)",
+                solid_capstyle="round", zorder=1)
+        ax.plot(m, pan["one"], color=C_ONE, lw=2.0, label="one start (production)",
+                zorder=3)
+        ax.plot(m, pan["best"], color=C_BEST, lw=2.0, ls=(0, (5, 3)),
+                label="best of %d start%s" % (pan["nstart"],
+                                              "" if pan["nstart"] == 1 else "s"),
+                zorder=2)
+        ax.set_xscale("log")
+        ax.set_xticks([0.6, 0.8, 1.0, 1.3, 1.7])
+        ax.get_xaxis().set_major_formatter(FuncFormatter(lambda v, _: "%.2f" % v))
+        ax.get_xaxis().set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.set_xlim(m[0], m[-1])
+        # open a band at the bottom so the parameter box never sits on a curve
+        lo = min(pan["tgt"].min(), pan["one"].min(), pan["best"].min())
+        hi = max(pan["tgt"].max(), pan["one"].max(), pan["best"].max())
+        pad = max(hi - lo, 1e-6)
+        ax.set_ylim(lo - 0.42 * pad, hi + 0.08 * pad)
+        ax.set_title(pan["label"], fontsize=11, loc="left", fontweight="semibold")
+        ax.set_xlabel("moneyness K/S", fontsize=9)
+        ax.set_ylabel("implied volatility (%)", fontsize=9)
+        ax.tick_params(labelsize=8)
+        ax.grid(alpha=.25, lw=.7)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        fmt = lambda v: "p %.3f  lam %.2f  e1 %.2f  e2 %.2f" % tuple(v)
+        ax.text(.02, .035,
+                "true   " + fmt(pan["true"]) + "\n" +
+                "one    " + fmt(pan["xone"]) + "   (%.3f vp)\n" % pan["rone"] +
+                "best   " + fmt(pan["xbest"]) + "   (%.3f vp)" % pan["rbest"],
+                transform=ax.transAxes, fontsize=7.2, family="monospace",
+                va="bottom", bbox=dict(boxstyle="round,pad=0.4", fc="white",
+                                       ec="#dcdbd5", lw=.8, alpha=.92))
+    for ax in axes.ravel()[n:]:
+        ax.set_visible(False)
+    axes.ravel()[0].legend(fontsize=8, frameon=False, loc="upper right")
+    fig.suptitle("Q-measure recovery at %.2f yr - simulated data" % T,
+                 fontsize=13, fontweight="semibold", x=.012, ha="left")
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    path = os.path.join(out_dir, "q_recover_%dd.png" % round(T * 365))
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    print("\n  plot written: %s" % path)
+
+
 def main():
     env = lambda k, d: float(os.environ.get(k, d))
     T, n = env("TENOR", 0.25), int(env("NSTRIKES", 15))
@@ -97,6 +168,7 @@ def main():
           % (T, n, phii, len(starts)))
     print("  %-20s %7s %7s %7s %7s %11s %9s"
           % ("", "p", "lamb", "eta1", "eta2", "objective", "misfit"))
+    panels = []
 
     for label, jump in shapes:
         true = np.array([jump["pprob"], jump["lamb"], jump["eta1"], jump["eta2"]])
@@ -124,10 +196,25 @@ def main():
                           ("best of %d starts" % len(starts), best, objb)):
             print("  %-20s %7.3f %7.2f %7.2f %7.2f %11.3e %8.3f vp"
                   % (tag, x[0], x[1], x[2], x[3], o, rms(x)))
+        width = 3.0 * 0.45 * np.sqrt(T)
+        order = np.argsort(np.concatenate(
+            [np.flatnonzero(~f.is_call_option.reshape(-1)),
+             np.flatnonzero(f.is_call_option.reshape(-1))]))
+        curve = lambda x: np.asarray(f.model_vol(x)).reshape(-1)[order] * 100
+        panels.append(dict(
+            label=label, m=np.exp(np.linspace(-width, width, n)),
+            tgt=tgt[order] * 100, one=curve(single), best=curve(best),
+            true=true, xone=single, xbest=best, rone=rms(single),
+            rbest=rms(best), nstart=len(starts)))
+
         err = 100 * np.max(np.abs(best - true) / true)
         print("  %-20s worst parameter error %.1f%%%s\n"
               % ("", err,
                  "   <- fits but does not identify" if err > 20 and objb < 1e-6 else ""))
+
+    out = os.environ.get("PLOTS")
+    if out and panels:
+        save_plots(out, T, panels)
 
 
 if __name__ == "__main__":

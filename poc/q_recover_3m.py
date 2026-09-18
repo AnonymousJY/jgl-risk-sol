@@ -126,7 +126,7 @@ def save_plots(out_dir, T, panels):
         hi = max(pan["tgt"].max(), pan["one"].max(), pan["best"].max())
         pad = max(hi - lo, 1e-6)
         ax.set_ylim(lo - 0.42 * pad, hi + 0.08 * pad)
-        ax.set_title(pan["label"], fontsize=11, loc="left", fontweight="semibold")
+        ax.set_title(pan["label"], fontsize=11, loc="left", fontweight="bold")
         ax.set_xlabel("moneyness K/S", fontsize=9)
         ax.set_ylabel("implied volatility (%)", fontsize=9)
         ax.tick_params(labelsize=8)
@@ -145,7 +145,7 @@ def save_plots(out_dir, T, panels):
         ax.set_visible(False)
     axes.ravel()[0].legend(fontsize=8, frameon=False, loc="upper right")
     fig.suptitle("Q-measure recovery at %.2f yr - simulated data" % T,
-                 fontsize=13, fontweight="semibold", x=.012, ha="left")
+                 fontsize=13, fontweight="bold", x=.012, ha="left")
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     path = os.path.join(out_dir, "q_recover_%dd.png" % round(T * 365))
     fig.savefig(path, dpi=160)

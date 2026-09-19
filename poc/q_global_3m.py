@@ -37,12 +37,16 @@ previous node. The grid is spaced so that no node coincides with any of the
 four true p values; the script prints how far the nearest node was, so the
 claim rests on the refinement rather than on a lucky grid.
 
-For contrast each shape is also fitted the plain way, from production's own
-starting vector - which is the fit the calibrator would actually produce.
-NLOCAL=k substitutes the best of k random starts over the support
-q_multistart draws from. Both fits are plotted against the target smile, and
-the profile itself is plotted underneath, so the failure and the fix are
-visible in the same figure.
+Each shape is also fitted the plain way, from production's own starting vector
+- the fit the calibrator would actually produce. NLOCAL=k substitutes the best
+of k random starts over the support q_multistart draws from.
+
+NEITHER ROUTE WINS EVERYWHERE, so the script reports both and keeps whichever
+scored the lower objective, which is a choice available without knowing the
+truth. The plain fit takes the shapes where production's start already sits in
+the right basin; the scan takes the ones where it does not. Both are plotted
+against the target smile, and the profile itself is plotted underneath, so the
+failure and the fix are visible in the same figure.
 
     python poc/q_global_3m.py
     PLOTS=poc/out python poc/q_global_3m.py         # also write the figures
@@ -50,9 +54,10 @@ visible in the same figure.
     PGRID=20 python poc/q_global_3m.py              # finer scan, slower
     NLOCAL=3 python poc/q_global_3m.py              # random-start contrast
 
-Budget roughly 30-40 s per grid node, plus about ten more nodes' worth for the
-refinement: the default 12 nodes x 4 shapes is 45 minutes to an hour. NLOCAL
-adds several minutes per draw.
+Every node is solved twice and the refinement costs about ten nodes more, so
+budget roughly a minute and a half per grid node: the default 10 nodes x 4
+shapes runs one to two hours depending on the machine. NLOCAL adds several
+minutes per draw.
 """
 import os
 import sys
@@ -86,30 +91,45 @@ B3 = [(lo / s, None if hi is None else hi / s)
       for (lo, hi), s in zip(BOUNDS[1:], S3)]
 
 
-def profile(f, p, u0):
-    """min over (lamb, eta1, eta2) at fixed p. Returns (objective, the three)."""
+X0 = np.ones(3)                                   # production x0, in S3 units
+
+
+def profile(f, p, starts):
+    """min over (lamb, eta1, eta2) at fixed p, best of the starts given.
+
+    The inner problem has flat directions of its own - at p near 1 the down
+    branch carries almost no weight, so eta2 is barely determined - and a
+    single start can stall on the wrong branch of them. Taking the better of
+    two starts is what keeps the profile a profile rather than one branch of
+    an upper envelope.
+    """
     g = lambda u: float(f.target(np.concatenate(([p], np.asarray(u) * S3))))
-    r = minimize(g, x0=u0, method="SLSQP", bounds=B3, tol=1e-13,
-                 options={"maxiter": 200})
-    return float(r.fun), np.asarray(r.x, dtype=float) * S3
+    best, bobj = None, np.inf
+    for u0 in starts:
+        r = minimize(g, x0=u0, method="SLSQP", bounds=B3, tol=1e-13,
+                     options={"maxiter": 200})
+        if float(r.fun) < bobj:
+            best, bobj = np.asarray(r.x, dtype=float) * S3, float(r.fun)
+    return bobj, best
 
 
 def scan(f, grid, echo=False):
-    """The profile over the whole grid, each node continuing from the last.
+    """The profile over the whole grid.
 
-    The first node starts at production's x0 for (lamb, eta1, eta2), which is
-    the same vector for every shape and so cannot encode a particular truth.
+    Each node is solved twice: from production's x0, which is the same vector
+    for every shape and so encodes no truth, and from the previous node's
+    answer. Continuing alone is what went wrong the first time this was
+    written - on the put-down/call-up shape the chain picked up eta2 ~ 78 in
+    the uninformative left half of the grid and carried it all the way across,
+    putting the profile three decades above its true floor at high p and
+    hiding the minimum entirely.
     """
-    u0 = np.ones(3)
+    u0 = X0
     rows = []
     for p in grid:
-        o, x3 = profile(f, p, u0)
-        if o >= PENALTY:
-            # The inner solve walked into the region where the IV inversion
-            # fails. Retry from production x0 and, either way, do not hand a
-            # broken iterate to the next node.
-            o, x3 = profile(f, p, np.ones(3))
-        u0 = x3 / S3 if o < PENALTY else np.ones(3)
+        starts = [X0] if np.array_equal(u0, X0) else [X0, u0]
+        o, x3 = profile(f, p, starts)
+        u0 = x3 / S3 if o < PENALTY else X0
         rows.append((p, o, *x3))
         if echo:
             print("    %6.3f %11.4e %9.3f %9.3f %9.3f" % (p, o, *x3), flush=True)
@@ -121,17 +141,18 @@ def refine(f, rows, tol=1e-3):
 
     One dimension, and the flat direction has already been optimised away, so
     bounded Brent is well posed here where a four-parameter local search is
-    not. Every evaluation starts the inner solve from the SAME (lamb, eta1,
-    eta2) - the best node's - so the profile is a deterministic function of p.
+    not. Every evaluation uses the SAME pair of inner starts - production's x0
+    and the best node's answer - so the profile is a deterministic function
+    of p rather than of the path Brent happens to take to it.
     """
     i = int(np.argmin(rows[:, 1]))
     lo = rows[max(i - 1, 0), 0]
     hi = rows[min(i + 1, len(rows) - 1), 0]
-    u0 = rows[i, 2:] / S3
-    r = minimize_scalar(lambda p: profile(f, p, u0)[0], bounds=(lo, hi),
+    starts = [X0, rows[i, 2:] / S3]
+    r = minimize_scalar(lambda p: profile(f, p, starts)[0], bounds=(lo, hi),
                         method="bounded", options={"xatol": tol})
     p = float(r.x)
-    return np.concatenate(([p], profile(f, p, u0)[1])), float(r.fun)
+    return np.concatenate(([p], profile(f, p, starts)[1])), float(r.fun)
 
 
 C_TRUE, C_ONE, C_BEST = "#2a78d6", "#eb6834", "#1baf7a"
@@ -236,7 +257,7 @@ def main():
     T, n = env("TENOR", 0.25), int(env("NSTRIKES", 11))
     phii, s0 = env("PHII", 0.30), env("SPOT", 100.)
     r, q = env("RATE", 0.04), env("DIVY", 0.015)
-    ngrid = int(env("PGRID", 12))
+    ngrid = int(env("PGRID", 10))
     nlocal = int(env("NLOCAL", 0))
     echo = bool(os.environ.get("ECHO"))
     rng = np.random.default_rng(int(env("SEED", 20240114)))
@@ -294,6 +315,13 @@ def main():
 
         eglo = 100 * np.max(np.abs(xglo - true) / true)
         eone = 100 * np.max(np.abs(xone - true) / true)
+        # Neither route wins everywhere - the plain fit takes the shapes where
+        # production's start already sits in the right basin, the scan takes
+        # the ones where it does not - and the objective says which is which
+        # without anyone having to know the truth.
+        xbst, obst, hbst = ((xone, oone, "the plain fit") if oone <= oglo
+                            else (xglo, oglo, "the scan"))
+        ebst = 100 * np.max(np.abs(xbst - true) / true)
         print("  %-24s %7s %7s %7s %7s %11s %8s"
               % ("", "p", "lamb", "eta1", "eta2", "objective", "err"))
         print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %8s"
@@ -306,8 +334,10 @@ def main():
         print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%"
               % ("after refining p", *xref, oref,
                  100 * np.max(np.abs(xref - true) / true)))
-        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   (%.0fs)\n"
+        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   (%.0fs)"
               % ("+ four-way polish", *xglo, oglo, eglo, tscan))
+        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   <- %s\n"
+              % ("lower objective wins", *xbst, obst, ebst, hbst))
 
         width = 3.0 * 0.45 * np.sqrt(T)
         order = np.argsort(np.concatenate(
@@ -321,13 +351,16 @@ def main():
             grid=rows[:, 0], prof=rows[:, 1],
             onelab="local, best of %d random" % nlocal if nlocal
                    else "local, production x0"))
-        summary.append((label, eone, eglo, gap))
+        summary.append((label, eone, eglo, ebst, gap))
 
-    print("\n  %-20s %14s %14s %12s"
-          % ("scenario", "local err", "global err", "grid gap"))
-    for label, eone, eglo, gap in summary:
-        print("  %-20s %13.1f%% %13.1f%% %12.3f" % (label, eone, eglo, gap))
-    print("\n  'grid gap' is the distance from the true p to the nearest node of")
+    print("\n  %-20s %11s %11s %11s %10s"
+          % ("scenario", "plain fit", "scan", "kept", "grid gap"))
+    for label, eone, eglo, ebst, gap in summary:
+        print("  %-20s %10.1f%% %10.1f%% %10.1f%% %10.3f"
+              % (label, eone, eglo, ebst, gap))
+    print("\n  'kept' is whichever of the two scored the lower objective, which")
+    print("  is a choice the calibrator can make without knowing the truth.")
+    print("  'grid gap' is the distance from the true p to the nearest node of")
     print("  the scan. No node is the answer, so what recovers the truth is the")
     print("  refinement and polish that follow the scan, not the grid.")
 

@@ -15,10 +15,13 @@ gamma_i* at all, and why the answer here is about magnitude rather than shape.
 
 WHY THIS ONE IS EASY. It is one parameter on an interval, so there is no
 starting value to get wrong and no flat direction to stall on: bounded Brent
-on [0.1, 10] is globally reliable, and the profile it minimises is plotted so
-the shape of the minimum can be seen rather than trusted. That is the contrast
-with the systematic problem, where four parameters share one curved valley
-floor - the difficulty there was never the model, it was the dimension.
+on [0.1, 10] needs neither. What Brent guarantees is a minimum INSIDE the
+interval, not the global one - that follows only where the objective is
+unimodal there, which is a property of this surface and not of the algorithm.
+So the objective is plotted across the whole interval rather than asserted,
+and in every case here it has a single well. The contrast with the systematic
+problem, where four parameters share one curved valley floor, is the
+dimension, not the model.
 
 phi_i, like sigma, is a diffusion coefficient and so measure-invariant under
 Girsanov. It is held at its P value and never fitted; LIQUIDITY_SKEW_FIT_PHI
@@ -83,7 +86,11 @@ def objective(f, g):
 
 
 def recover(f):
-    """Bounded Brent on gamma_i. One parameter, so no starting value at all."""
+    """Bounded Brent on gamma_i. One parameter, so no starting value at all.
+
+    Brent returns a minimum within [G_LO, G_HI]; that it is THE minimum rests
+    on the objective being unimodal there, which curve() below plots.
+    """
     r = minimize_scalar(lambda g: objective(f, g), bounds=(G_LO, G_HI),
                         method="bounded", options={"xatol": 1e-8})
     return float(r.x), objective(f, r.x)

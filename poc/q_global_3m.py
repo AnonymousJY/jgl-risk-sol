@@ -178,7 +178,10 @@ def refine(f, rows, fixed, tol=1e-3):
 
     One dimension, and the flat direction has already been optimised away, so
     bounded Brent is well posed here where a four-parameter local search is
-    not. Two inner starts here rather than the scan's full set, because the
+    not. It converges to a minimum WITHIN the bracket and makes no claim past
+    it: choosing the basin is the scan's job and refining inside it is Brent's,
+    which is why the scan's grid has to be fine enough to bracket the right
+    one. Two inner starts here rather than the scan's full set, because the
     scan has already established which basin this bracket is in: the best
     node's own answer, which is a continuation within that basin, and the
     first of the fixed starts as a guard against it. Both are the SAME for

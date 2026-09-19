@@ -28,10 +28,12 @@ second Q parameter.
     python poc/q_gamma_3m.py
     PLOTS=poc/out python poc/q_gamma_3m.py
     GAMMAS=0.5,1.61,3.0 python poc/q_gamma_3m.py
-    SHAPES=2 TOL=0.5 python poc/q_gamma_3m.py
+    SHAPES=2,3 TOL=0.5 python poc/q_gamma_3m.py
 
-One parameter, so the whole thing is a couple of minutes per (shape, gamma_i*)
-pair rather than the quarter of an hour a systematic shape costs.
+All four index shapes are run by default, one figure each, and the figure
+names the four Q jump parameters the name was calibrated against - gamma_i*
+means nothing without them. One parameter per fit, so the whole thing is
+seconds, against the quarter of an hour a systematic shape costs.
 """
 import os
 import sys
@@ -93,7 +95,13 @@ def curve(f, n=41):
     return gs, np.array([objective(f, g) for g in gs])
 
 
-def save_plots(out_dir, T, panels, label):
+def qtag(jump):
+    """The index's Q jump parameters, as the figures and the log both name them."""
+    return (r"$p^*$ %.3f   $\lambda^*$ %.2f   $\eta_1^*$ %.2f   $\eta_2^*$ %.2f"
+            % (jump["pprob"], jump["lamb"], jump["eta1"], jump["eta2"]))
+
+
+def save_plots(out_dir, T, panels, label, jump):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -174,51 +182,43 @@ def save_plots(out_dir, T, panels, label):
                 a.spines[s].set_visible(False)
     axes[0][0].legend(fontsize=8, frameon=False, loc="upper right",
                       labelcolor=INK)
-    fig.suptitle("Recovering a name's $\\gamma_i^*$ at %.2f yr, index jumps"
-                 " fixed at %s  -  simulated data" % (T, label),
-                 fontsize=12.5, fontweight="bold", x=.008, ha="left", color=INK)
-    fig.tight_layout(rect=[0, 0, 1, 0.965])
-    path = os.path.join(out_dir, "q_gamma_%dd.png" % round(T * 365))
+    fig.suptitle("Recovering a name's $\\gamma_i^*$ at %.2f yr  -  simulated data"
+                 % T, fontsize=12.5, fontweight="bold", x=.008, y=.975,
+                 ha="left", color=INK)
+    # The index fit the name is calibrated against, spelled out: gamma_i* means
+    # nothing without the four numbers it is measured relative to.
+    fig.text(.008, .933, "index held at shape %s, %s:      %s"
+             % (label[0], label[2:], qtag(jump)), fontsize=10.5, ha="left",
+             color=MUTED)
+    fig.tight_layout(rect=[0, 0, 1, 0.912])
+    path = os.path.join(out_dir, "q_gamma_%dd_shape%s.png"
+                        % (round(T * 365), label[0]))
     fig.savefig(path, dpi=165, facecolor=SURFACE)
     plt.close(fig)
     print("\n  plot written: %s" % path)
 
 
-def main():
-    env = lambda k, d: float(os.environ.get(k, d))
-    T, n = env("TENOR", 0.25), int(env("NSTRIKES", 11))
-    sigma, phii = env("SIGMA", 0.30), env("PHII", 0.45)
-    s0, r, q = env("SPOT", 100.), env("RATE", 0.04), env("DIVY", 0.015)
-    tol = env("TOL", 1.0)
-    gammas = [float(v) for v in os.environ["GAMMAS"].split(",")] \
-        if os.environ.get("GAMMAS") else list(GAMMAS)
-    pick = os.environ.get("SHAPES", "2")
-    label, jump = [s for s in SCENARIOS if s[0][0] == pick][0]
-    jump = dict(jump, sigma=sigma)
-
-    print("tenor %.3f yr, %d strikes, sigma %.2f, phi_i %.2f, pass at %.1f%%"
-          % (T, n, sigma, phii, tol))
-    print("index jumps held at %s:  p* %.3f  lamb* %.2f  eta1* %.2f  eta2* %.2f"
+def one_shape(label, jump, cfg, gammas, tol, out):
+    """The gamma_i* ladder for one index shape, plus its cross-skew check."""
+    T, n, phii, s0, r, q = cfg
+    print("\n%s   index held at  p* %.3f  lamb* %.2f  eta1* %.2f  eta2* %.2f"
           % (label, jump["pprob"], jump["lamb"], jump["eta1"], jump["eta2"]))
-    print("gamma_i searched on [%.1f, %.1f] by bounded Brent - one parameter,"
-          " so no starting value\n" % (G_LO, G_HI))
     print("  %10s %12s %12s %13s %9s"
           % ("true g*", "recovered", "error", "misfit", "verdict"))
 
-    panels = []
+    panels, rows = [], []
     for gtrue in gammas:
-        t0 = time.time()
-        f0 = fitter(T, n, jump, phii, s0, r, q, np.zeros(n))
-        tgt = np.asarray(f0.model_vol(np.array([gtrue]))).reshape(-1)
+        tgt = np.asarray(fitter(T, n, jump, phii, s0, r, q, np.zeros(n))
+                         .model_vol(np.array([gtrue]))).reshape(-1)
         if not np.all(np.isfinite(tgt)):
             print("  %10.3f   IV inversion failed at the truth" % gtrue)
             continue
         f = fitter(T, n, jump, phii, s0, r, q, tgt)
         ghat, obj = recover(f)
         err = 100 * abs(ghat - gtrue) / gtrue
-        print("  %10.3f %12.5f %11.4f%% %13.3e %9s   (%.0fs)"
-              % (gtrue, ghat, err, obj, "PASS" if err <= tol else "FAIL",
-                 time.time() - t0))
+        print("  %10.3f %12.5f %11.4f%% %13.3e %9s"
+              % (gtrue, ghat, err, obj, "PASS" if err <= tol else "FAIL"))
+        rows.append((gtrue, ghat, err, obj))
 
         gs, ob = curve(f)
         order = np.argsort(np.concatenate(
@@ -231,38 +231,75 @@ def main():
             fit=np.asarray(f.model_vol(np.array([ghat]))).reshape(-1)[order] * 100,
             gs=gs, obj=ob))
 
+    if out and panels:
+        save_plots(out, T, panels, label, jump)
+    return rows
+
+
+def cross_check(label, jump, other, cfg):
+    """What gamma_i* cannot do: reach a name that leans the other way.
+
+    gamma_i* scales both decay rates together, so it moves a name's jumps
+    further out or closer in but never tilts them towards one wing. Generating
+    the name's smile from ANOTHER shape's jumps at gamma_i* = 1 and then asking
+    this shape's gamma_i* to fit it prices that limit, in vol points.
+    """
+    T, n, phii, s0, r, q = cfg
+    clab, cjump = other
+    tgt = np.asarray(fitter(T, n, cjump, phii, s0, r, q, np.zeros(n))
+                     .model_vol(np.array([1.0]))).reshape(-1)
+    if not np.all(np.isfinite(tgt)):
+        return None
+    ghat, obj = recover(fitter(T, n, jump, phii, s0, r, q, tgt))
+    print("  a name shaped like %-20s best gamma_i %6.3f, residual %7.3f vp"
+          % (clab + ":", ghat, 100 * np.sqrt(2 * obj)))
+    return clab, ghat, obj
+
+
+def main():
+    env = lambda k, d: float(os.environ.get(k, d))
+    T, n = env("TENOR", 0.25), int(env("NSTRIKES", 11))
+    sigma, phii = env("SIGMA", 0.30), env("PHII", 0.45)
+    s0, r, q = env("SPOT", 100.), env("RATE", 0.04), env("DIVY", 0.015)
+    tol = env("TOL", 1.0)
+    gammas = [float(v) for v in os.environ["GAMMAS"].split(",")] \
+        if os.environ.get("GAMMAS") else list(GAMMAS)
+    pick = os.environ.get("SHAPES")
+    shapes = [(lab, dict(j, sigma=sigma)) for lab, j in SCENARIOS
+              if not pick or lab[0] in pick.split(",")]
+    cfg = (T, n, phii, s0, r, q)
+    out = os.environ.get("PLOTS")
+
+    print("tenor %.3f yr, %d strikes, sigma %.2f, phi_i %.2f, pass at %.1f%%"
+          % (T, n, sigma, phii, tol))
+    print("gamma_i searched on [%.1f, %.1f] by bounded Brent - one parameter,"
+          " so no starting value" % (G_LO, G_HI))
+
+    summary = []
+    for label, jump in shapes:
+        rows = one_shape(label, jump, cfg, gammas, tol, out)
+        summary.append((label, rows))
+
+    print("\n  worst error over the gamma_i* ladder, by index shape")
+    for label, rows in summary:
+        worst = max((r[2] for r in rows), default=float("nan"))
+        print("  %-22s %8.4f%%   %s"
+              % (label, worst, "PASS" if worst <= tol else "FAIL"))
     print("\n  The objective at the true gamma_i* is 0 by construction, so the")
     print("  misfit column is how close the search got to it, and the lower")
     print("  panels show whether that minimum is sharp or merely somewhere.")
 
-    # The boundary of the result. gamma_i* scales both decay rates together,
-    # so it can make a name jump more or less than the index but cannot make
-    # it jump the other way. Generating the name's smile from a DIFFERENT
-    # shape's jumps - a name whose skew leans against the index - and then
-    # asking gamma_i* to fit it shows what that costs, in vol points, which
-    # is the unit a trader would judge it in.
-    cross = os.environ.get("CROSS", "3" if pick != "3" else "2")
-    if cross and cross != pick:
-        clab, cjump = [s for s in SCENARIOS if s[0][0] == cross][0]
-        ctgt = np.asarray(fitter(T, n, dict(cjump, sigma=sigma), phii, s0, r, q,
-                                 np.zeros(n)).model_vol(np.array([1.0]))
-                          ).reshape(-1)
-        if np.all(np.isfinite(ctgt)):
-            fc = fitter(T, n, jump, phii, s0, r, q, ctgt)
-            gh, ob = recover(fc)
-            print("\n  A name whose skew leans the other way from the index")
-            print("  (its smile generated from %s at gamma_i* 1.00, then fitted"
-                  % clab)
-            print("  with the index held at %s):" % label)
-            print("    best gamma_i %.4f, misfit %.3e, residual %.3f vol points"
-                  % (gh, ob, 100 * np.sqrt(2 * ob)))
-            print("  gamma_i* is a magnitude, not a direction, so no value of it")
-            print("  reaches that surface - which is the model speaking, not the")
-            print("  optimizer.")
-
-    out = os.environ.get("PLOTS")
-    if out and panels:
-        save_plots(out, T, panels, label)
+    # The boundary of the claim, once, against the shape that leans opposite.
+    if len(shapes) > 1:
+        print("\n  gamma_i* is a magnitude, not a direction. Fitting a smile that")
+        print("  leans the other way is not something a larger or smaller"
+              " gamma_i* can do:")
+        pairs = {"1": "4", "2": "3", "3": "2", "4": "1"}
+        by_key = {lab[0]: (lab, j) for lab, j in shapes}
+        for label, jump in shapes:
+            other = by_key.get(pairs[label[0]])
+            if other:
+                cross_check(label, jump, other, cfg)
 
 
 if __name__ == "__main__":

@@ -23,15 +23,26 @@ and in every case here it has a single well. The contrast with the systematic
 problem, where four parameters share one curved valley floor, is the
 dimension, not the model.
 
-phi_i, like sigma, is a diffusion coefficient and so measure-invariant under
-Girsanov. It is held at its P value and never fitted; LIQUIDITY_SKEW_FIT_PHI
-in the calibration script frees it as a misspecification diagnostic, not as a
-second Q parameter.
+WHAT beta_i, kappa_i AND sigma DO HERE. Nothing, individually. The name's
+price reaches the pricer through psi_vol, so the three enter only as
+
+    phi_i = sqrt((sigma beta_i)^2 + 2 sigma beta_i kappa_i rho_iX + kappa_i^2)
+
+and any (beta_i, kappa_i, rho_iX) with the same phi_i gives the same surface
+to the last bit - five such triples at sigma 0.30 agree to 0.000e+00 vol
+points. Given phi_i, sigma itself cancels: the same phi_i at sigma 0.10, 0.30,
+0.60 and 1.00 gives the identical smile. That is the flat manifold the
+calibrator already knows about; the option surface sees total diffusion, never
+its decomposition. So the inputs below are (beta_i, kappa_i, rho_iX) - the
+model's own parameters, from the P-measure fit - and phi_i is derived from
+them, rather than a collapsed number appearing from nowhere. phi_i is a
+diffusion coefficient, measure-invariant under Girsanov, and never fitted.
 
     python poc/q_gamma_3m.py
     PLOTS=poc/out python poc/q_gamma_3m.py
     GAMMAS=0.5,1.61,3.0 python poc/q_gamma_3m.py
     SHAPES=2,3 TOL=0.5 python poc/q_gamma_3m.py
+    BETAI=1.2 KAPPAI=0.27 python poc/q_gamma_3m.py   # same phi_i, same answer
 
 All four index shapes are run by default, one figure each, and the figure
 names the four Q jump parameters the name was calibrated against - gamma_i*
@@ -48,6 +59,7 @@ from scipy.optimize import minimize_scalar
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from Library.OptionPricerKimYi2025 import psi_vol  # noqa: E402
 from Library.SkewCalibrationKimYi2025 import (  # noqa: E402
     KimYiSkewCalibrationIdiosyncratic)
 from poc.q_multistart import SCENARIOS  # noqa: E402
@@ -61,6 +73,11 @@ G_LO, G_HI = 0.1, 10.0
 # The true gamma_i* values to recover. 1.61 is the one the paper reports for
 # COIN, so the ladder brackets a real number rather than a round one.
 GAMMAS = (0.50, 1.00, 1.61, 3.00)
+
+# The name's structural parameters, from the P side. rho_iX is 0 because that
+# is where the P-measure work left it; kappa_i is then what makes phi_i 0.45 at
+# sigma 0.30, a name whose total diffusion is half again the index's.
+BETAI, KAPPAI, RHOIX = 1.00, 0.3354, 0.00
 
 C_TRUE, C_FIT = "#2a78d6", "#1baf7a"
 INK, MUTED, SURFACE = "#0b0b0b", "#52514e", "#fcfcfb"
@@ -108,7 +125,13 @@ def qtag(jump):
             % (jump["pprob"], jump["lamb"], jump["eta1"], jump["eta2"]))
 
 
-def save_plots(out_dir, T, panels, label, jump):
+def phi_of(betai, kappai, rhoix, sigma):
+    """The only combination of the three the option price depends on."""
+    return float(psi_vol(betai=np.array(betai), kappai=np.array(kappai),
+                         rhoix=np.array(rhoix), sigma=np.array(sigma)))
+
+
+def save_plots(out_dir, T, panels, label, jump, phii):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -194,9 +217,9 @@ def save_plots(out_dir, T, panels, label, jump):
                  ha="left", color=INK)
     # The index fit the name is calibrated against, spelled out: gamma_i* means
     # nothing without the four numbers it is measured relative to.
-    fig.text(.008, .933, "index held at shape %s, %s:      %s"
-             % (label[0], label[2:], qtag(jump)), fontsize=10.5, ha="left",
-             color=MUTED)
+    fig.text(.008, .933, "index held at shape %s, %s:      %s          name's"
+             " $\\varphi_i$ %.3f" % (label[0], label[2:], qtag(jump), phii),
+             fontsize=10.5, ha="left", color=MUTED)
     fig.tight_layout(rect=[0, 0, 1, 0.912])
     path = os.path.join(out_dir, "q_gamma_%dd_shape%s.png"
                         % (round(T * 365), label[0]))
@@ -239,7 +262,7 @@ def one_shape(label, jump, cfg, gammas, tol, out):
             gs=gs, obj=ob))
 
     if out and panels:
-        save_plots(out, T, panels, label, jump)
+        save_plots(out, T, panels, label, jump, phii)
     return rows
 
 
@@ -266,7 +289,10 @@ def cross_check(label, jump, other, cfg):
 def main():
     env = lambda k, d: float(os.environ.get(k, d))
     T, n = env("TENOR", 0.25), int(env("NSTRIKES", 11))
-    sigma, phii = env("SIGMA", 0.30), env("PHII", 0.45)
+    sigma = env("SIGMA", 0.30)
+    betai, kappai = env("BETAI", BETAI), env("KAPPAI", KAPPAI)
+    rhoix = env("RHOIX", RHOIX)
+    phii = phi_of(betai, kappai, rhoix, sigma)
     s0, r, q = env("SPOT", 100.), env("RATE", 0.04), env("DIVY", 0.015)
     tol = env("TOL", 1.0)
     gammas = [float(v) for v in os.environ["GAMMAS"].split(",")] \
@@ -277,8 +303,14 @@ def main():
     cfg = (T, n, phii, s0, r, q)
     out = os.environ.get("PLOTS")
 
-    print("tenor %.3f yr, %d strikes, sigma %.2f, phi_i %.2f, pass at %.1f%%"
-          % (T, n, sigma, phii, tol))
+    print("tenor %.3f yr, %d strikes, S0 %.0f, r %.3f, q %.3f, pass at %.1f%%"
+          % (T, n, s0, r, q, tol))
+    print("name: beta_i %.3f, kappa_i %.4f, rho_iX %.2f, sigma %.2f  ->"
+          "  phi_i %.5f" % (betai, kappai, rhoix, sigma, phii))
+    print("      the surface depends on those four only through phi_i, and"
+          " given phi_i")
+    print("      sigma cancels, so phi_i is the whole of the name's diffusion"
+          " input")
     print("gamma_i searched on [%.1f, %.1f] by bounded Brent - one parameter,"
           " so no starting value" % (G_LO, G_HI))
 

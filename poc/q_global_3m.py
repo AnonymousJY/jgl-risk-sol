@@ -216,7 +216,8 @@ def save_plots(out_dir, T, panels):
         ax = axes[0][j]
         m = pan["m"]
         ax.plot(m, pan["tgt"], color=C_TRUE, lw=3.4, solid_capstyle="round",
-                label="target (true parameters)", zorder=1)
+                label="target (true $p^*,\\lambda^*,\\eta_1^*,\\eta_2^*$)",
+                zorder=1)
         ax.plot(m, pan["one"], color=C_ONE, lw=2.0, label=pan["onelab"], zorder=3)
         ax.plot(m, pan["glo"], color=C_BEST, lw=2.0, ls=(0, (5, 3)),
                 label="profile scan + polish", zorder=2)
@@ -230,20 +231,24 @@ def save_plots(out_dir, T, panels):
         pad = max(hi - lo, 1e-6)
         ax.set_ylim(lo - 0.42 * pad, hi + 0.08 * pad)
         ax.set_title(pan["label"], fontsize=11, loc="left", fontweight="bold")
-        ax.set_xlabel("moneyness K/S", fontsize=9)
+        ax.set_xlabel("moneyness $K/S$", fontsize=9)
         ax.set_ylabel("implied volatility (%)", fontsize=9)
         ax.tick_params(labelsize=8)
         ax.grid(alpha=.25, lw=.7)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
-        fmt = lambda v: "p %.3f  lam %.2f  e1 %.2f  e2 %.2f" % tuple(v)
+        # Mathtext rather than monospace, so the parameters carry the same
+        # symbols as the paper: the star marks the Q measure throughout.
+        fmt = lambda v: (r"$p^*$ %.3f   $\lambda^*$ %5.2f   $\eta_1^*$ %5.2f"
+                         r"   $\eta_2^*$ %5.2f" % tuple(v))
         ax.text(.02, .035,
-                "true    " + fmt(pan["true"]) + "\n" +
-                "local   " + fmt(pan["xone"]) + "   err %5.1f%%\n" % pan["eone"] +
-                "global  " + fmt(pan["xglo"]) + "   err %5.1f%%" % pan["eglo"],
-                transform=ax.transAxes, fontsize=7.2, family="monospace",
-                va="bottom", bbox=dict(boxstyle="round,pad=0.4", fc="white",
-                                       ec="#dcdbd5", lw=.8, alpha=.92))
+                "true       " + fmt(pan["true"]) + "\n" +
+                "local      " + fmt(pan["xone"]) + "   err %5.1f%%\n" % pan["eone"] +
+                "scan       " + fmt(pan["xglo"]) + "   err %5.1f%%" % pan["eglo"],
+                transform=ax.transAxes, fontsize=7.6, va="bottom",
+                linespacing=1.5,
+                bbox=dict(boxstyle="round,pad=0.4", fc="white",
+                          ec="#dcdbd5", lw=.8, alpha=.92))
 
         ax = axes[1][j]
         g, o = pan["grid"], np.maximum(pan["prof"], 1e-18)
@@ -261,17 +266,17 @@ def save_plots(out_dir, T, panels):
                     label="no fit (IV inversion failed)")
             ax.set_ylim(o[~bad].min() / 30, top * 3)
         ax.axvline(pan["true"][0], color=C_TRUE, lw=2.2, ls=(0, (4, 3)), zorder=1,
-                   label="true p")
+                   label="true $p^*$")
         ax.axvline(pan["xglo"][0], color=C_BEST, lw=1.6, zorder=3,
-                   label="p after polish")
+                   label="$\\widehat{p}$ after the scan")
         ax.axvline(pan["xone"][0], color=C_ONE, lw=1.6, zorder=3,
-                   label="p from the local fit")
+                   label="$\\widehat{p}$ from the plain fit")
         ax.set_yscale("log")
         ax.set_xlim(0, 1)
-        ax.set_title("objective profiled in p", fontsize=10, loc="left")
-        ax.set_xlabel("p  (up-jump probability), lamb/eta1/eta2 optimised out",
-                      fontsize=9)
-        ax.set_ylabel("profile objective (log scale)", fontsize=9)
+        ax.set_title("objective profiled in $p^*$", fontsize=10, loc="left")
+        ax.set_xlabel(r"$p^*$  (up-jump probability), with $\lambda^*,\eta_1^*,"
+                      r"\eta_2^*$ optimised out", fontsize=9)
+        ax.set_ylabel(r"profile misfit  $g(p^*)$   (log scale)", fontsize=9)
         ax.tick_params(labelsize=8)
         ax.grid(alpha=.25, lw=.7)
         for side in ("top", "right"):

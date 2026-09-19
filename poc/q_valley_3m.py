@@ -184,7 +184,7 @@ def draw(out_dir, ps, e1s, Z, path, rows, xref):
     ax[0].plot(path[-1, 0], path[-1, 2], marker="o", ms=11, color=C_ONE,
                mec=SURFACE, mew=2, zorder=5, label="where it stops")
     ax[0].plot(*TRUE[[0, 2]], marker="*", ms=19, color=C_TRUE, mec=SURFACE,
-               mew=1.6, zorder=6, label="true parameters")
+               mew=1.6, zorder=6, label="true $p^*,\\eta_1^*$")
     ax[0].set_title("A   the misfit landscape", fontsize=11, loc="left",
                     fontweight="bold", color=INK)
     leg(ax[0], "lower right")
@@ -194,21 +194,21 @@ def draw(out_dir, ps, e1s, Z, path, rows, xref):
     for p in rows[:, 0]:
         ax[1].axvline(p, color=MUTED, lw=.7, ls=(0, (2, 3)), zorder=2)
     ax[1].plot(rows[:, 0], rows[:, 3], color=C_BEST, lw=2.0, marker="o", ms=5,
-               mec=SURFACE, mew=1.2, zorder=4, label="best fit at each fixed $p$")
+               mec=SURFACE, mew=1.2, zorder=4, label="best fit at each fixed $p^*$")
     i = int(np.argmin(rows[:, 1]))
     ax[1].plot(rows[i, 0], rows[i, 3], marker="o", ms=12, mfc="none",
                mec=C_BEST, mew=2.4, zorder=5, label="lowest of them")
     ax[1].plot(*TRUE[[0, 2]], marker="*", ms=19, color=C_TRUE, mec=SURFACE,
                mew=1.6, zorder=6)
-    ax[1].set_title("B   step 1: hold $p$, fit the other three",
+    ax[1].set_title("B   step 1: hold $p^*$, fit the other three",
                     fontsize=11, loc="left", fontweight="bold", color=INK)
     leg(ax[1], "lower right")
 
     for a in ax[:2]:
         a.set_xlim(ps[0], ps[-1])
         a.set_ylim(e1s[0], e1s[-1])
-        a.set_xlabel("$p$   (up-jump probability)", fontsize=9, color=MUTED)
-    ax[0].set_ylabel(r"$\eta_1$   (up-jump decay rate)", fontsize=9, color=MUTED)
+        a.set_xlabel("$p^*$   (up-jump probability)", fontsize=9, color=MUTED)
+    ax[0].set_ylabel(r"$\eta_1^*$   (up-jump decay rate)", fontsize=9, color=MUTED)
 
     cb = fig.colorbar(cf, cax=cax, orientation="horizontal")
     cb.set_label("misfit  $\\log_{10}\\mathcal{G}$   -   lighter is a better fit"
@@ -228,20 +228,20 @@ def draw(out_dir, ps, e1s, Z, path, rows, xref):
     ax[2].plot(rows[i, 0], g[i], marker="o", ms=12, mfc="none", mec=C_BEST,
                mew=2.4, zorder=4)
     ax[2].axvline(TRUE[0], color=C_TRUE, lw=2.0, ls=(0, (4, 3)), zorder=2,
-                  label="true $p$")
+                  label="true $p^*$")
     ax[2].axvline(xref[0], color=C_BEST, lw=1.8, zorder=5,
-                  label="$\\widehat p$ after step 2")
+                  label="$\\widehat{p}$ after step 2")
     ax[2].set_yscale("log")
     ax[2].set_xlim(ps[0], ps[-1])
-    ax[2].set_xlabel("$p$   (up-jump probability)", fontsize=9, color=MUTED)
-    ax[2].set_ylabel(r"$g(p)=\min_{\lambda,\eta_1,\eta_2}\mathcal{G}$",
+    ax[2].set_xlabel("$p^*$   (up-jump probability)", fontsize=9, color=MUTED)
+    ax[2].set_ylabel(r"$g(p^*)=\min_{\lambda^*,\eta_1^*,\eta_2^*}\mathcal{G}$",
                      fontsize=9, color=MUTED)
     ax[2].set_title("C   steps 2-3: the same thing as a curve",
                     fontsize=11, loc="left", fontweight="bold", color=INK)
     ax[2].grid(alpha=.25, lw=.7)
     leg(ax[2], "upper left")
 
-    fig.suptitle("Why the direct search stalls, and what holding $p$ fixed does"
+    fig.suptitle("Why the direct search stalls, and what holding $p^*$ fixed does"
                  "  -  simulated 3-month smile",
                  fontsize=13, fontweight="bold", x=.008, y=.965, ha="left",
                  color=INK)

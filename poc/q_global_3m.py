@@ -60,11 +60,15 @@ failure and the fix are visible in the same figure.
     PGRID=20 python poc/q_global_3m.py              # finer scan, slower
     NLOCAL=3 python poc/q_global_3m.py              # random-start contrast
     TOL=5 python poc/q_global_3m.py                 # pass at 5% not 1%
+    JOBS=1 python poc/q_global_3m.py                # one shape at a time
 
-Each node runs five inner solves and the refinement costs about ten nodes
-more, so budget roughly half an hour for the default 10 nodes x 4 shapes.
-NLOCAL adds several minutes per draw.
+The four shapes share nothing, so they run in parallel by default, one process
+each up to the core count; the wall clock is then the slowest shape rather
+than the sum. Each node runs five inner solves and the refinement costs about
+ten nodes more, so a shape is roughly a quarter of an hour. NLOCAL adds
+several minutes per draw.
 """
+import multiprocessing as mp
 import os
 import sys
 import time
@@ -153,16 +157,20 @@ def scan(f, grid, fixed, echo=False):
     picked up eta2 ~ 78 in the uninformative left half of the grid and carried
     it all the way across, putting the profile three decades above its true
     floor at high p and hiding the minimum entirely.
+
+    Returns the rows and, when echo is on, one printable line per node. The
+    lines are returned rather than printed because several scenarios may be
+    running at once and would otherwise interleave.
     """
-    rows, prev = [], None
+    rows, lines, prev = [], [], None
     for p in grid:
         starts = list(fixed) + ([prev] if prev is not None else [])
         o, x3 = profile(f, p, starts)
         prev = x3 / S3 if o < PENALTY else None
         rows.append((p, o, *x3))
         if echo:
-            print("    %6.3f %11.4e %9.3f %9.3f %9.3f" % (p, o, *x3), flush=True)
-    return np.asarray(rows)
+            lines.append("    %6.3f %11.4e %9.3f %9.3f %9.3f" % (p, o, *x3))
+    return np.asarray(rows), lines
 
 
 def refine(f, rows, fixed, tol=1e-3):
@@ -284,6 +292,128 @@ def save_plots(out_dir, T, panels):
     print("\n  plot written: %s" % path)
 
 
+_CFG = {}
+
+
+def _setup(cfg):
+    _CFG.update(cfg)
+    # One BLAS thread per worker. These arrays are eleven strikes long, so
+    # threaded BLAS buys nothing and oversubscribes the machine instead.
+    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(v, "1")
+
+
+def _pool(jobs, cfg):
+    """A worker pool that inherits the fitter's imports rather than re-running
+    them. fork where the platform has it, which is both of ours."""
+    ctx = (mp.get_context("fork") if "fork" in mp.get_all_start_methods()
+           else mp.get_context())
+    return ctx.Pool(jobs, initializer=_setup, initargs=(cfg,))
+
+
+def _one(task):
+    """One scenario, end to end. Returns (printable lines, panel, summary row).
+
+    Scenarios share nothing, so this is what gets handed to a worker process.
+    Nothing is printed from in here: the lines come back and the parent prints
+    each block whole, or four workers would interleave line by line.
+    """
+    idx, label, jump = task
+    c = _CFG
+    T, n, phii, s0 = c["T"], c["n"], c["phii"], c["s0"]
+    r, q, tol, nlocal = c["r"], c["q"], c["tol"], c["nlocal"]
+    grid, inner, echo = c["grid"], c["inner"], c["echo"]
+    rng = np.random.default_rng(c["seed"] + idx)
+    out = []
+
+    true = np.array([jump["pprob"], jump["lamb"], jump["eta1"], jump["eta2"]])
+    tgt = np.asarray(fitter(T, n, phii, s0, r, q, np.zeros(n))
+                     .model_vol(true)).reshape(-1)
+    if not np.all(np.isfinite(tgt)):
+        return ["  %-20s  IV inversion failed at the truth" % label], None, None
+    f = fitter(T, n, phii, s0, r, q, tgt)
+    gap = float(np.min(np.abs(grid - true[0])))
+    near = float(np.min(np.max(np.abs(inner - true[1:]) / true[1:], axis=1)))
+
+    out.append("%s   true p %.3f lam %.2f e1 %.2f e2 %.2f   objective at truth %.2e"
+               % (label, *true, float(f.target(true))))
+    out.append("  nearest grid node %.3f from the true p; nearest fixed start"
+               " %.0f%% from the true (lamb, eta1, eta2)" % (gap, 100 * near))
+
+    t0 = time.time()
+    rows, echoed = scan(f, grid, inner / S3, echo=echo)
+    if echo:
+        out.append("    %6s %11s %9s %9s %9s"
+                   % ("p", "profile", "lamb", "eta1", "eta2"))
+        out.extend(echoed)
+    node = rows[int(np.argmin(rows[:, 1]))]
+    xref, oref = refine(f, rows, inner / S3)
+    xglo, oglo = xref, oref
+    if oref > POLISH_ABOVE:
+        cand, o = fit(f, xref)
+        if o < oglo:                        # the polish may help, never hurt
+            xglo, oglo = cand, o
+    tscan = time.time() - t0
+
+    # The plain way, for contrast: the four-parameter fit from
+    # Scripts/skew_calibration_kimyi2025.py's initial_values_systematic,
+    # which is the fit the calibrator makes today. It is reported because it
+    # is what production does, not because it has any standing as a neutral
+    # start. NLOCAL=k substitutes the best of k random starts over
+    # q_multistart's support, which is slower - an unbounded lamb lets SLSQP
+    # wander into the region where the Kou jump-count bound, and so the price,
+    # is an order of magnitude more expensive.
+    xone, oone = None, np.inf
+    for x0 in (draw_starts(rng, nlocal) if nlocal else [SCALE]):
+        cand, o = fit(f, x0)
+        if o < oone:
+            xone, oone = cand, o
+
+    eglo = 100 * np.max(np.abs(xglo - true) / true)
+    eone = 100 * np.max(np.abs(xone - true) / true)
+    # Neither route wins everywhere - the plain fit takes the shapes where
+    # production's start already sits in the right basin, the scan takes the
+    # ones where it does not - and the objective says which is which without
+    # anyone having to know the truth.
+    xbst, obst, hbst = ((xone, oone, "the plain fit") if oone <= oglo
+                        else (xglo, oglo, "the scan"))
+    ebst = 100 * np.max(np.abs(xbst - true) / true)
+    onelab = ("local, best of %d random" % nlocal if nlocal
+              else "local, production x0")
+    out.append("  %-24s %7s %7s %7s %7s %11s %8s"
+               % ("", "p", "lamb", "eta1", "eta2", "objective", "err"))
+    out.append("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %8s"
+               % ("true", *true, float(f.target(true)), ""))
+    out.append("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%"
+               % (onelab, *xone, oone, eone))
+    out.append("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %8s"
+               % ("best grid node", node[0], node[2], node[3], node[4],
+                  node[1], ""))
+    out.append("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%"
+               % ("after refining p", *xref, oref,
+                  100 * np.max(np.abs(xref - true) / true)))
+    out.append("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   (%.0fs)"
+               % ("+ four-way polish", *xglo, oglo, eglo, tscan))
+    out.append("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   <- %s"
+               % ("lower objective wins", *xbst, obst, ebst, hbst))
+    per = 100 * np.abs(xbst - true) / true
+    out.append("  %-24s %7.2f %7.2f %7.2f %7.2f %11s   %s\n"
+               % ("per-parameter error %", *per, "",
+                  "PASS" if ebst <= tol else "FAIL"))
+
+    width = 3.0 * 0.45 * np.sqrt(T)
+    order = np.argsort(np.concatenate(
+        [np.flatnonzero(~f.is_call_option.reshape(-1)),
+         np.flatnonzero(f.is_call_option.reshape(-1))]))
+    curve = lambda x: np.asarray(f.model_vol(x)).reshape(-1)[order] * 100
+    panel = dict(
+        label=label, m=np.exp(np.linspace(-width, width, n)),
+        tgt=tgt[order] * 100, one=curve(xone), glo=curve(xglo),
+        true=true, xone=xone, xglo=xglo, eone=eone, eglo=eglo,
+        grid=rows[:, 0], prof=rows[:, 1], onelab=onelab)
+    return out, panel, (label, eone, eglo, ebst, gap, near)
+
+
 def main():
     env = lambda k, d: float(os.environ.get(k, d))
     T, n = env("TENOR", 0.25), int(env("NSTRIKES", 11))
@@ -298,9 +428,12 @@ def main():
     tol = env("TOL", 1.0)
     grid = np.linspace(P_LO, P_HI, ngrid)
     inner = inner_starts()
+    jobs = max(1, min(int(env("JOBS", min(os.cpu_count() or 1, len(scen)))),
+                      len(scen)))
 
-    print("tenor %.3f yr, %d strikes, phi_i %.2f, pass at %.1f%% on every parameter"
-          % (T, n, phii, tol))
+    print("tenor %.3f yr, %d strikes, phi_i %.2f, pass at %.1f%% on every"
+          " parameter, %d shape%s at a time"
+          % (T, n, phii, tol, jobs, "" if jobs == 1 else "s"))
     print("p scan: %d nodes on [%.2f, %.2f]. At each node (lamb, eta1, eta2) is"
           % (ngrid, P_LO, P_HI))
     print("minimised from each of %d fixed starts and from the previous node:"
@@ -309,94 +442,26 @@ def main():
         print("    %9.3f %9.3f %9.3f" % tuple(v))
     print()
 
-    panels, summary = [], []
-    for label, jump in scen:
-        true = np.array([jump["pprob"], jump["lamb"], jump["eta1"], jump["eta2"]])
-        tgt = np.asarray(fitter(T, n, phii, s0, r, q, np.zeros(n))
-                         .model_vol(true)).reshape(-1)
-        if not np.all(np.isfinite(tgt)):
-            print("  %-20s  IV inversion failed at the truth" % label)
-            continue
-        f = fitter(T, n, phii, s0, r, q, tgt)
-        gap = float(np.min(np.abs(grid - true[0])))
-        near = float(np.min(np.max(np.abs(inner - true[1:]) / true[1:], axis=1)))
+    cfg = dict(T=T, n=n, phii=phii, s0=s0, r=r, q=q, tol=tol, nlocal=nlocal,
+               grid=grid, inner=inner, echo=echo, seed=int(env("SEED", 20240114)))
+    tasks = [(i, lab, jmp) for i, (lab, jmp) in enumerate(scen)]
+    got = {}
+    if jobs == 1:
+        _setup(cfg)
+        for t in tasks:
+            got[t[0]] = _one(t)
+            print("\n".join(got[t[0]][0]), flush=True)
+    else:
+        # The scenarios share nothing, so they run at once. imap keeps the
+        # results in scenario order, which costs a little latency on the first
+        # block and buys an output identical to the sequential run's.
+        with _pool(jobs, cfg) as pool:
+            for t, res in zip(tasks, pool.imap(_one, tasks)):
+                got[t[0]] = res
+                print("\n".join(res[0]), flush=True)
 
-        print("%s   true p %.3f lam %.2f e1 %.2f e2 %.2f   objective at truth %.2e"
-              % (label, *true, float(f.target(true))))
-        print("  nearest grid node %.3f from the true p; nearest fixed start %.0f%%"
-              " from the true (lamb, eta1, eta2)" % (gap, 100 * near))
-        if echo:
-            print("    %6s %11s %9s %9s %9s"
-                  % ("p", "profile", "lamb", "eta1", "eta2"))
-
-        t0 = time.time()
-        rows = scan(f, grid, inner / S3, echo=echo)
-        node = rows[int(np.argmin(rows[:, 1]))]
-        xref, oref = refine(f, rows, inner / S3)
-        xglo, oglo = xref, oref
-        if oref > POLISH_ABOVE:
-            cand, o = fit(f, xref)
-            if o < oglo:                    # the polish may help, never hurt
-                xglo, oglo = cand, o
-        tscan = time.time() - t0
-
-        # The plain way, for contrast: the four-parameter fit from
-        # Scripts/skew_calibration_kimyi2025.py's initial_values_systematic,
-        # which is the fit the calibrator makes today. It is reported because
-        # it is what production does, not because it has any standing as a
-        # neutral start. NLOCAL=k substitutes the best of k random starts over
-        # q_multistart's support, which is slower - an unbounded lamb lets
-        # SLSQP wander into the region where the Kou jump-count bound, and so
-        # the price, is an order of magnitude more expensive.
-        xone, oone = None, np.inf
-        for x0 in (draw_starts(rng, nlocal) if nlocal else [SCALE]):
-            cand, o = fit(f, x0)
-            if o < oone:
-                xone, oone = cand, o
-
-        eglo = 100 * np.max(np.abs(xglo - true) / true)
-        eone = 100 * np.max(np.abs(xone - true) / true)
-        # Neither route wins everywhere - the plain fit takes the shapes where
-        # production's start already sits in the right basin, the scan takes
-        # the ones where it does not - and the objective says which is which
-        # without anyone having to know the truth.
-        xbst, obst, hbst = ((xone, oone, "the plain fit") if oone <= oglo
-                            else (xglo, oglo, "the scan"))
-        ebst = 100 * np.max(np.abs(xbst - true) / true)
-        print("  %-24s %7s %7s %7s %7s %11s %8s"
-              % ("", "p", "lamb", "eta1", "eta2", "objective", "err"))
-        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %8s"
-              % ("true", *true, float(f.target(true)), ""))
-        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%"
-              % ("local, best of %d random" % nlocal if nlocal
-                 else "local, production x0", *xone, oone, eone))
-        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %8s"
-              % ("best grid node", node[0], node[2], node[3], node[4], node[1], ""))
-        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%"
-              % ("after refining p", *xref, oref,
-                 100 * np.max(np.abs(xref - true) / true)))
-        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   (%.0fs)"
-              % ("+ four-way polish", *xglo, oglo, eglo, tscan))
-        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   <- %s"
-              % ("lower objective wins", *xbst, obst, ebst, hbst))
-        per = 100 * np.abs(xbst - true) / true
-        print("  %-24s %7.2f %7.2f %7.2f %7.2f %11s   %s\n"
-              % ("per-parameter error %", *per, "",
-                 "PASS" if ebst <= tol else "FAIL"))
-
-        width = 3.0 * 0.45 * np.sqrt(T)
-        order = np.argsort(np.concatenate(
-            [np.flatnonzero(~f.is_call_option.reshape(-1)),
-             np.flatnonzero(f.is_call_option.reshape(-1))]))
-        curve = lambda x: np.asarray(f.model_vol(x)).reshape(-1)[order] * 100
-        panels.append(dict(
-            label=label, m=np.exp(np.linspace(-width, width, n)),
-            tgt=tgt[order] * 100, one=curve(xone), glo=curve(xglo),
-            true=true, xone=xone, xglo=xglo, eone=eone, eglo=eglo,
-            grid=rows[:, 0], prof=rows[:, 1],
-            onelab="local, best of %d random" % nlocal if nlocal
-                   else "local, production x0"))
-        summary.append((label, eone, eglo, ebst, gap, near))
+    panels = [got[i][1] for i in sorted(got) if got[i][1] is not None]
+    summary = [got[i][2] for i in sorted(got) if got[i][2] is not None]
 
     print("\n  %-20s %10s %10s %10s %7s %9s %8s"
           % ("scenario", "plain fit", "scan", "kept", "", "grid gap", "start"))

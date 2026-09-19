@@ -18,11 +18,15 @@ eta2, and the low region really is the set of near-perfect fits.
     OUT=poc/out python poc/q_valley_3m.py
     NP=48 NE=36 python poc/q_valley_3m.py        # finer field, slower
     FIELD=poc/out/valley.npz python poc/q_valley_3m.py   # reuse a saved field
+    JOBS=1 python poc/q_valley_3m.py             # one row at a time
 
-The field is the expensive part: NP x NE two-parameter minimisations, about
-half a second each, so the default 40 x 32 takes ten to fifteen minutes. It is
-cached to OUT/valley.npz and reused when FIELD points at it.
+The field is the whole cost: NP x NE two-parameter minimisations, of which the
+high-eta1 ones run several seconds each. The rows are independent, so they go
+out one per core by default and the wall clock is the total over the core
+count. The result is cached to OUT/valley.npz; FIELD points at the cache and
+redraws in the time the scan alone takes.
 """
+import multiprocessing as mp
 import os
 import sys
 import time
@@ -49,35 +53,82 @@ B2 = [(lo / s, None if hi is None else hi / s)
       for (lo, hi), s in zip([BOUNDS[1], BOUNDS[3]], S2)]
 
 
-def build(f, ps, e1s):
-    """Lowest misfit at each (p, eta1), minimising over (lamb, eta2)."""
+_W = {}
+
+
+def _init(cfg):
+    _W["f"] = fitter(*cfg["fit"])
+    _W["ps"] = cfg["ps"]
+    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(v, "1")
+
+
+def _row(task):
+    """One horizontal line of the field: every p at one eta1."""
+    a, e1 = task
+    f, ps = _W["f"], _W["ps"]
+    out = np.empty(len(ps))
+    u = np.array([10.0, 10.0]) / S2
+    for b, p in enumerate(ps):
+        g = lambda v: float(f.target(np.array(
+            [p, v[0] * S2[0], e1, v[1] * S2[1]])))
+        # Normalised by the value at the start, as everywhere else: an
+        # unnormalised solve halts as soon as the CHANGE in a 1e-8-scale
+        # objective falls under the tolerance, which would draw the valley
+        # floor two decades too high and the valley correspondingly wider and
+        # shallower than it is.
+        g0 = max(g(u), 1e-14)
+        r = minimize(lambda v: g(v) / g0, x0=u, method="SLSQP", bounds=B2,
+                     tol=1e-11, options={"maxiter": 60})
+        out[b] = g(r.x)
+        u = np.asarray(r.x, float)
+    return a, out
+
+
+def build(cfg, ps, e1s, jobs):
+    """Lowest misfit at each (p, eta1), minimising over (lamb, eta2).
+
+    The rows are independent - each one continues along p from its own start,
+    nothing crosses between them - so they go out to a worker each and the
+    wall clock falls by the core count. The high-eta1 rows are several times
+    the cost of the low ones, so they are handed out as workers free up rather
+    than split into equal blocks.
+    """
     Z = np.empty((len(e1s), len(ps)))
-    row0 = np.array([10.0, 10.0]) / S2
+    conf = dict(fit=cfg, ps=ps)
+    tasks = list(enumerate(e1s))
     t0 = time.time()
-    for a, e1 in enumerate(e1s):
-        u = row0
-        for b, p in enumerate(ps):
-            g = lambda v: float(f.target(np.array(
-                [p, v[0] * S2[0], e1, v[1] * S2[1]])))
-            # A picture, not a result: three good digits on a log scale is
-            # plenty, and the row continuation means every solve starts close.
-            r = minimize(g, x0=u, method="SLSQP", bounds=B2, tol=1e-9,
-                         options={"maxiter": 50})
-            Z[a, b] = float(r.fun)
-            u = np.asarray(r.x, float)
-            if b == 0:
-                row0 = u
-        print("    row %2d/%2d  eta1 %6.2f  (%.0fs)"
-              % (a + 1, len(e1s), e1, time.time() - t0), flush=True)
+    if jobs == 1:
+        _init(conf)
+        for t in tasks:
+            a, row = _row(t)
+            Z[a] = row
+            print("    row %2d/%2d  eta1 %6.2f  (%.0fs)"
+                  % (a + 1, len(e1s), e1s[a], time.time() - t0), flush=True)
+        return Z
+    ctx = (mp.get_context("fork") if "fork" in mp.get_all_start_methods()
+           else mp.get_context())
+    with ctx.Pool(jobs, initializer=_init, initargs=(conf,)) as pool:
+        for k, (a, row) in enumerate(pool.imap_unordered(_row, tasks), 1):
+            Z[a] = row
+            print("    %2d/%2d rows  eta1 %6.2f done  (%.0fs)"
+                  % (k, len(e1s), e1s[a], time.time() - t0), flush=True)
     return Z
 
 
 def descent(f, x0):
-    """The four-parameter SLSQP path, as it is actually walked."""
+    """The four-parameter SLSQP path, as it is actually walked.
+
+    Normalised like every other solve here, so that where it stops is the
+    geometry of the valley and not a tolerance met too early - the point of
+    panel A is that the floor is curved, which no tolerance fixes.
+    """
     path = [np.asarray(x0, float)]
     bnds = [(lo / s, None if hi is None else hi / s)
             for (lo, hi), s in zip(BOUNDS, SCALE)]
-    minimize(lambda u: float(f.target(u * SCALE)), x0=np.asarray(x0) / SCALE,
+    raw = lambda u: float(f.target(np.asarray(u) * SCALE))
+    g0 = max(raw(np.asarray(x0) / SCALE), 1e-14)
+    minimize(lambda u: raw(u) / g0, x0=np.asarray(x0) / SCALE,
              method="SLSQP", bounds=bnds, tol=1e-11,
              options={"maxiter": 150},
              callback=lambda u: path.append(np.asarray(u, float) * SCALE))
@@ -205,10 +256,13 @@ def main():
     env = lambda k, d: int(os.environ.get(k, d))
     out = os.environ.get("OUT", "poc/out")
     npg, neg = env("NP", 40), env("NE", 32)
+    jobs = max(1, min(env("JOBS", os.cpu_count() or 1), neg))
+    cfg = (T, NSTRIKES, PHII, SPOT, RATE, DIVY, None)
 
     tgt = np.asarray(fitter(T, NSTRIKES, PHII, SPOT, RATE, DIVY,
                             np.zeros(NSTRIKES)).model_vol(TRUE)).reshape(-1)
     f = fitter(T, NSTRIKES, PHII, SPOT, RATE, DIVY, tgt)
+    cfg = (T, NSTRIKES, PHII, SPOT, RATE, DIVY, tgt)
 
     cached = os.environ.get("FIELD")
     if cached and os.path.exists(cached):
@@ -218,8 +272,9 @@ def main():
     else:
         ps = np.linspace(P_LO, P_HI, npg)
         e1s = np.linspace(E1_LO, E1_HI, neg)
-        print("  building the %d x %d field" % (npg, neg))
-        Z = build(f, ps, e1s)
+        print("  building the %d x %d field, %d row%s at a time"
+              % (npg, neg, jobs, "" if jobs == 1 else "s"))
+        Z = build(cfg, ps, e1s, jobs)
         os.makedirs(out, exist_ok=True)
         np.savez(os.path.join(out, "valley.npz"), ps=ps, e1s=e1s, Z=Z)
 

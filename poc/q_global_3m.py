@@ -129,10 +129,18 @@ def profile(f, p, starts):
     g = lambda u: float(f.target(np.concatenate(([p], np.asarray(u) * S3))))
     best, bobj = None, np.inf
     for u0 in starts:
-        r = minimize(g, x0=u0, method="SLSQP", bounds=B3, tol=1e-13,
-                     options={"maxiter": 200})
-        if float(r.fun) < bobj:
-            best, bobj = np.asarray(r.x, dtype=float) * S3, float(r.fun)
+        # Normalised by its value at the start, for the reason q_multistart's
+        # fit() gives: an unnormalised objective living at 1e-8 trips SLSQP's
+        # tolerance immediately and the solve stops decades short. Unnormalised,
+        # the node at the true p on the put-down/call-up shape reported 3.0e-08
+        # instead of 6.4e-16, which flattened the profile enough to hide the
+        # minimum and cost that shape its recovery.
+        g0 = max(g(u0), 1e-14)
+        r = minimize(lambda u: g(u) / g0, x0=u0, method="SLSQP", bounds=B3,
+                     tol=1e-13, options={"maxiter": 200})
+        o = g(r.x)
+        if o < bobj:
+            best, bobj = np.asarray(r.x, dtype=float) * S3, o
     return bobj, best
 
 

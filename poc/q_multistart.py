@@ -27,6 +27,11 @@ Three numbers decide the reading:
                small the run is contaminated the way the old ladder was, and
                the reached count should be discarded.
 
+SUPERSEDED COUNTS. The 10/10 and 0/10 this script originally reported predate
+the objective normalisation in fit() below, which is worth several decades of
+descent on a surface whose minimum sits near 1e-8. Rerun before quoting any
+count from here.
+
     python poc/q_multistart.py
     NDRAWS=25 python poc/q_multistart.py
     SCENARIOS=2,4 NDRAWS=40 python poc/q_multistart.py
@@ -81,11 +86,25 @@ def fitter(T, n, phii, s0, r, q, mkt):
 
 
 def fit(f, x0):
+    """One SLSQP run, rescaled in both the coordinates and the value.
+
+    SLSQP's tolerance is a threshold on the CHANGE in the objective, not a
+    relative one. The objective here is a mean squared volatility error, so
+    near a good fit it lives around 1e-8, the change between iterates falls
+    under the tolerance after a step or two, and the search stops decades
+    short of the floor - reporting 3.0e-08 where the same start reaches
+    6.4e-16 once the value is normalised. Dividing the objective by its value
+    at the start is the same trick as dividing the coordinates by x0 on the
+    line below, applied to the value instead. The RAW objective is returned,
+    so results from different starts stay comparable.
+    """
     bnds = [(lo / s, None if hi is None else hi / s)
             for (lo, hi), s in zip(BOUNDS, SCALE)]
-    r = minimize(lambda u: f.target(u * SCALE), x0=x0 / SCALE, method="SLSQP",
+    raw = lambda u: float(f.target(np.asarray(u) * SCALE))
+    g0 = max(raw(x0 / SCALE), 1e-14)
+    r = minimize(lambda u: raw(u) / g0, x0=x0 / SCALE, method="SLSQP",
                  bounds=bnds, tol=1e-11, options={"maxiter": 150})
-    return np.asarray(r.x, dtype=float) * SCALE, float(r.fun)
+    return np.asarray(r.x, dtype=float) * SCALE, raw(r.x)
 
 
 def main():

@@ -30,16 +30,22 @@ the two look like separate basins. They are one basin with a bent floor.
 WHAT THIS SCRIPT DOES. It follows the floor instead of fighting it: a coarse
 scan over p with the other three optimised out, a bounded one-dimensional
 refinement between the neighbours of the best node, and a four-parameter
-polish if anything is left to gain. The scan is deterministic, identical
-across all four shapes, and carries nothing about any truth - the (lamb, eta1,
-eta2) search starts at production's own x0 and then continues from the
-previous node. The grid is spaced so that no node coincides with any of the
-four true p values; the script prints how far the nearest node was, so the
-claim rests on the refinement rather than on a lucky grid.
+polish if anything is left to gain.
+
+Nothing in that carries information about a truth. The p grid is spaced so
+that no node coincides with any of the four true values, and at each node the
+inner (lamb, eta1, eta2) search runs from a fixed Sobol set over the support
+plus the previous node's answer - the same four vectors in every scenario and
+at every p, chosen before any truth is looked at. The script prints both
+distances, the nearest node to the true p and the nearest fixed start to the
+true (lamb, eta1, eta2), so "the start was handed the answer" is a claim
+anyone can check rather than one they have to take on faith.
 
 Each shape is also fitted the plain way, from production's own starting vector
-- the fit the calibrator would actually produce. NLOCAL=k substitutes the best
-of k random starts over the support q_multistart draws from.
+in Scripts/skew_calibration_kimyi2025.py - the fit the calibrator makes today.
+It is reported because it is what production does, not because it has any
+standing as a neutral start; the scan does not use it. NLOCAL=k substitutes
+the best of k random starts over the support q_multistart draws from.
 
 NEITHER ROUTE WINS EVERYWHERE, so the script reports both and keeps whichever
 scored the lower objective, which is a choice available without knowing the
@@ -53,11 +59,11 @@ failure and the fix are visible in the same figure.
     SCENARIOS=2 ECHO=1 python poc/q_global_3m.py    # one shape, node by node
     PGRID=20 python poc/q_global_3m.py              # finer scan, slower
     NLOCAL=3 python poc/q_global_3m.py              # random-start contrast
+    TOL=5 python poc/q_global_3m.py                 # pass at 5% not 1%
 
-Every node is solved twice and the refinement costs about ten nodes more, so
-budget roughly a minute and a half per grid node: the default 10 nodes x 4
-shapes runs one to two hours depending on the machine. NLOCAL adds several
-minutes per draw.
+Each node runs five inner solves and the refinement costs about ten nodes
+more, so budget roughly half an hour for the default 10 nodes x 4 shapes.
+NLOCAL adds several minutes per draw.
 """
 import os
 import sys
@@ -66,6 +72,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.optimize import minimize, minimize_scalar
+from scipy.stats import qmc
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -91,7 +98,23 @@ B3 = [(lo / s, None if hi is None else hi / s)
       for (lo, hi), s in zip(BOUNDS[1:], S3)]
 
 
-X0 = np.ones(3)                                   # production x0, in S3 units
+# Where the inner (lamb, eta1, eta2) search starts. A fixed low-discrepancy
+# set over the support q_multistart draws from, spread in LOG space because
+# the three range over orders of magnitude. Sobol with a fixed seed is
+# deterministic - the same four vectors on every run and in every scenario -
+# and main() prints how close the nearest of them came to each truth, so
+# "the start was handed the answer" stays a checkable claim rather than an
+# assurance. Production's own x0 is deliberately NOT among them: it has no
+# standing in an experiment about whether the truth is recoverable, and it
+# appears only on the contrast line, as the fit the calibrator makes today.
+INNER_LO = np.log([0.20, 5.00, 5.00])
+INNER_HI = np.log([50.0, 80.0, 80.0])
+NSOBOL, SOBOL_SEED = 4, 0
+
+
+def inner_starts():
+    u = qmc.Sobol(3, scramble=True, seed=SOBOL_SEED).random(NSOBOL)
+    return np.exp(INNER_LO + u * (INNER_HI - INNER_LO))
 
 
 def profile(f, p, starts):
@@ -113,42 +136,43 @@ def profile(f, p, starts):
     return bobj, best
 
 
-def scan(f, grid, echo=False):
+def scan(f, grid, fixed, echo=False):
     """The profile over the whole grid.
 
-    Each node is solved twice: from production's x0, which is the same vector
-    for every shape and so encodes no truth, and from the previous node's
-    answer. Continuing alone is what went wrong the first time this was
-    written - on the put-down/call-up shape the chain picked up eta2 ~ 78 in
-    the uninformative left half of the grid and carried it all the way across,
-    putting the profile three decades above its true floor at high p and
-    hiding the minimum entirely.
+    Every node is solved from each of the fixed starts and from the previous
+    node's answer, and keeps the best. Continuing alone is what went wrong the
+    first time this was written - on the put-down/call-up shape the chain
+    picked up eta2 ~ 78 in the uninformative left half of the grid and carried
+    it all the way across, putting the profile three decades above its true
+    floor at high p and hiding the minimum entirely.
     """
-    u0 = X0
-    rows = []
+    rows, prev = [], None
     for p in grid:
-        starts = [X0] if np.array_equal(u0, X0) else [X0, u0]
+        starts = list(fixed) + ([prev] if prev is not None else [])
         o, x3 = profile(f, p, starts)
-        u0 = x3 / S3 if o < PENALTY else X0
+        prev = x3 / S3 if o < PENALTY else None
         rows.append((p, o, *x3))
         if echo:
             print("    %6.3f %11.4e %9.3f %9.3f %9.3f" % (p, o, *x3), flush=True)
     return np.asarray(rows)
 
 
-def refine(f, rows, tol=1e-3):
+def refine(f, rows, fixed, tol=1e-3):
     """Minimise the profile in p between the neighbours of the best node.
 
     One dimension, and the flat direction has already been optimised away, so
     bounded Brent is well posed here where a four-parameter local search is
-    not. Every evaluation uses the SAME pair of inner starts - production's x0
-    and the best node's answer - so the profile is a deterministic function
-    of p rather than of the path Brent happens to take to it.
+    not. Two inner starts here rather than the scan's full set, because the
+    scan has already established which basin this bracket is in: the best
+    node's own answer, which is a continuation within that basin, and the
+    first of the fixed starts as a guard against it. Both are the SAME for
+    every evaluation, so the profile stays a function of p rather than of the
+    path Brent happens to take to it.
     """
     i = int(np.argmin(rows[:, 1]))
     lo = rows[max(i - 1, 0), 0]
     hi = rows[min(i + 1, len(rows) - 1), 0]
-    starts = [X0, rows[i, 2:] / S3]
+    starts = [rows[i, 2:] / S3, fixed[0]]
     r = minimize_scalar(lambda p: profile(f, p, starts)[0], bounds=(lo, hi),
                         method="bounded", options={"xatol": tol})
     p = float(r.x)
@@ -263,13 +287,19 @@ def main():
     rng = np.random.default_rng(int(env("SEED", 20240114)))
     pick = os.environ.get("SCENARIOS")
     scen = ([s for s in SCENARIOS if s[0][0] in pick.split(",")] if pick else SCENARIOS)
+    tol = env("TOL", 1.0)
     grid = np.linspace(P_LO, P_HI, ngrid)
+    inner = inner_starts()
 
-    print("tenor %.3f yr, %d strikes, phi_i %.2f" % (T, n, phii))
-    print("p scan: %d nodes on [%.2f, %.2f], (lamb, eta1, eta2) optimised out at"
+    print("tenor %.3f yr, %d strikes, phi_i %.2f, pass at %.1f%% on every parameter"
+          % (T, n, phii, tol))
+    print("p scan: %d nodes on [%.2f, %.2f]. At each node (lamb, eta1, eta2) is"
           % (ngrid, P_LO, P_HI))
-    print("each node, starting from production x0 %s and continuing\n"
-          % np.array2string(SCALE[1:], precision=2))
+    print("minimised from each of %d fixed starts and from the previous node:"
+          % len(inner))
+    for v in inner:
+        print("    %9.3f %9.3f %9.3f" % tuple(v))
+    print()
 
     panels, summary = [], []
     for label, jump in scen:
@@ -281,18 +311,20 @@ def main():
             continue
         f = fitter(T, n, phii, s0, r, q, tgt)
         gap = float(np.min(np.abs(grid - true[0])))
+        near = float(np.min(np.max(np.abs(inner - true[1:]) / true[1:], axis=1)))
 
         print("%s   true p %.3f lam %.2f e1 %.2f e2 %.2f   objective at truth %.2e"
               % (label, *true, float(f.target(true))))
-        print("  nearest grid node is %.3f away from the true p" % gap)
+        print("  nearest grid node %.3f from the true p; nearest fixed start %.0f%%"
+              " from the true (lamb, eta1, eta2)" % (gap, 100 * near))
         if echo:
             print("    %6s %11s %9s %9s %9s"
                   % ("p", "profile", "lamb", "eta1", "eta2"))
 
         t0 = time.time()
-        rows = scan(f, grid, echo=echo)
+        rows = scan(f, grid, inner / S3, echo=echo)
         node = rows[int(np.argmin(rows[:, 1]))]
-        xref, oref = refine(f, rows)
+        xref, oref = refine(f, rows, inner / S3)
         xglo, oglo = xref, oref
         if oref > POLISH_ABOVE:
             cand, o = fit(f, xref)
@@ -300,13 +332,14 @@ def main():
                 xglo, oglo = cand, o
         tscan = time.time() - t0
 
-        # The plain way, for contrast. Production's own x0 by default: it is
-        # deterministic, it is what the calibrator actually does, and it is
-        # the same vector in every scenario so it encodes no truth. NLOCAL=k
-        # substitutes the best of k random starts over q_multistart's support,
-        # which is slower - an unbounded lamb lets SLSQP wander into the
-        # region where the Kou jump-count bound, and so the price, is an order
-        # of magnitude more expensive.
+        # The plain way, for contrast: the four-parameter fit from
+        # Scripts/skew_calibration_kimyi2025.py's initial_values_systematic,
+        # which is the fit the calibrator makes today. It is reported because
+        # it is what production does, not because it has any standing as a
+        # neutral start. NLOCAL=k substitutes the best of k random starts over
+        # q_multistart's support, which is slower - an unbounded lamb lets
+        # SLSQP wander into the region where the Kou jump-count bound, and so
+        # the price, is an order of magnitude more expensive.
         xone, oone = None, np.inf
         for x0 in (draw_starts(rng, nlocal) if nlocal else [SCALE]):
             cand, o = fit(f, x0)
@@ -336,8 +369,12 @@ def main():
                  100 * np.max(np.abs(xref - true) / true)))
         print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   (%.0fs)"
               % ("+ four-way polish", *xglo, oglo, eglo, tscan))
-        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   <- %s\n"
+        print("  %-24s %7.3f %7.2f %7.2f %7.2f %11.3e %7.1f%%   <- %s"
               % ("lower objective wins", *xbst, obst, ebst, hbst))
+        per = 100 * np.abs(xbst - true) / true
+        print("  %-24s %7.2f %7.2f %7.2f %7.2f %11s   %s\n"
+              % ("per-parameter error %", *per, "",
+                 "PASS" if ebst <= tol else "FAIL"))
 
         width = 3.0 * 0.45 * np.sqrt(T)
         order = np.argsort(np.concatenate(
@@ -351,18 +388,21 @@ def main():
             grid=rows[:, 0], prof=rows[:, 1],
             onelab="local, best of %d random" % nlocal if nlocal
                    else "local, production x0"))
-        summary.append((label, eone, eglo, ebst, gap))
+        summary.append((label, eone, eglo, ebst, gap, near))
 
-    print("\n  %-20s %11s %11s %11s %10s"
-          % ("scenario", "plain fit", "scan", "kept", "grid gap"))
-    for label, eone, eglo, ebst, gap in summary:
-        print("  %-20s %10.1f%% %10.1f%% %10.1f%% %10.3f"
-              % (label, eone, eglo, ebst, gap))
+    print("\n  %-20s %10s %10s %10s %7s %9s %8s"
+          % ("scenario", "plain fit", "scan", "kept", "", "grid gap", "start"))
+    for label, eone, eglo, ebst, gap, near in summary:
+        print("  %-20s %9.1f%% %9.1f%% %9.1f%% %7s %9.3f %7.0f%%"
+              % (label, eone, eglo, ebst,
+                 "PASS" if ebst <= tol else "FAIL", gap, 100 * near))
     print("\n  'kept' is whichever of the two scored the lower objective, which")
-    print("  is a choice the calibrator can make without knowing the truth.")
-    print("  'grid gap' is the distance from the true p to the nearest node of")
-    print("  the scan. No node is the answer, so what recovers the truth is the")
-    print("  refinement and polish that follow the scan, not the grid.")
+    print("  is a choice the calibrator can make without knowing the truth, and")
+    print("  PASS is that column within %.1f%% on every parameter." % tol)
+    print("  The last two columns are what rules out a start having been handed")
+    print("  the answer: how far the true p sits from the nearest node of the")
+    print("  scan, and how far the true (lamb, eta1, eta2) sits from the nearest")
+    print("  of the fixed inner starts.")
 
     out = os.environ.get("PLOTS")
     if out and panels:
